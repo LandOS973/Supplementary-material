@@ -60,6 +60,9 @@ if __name__ == '__main__':
     parser.add_argument('--dropoutTrain', type=float, default=0.0, help='additive structural dropout during learning')
     parser.add_argument('--withoutCausalMaskTraining', action='store_true')
 
+    # Univariate EDA
+    parser.add_argument('--M', type=int, default=4, help='Number of independent univariate agents (only for univariate PPO-EDA)')
+
 
     args = parser.parse_args()
 
@@ -85,6 +88,7 @@ if __name__ == '__main__':
     dropoutGen = args.dropoutGen
     dropoutTrain = args.dropoutTrain
     withoutCausalMaskTraining = args.withoutCausalMaskTraining
+    M = args.M
     
     learnOrder = args.learnOrder
 
@@ -152,7 +156,7 @@ if __name__ == '__main__':
         dim_variables = None
 
 
-    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1)
+    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M)
         
         
     if(knownIG):
