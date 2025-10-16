@@ -39,7 +39,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
     def reset_learned_parameters(self, nb_instances):
         """Réinitialise les paramètres et sauvegarde le nombre d'instances."""
-        self.theta = nn.Parameter(0.5 * torch.randn(nb_instances, self.N, device=self.device))
+        self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device))
         self.theta_old = self.theta.clone().detach()
         self.nb_instances = nb_instances
         self.optimizerG = torch.optim.Adam([self.theta], lr=self.learning_rate)
@@ -59,47 +59,34 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
     def updateDistribution(self, solutionList, scoreList):
         device = self.device
-        eps_clip = 0.2  # clipping threshold
         solutionList = solutionList.to(device)
         scoreList = scoreList.to(device)
-
         solutions = solutionList.squeeze(-1)  # (nb_instances, λ, N)
 
-        _, indices = torch.sort(scoreList, dim=1, descending=True)
-        indices = indices.long()
-        sorted_solutions = torch.gather(
-            solutions,
-            1,
-            indices.unsqueeze(-1).expand(-1, -1, self.N)
-        )
+        print("les thetas avant updateDistribution", torch.sigmoid(self.theta))
+        print("nb de proba" , self.theta.shape)
 
-        n_elite = max(1, self.lambda_ // 3)
-        elite = sorted_solutions[:, :n_elite, :].to(device)
-
-        target_probs = elite.mean(dim=1).clamp(1e-6, 1 - 1e-6).detach()
-
-        probs = torch.sigmoid(self.theta).clamp(1e-6, 1 - 1e-6)
-        with torch.no_grad():
-            old_probs = torch.sigmoid(self.theta_old).clamp(1e-6, 1 - 1e-6)
-
-        advantage = (target_probs - probs).detach()
-        ratio = (probs * (1 - old_probs)) / (old_probs * (1 - probs))
-        ratio = ratio.clamp(0.1, 10.0)
-
-        unclipped = ratio * advantage
-        clipped = torch.clamp(ratio, 1 - eps_clip, 1 + eps_clip) * advantage
-        ppo_objective = torch.min(unclipped, clipped)
-
-        loss = -ppo_objective.mean()
-
-        self.optimizerG.zero_grad()
-        loss.backward()
-        self.optimizerG.step()
+        # i indice sur l'individu Xi [indi 1, indi 2, ..., indi λ]
+        # k indice sur la variable de l'individu i [x1, x2, xK, xN] de l'individu Xi
+        # X => Individu ayant N variables {-1,1} [x1, x2, ..., xN] => exemple dans QUBO 64, chaque individu est une solution de 64 variables
+        # self.lambda_ => nombre d'individus samplés
+        # a[i][k] => action choisie pour la variable k de l'individu i {-1,1} => valeur tirée par la proba
+        # Pi(Theta k) => proba de choisir 1 pour la variable k pour chaque individu
+        # Pi(Theta k)(a[K]) => proba de choisir l'action a[k] pour chaque individu equivaut ici a Sigmoid(theta k) si a[k]=1 et 1-Sigmoid(theta k) si a[k]=-1
+        # Tetha => [Tetha1, Theta2, ..., ThetaN] vecteur des probabilités pour chaque variable
+        # Pi(Theta X) => proba de trouver l'individu X = Pi(Theta1)(a[1]) * Pi(Theta2)(a[2]) * ... * Pi(ThetaN)(a[N])
+        # J(Theta) => Esperance de la trajectoire générée par Pi(Theta X) sur la fitness
+        # On veut maximiser J(Theta)
+        # J(Theta) = Esperance~PiTheta [fitness(X)]
+        # Gradient de J(Theta) = Esperance~PiTheta [fitness(X) * grad( log(Pi(Theta X)) )]
+        # grad( log(Pi(Theta X)) ) est inaccessible, on l'estime par Monte Carlo
+        # L(Theta) est l'estimation empirique de Gradient de J(Theta)
+        # Log(Pi(Theta X)) = sum(log(Pi(Theta k)(a[k]))) = sum( log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 )
+        # L(Theta) = (1/self.lamba_) * sum( de i=1 a self.lambda_) [ fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
+        # une fois L(Theta calculé) calculer du gradient par L.backward()
+        # self.optimizerG.step() pour faire un pas de gradient
         
-        with torch.no_grad():
-            self.theta_old = self.theta.clone().detach()
 
-        return loss.item()
 
 
 
