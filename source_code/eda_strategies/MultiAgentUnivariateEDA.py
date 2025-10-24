@@ -26,6 +26,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         self.optimizerG = None
         self.baseline = None
         self.agent_number = agent_number
+        self.theta_old = None
     def forward(self):
         """
         Retourne les probabilités p(x_i=1) = sigmoid(theta_i)
@@ -37,6 +38,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     def reset_learned_parameters(self, nb_instances):
         """Réinitialise les paramètres et sauvegarde le nombre d'instances."""
         self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device))
+        self.theta_old = self.theta.detach().clone()
         self.nb_instances = nb_instances
         self.optimizerG = torch.optim.Adam([self.theta], lr=self.learning_rate)
 
@@ -53,8 +55,50 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
         return samples.to(self.device)
     
+    # Version Proximal Policy Optimization PPO with Clipped Objective
+    # def updateDistribution(self, solutionList, scoreList):
+    #     device = self.device
+    #     scoreList = scoreList.to(device) 
+    #     N = self.nb_instances
+    #     K_steps = 4
+    #     eps = 0.2
+    #     total_loss = 0.0
+    #     with torch.no_grad():
+    #         theta_old = self.theta.detach().clone()
+    #         pi_theta_old = torch.sigmoid(theta_old)  # (N, nb_vars)
+    #     for n in range(N):
+    #         Dk = solutionList[n].squeeze(-1)  # (λ, nb_vars)
+    #         fitnesses = scoreList[n]  # (λ,)
+    #         advantages = (fitnesses - fitnesses.mean()) / (fitnesses.std() + 1e-10) 
+    #         for step in range(K_steps):
+    #             pi_theta = torch.sigmoid(self.theta[n])
+    #             log_pi_selected_old = torch.where(
+    #                 Dk == 1.0,
+    #                 torch.log(pi_theta_old[n] + 1e-10),
+    #                 torch.log(1.0 - pi_theta_old[n] + 1e-10)
+    #             )
+    #             log_pi_selected = torch.where(
+    #                 Dk == 1.0,
+    #                 torch.log(pi_theta + 1e-10),
+    #                 torch.log(1.0 - pi_theta + 1e-10)
+    #             )
 
-    # Version non optimisée pour la fonction de perte
+    #             log_pi_theta_xi = torch.sum(log_pi_selected, dim=1)
+    #             log_pi_theta_old_xi = torch.sum(log_pi_selected_old, dim=1)
+    #             ratio = torch.exp(log_pi_theta_xi - log_pi_theta_old_xi)
+
+    #             clipped_ratio = torch.clamp(ratio, 1.0 - eps, 1.0 + eps)
+    #             loss = -torch.mean(torch.min(ratio * advantages, clipped_ratio * advantages))
+
+    #             self.optimizerG.zero_grad()
+    #             loss.backward()
+    #             self.optimizerG.step()
+
+    #         total_loss += loss.item()
+
+    #     return total_loss / N
+
+    # Version REINFORCE non optimisée
     # def updateDistribution(self, solutionList, scoreList):
     #     device = self.device
     #     solutionList = solutionList.to(device)
@@ -112,24 +156,27 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     #     self.optimizerG.step()
     #     return total_loss
 
+
+    # # Version REINFORCE
     def updateDistribution(self, solutionList, scoreList):
     #     # X => Individu ayant N variables {-1,1} [x1, x2, ..., xN] => exemple dans QUBO 64, chaque individu est une solution de 64 variables
     #     # X = solutions  # (nb_instances, λ, N)
     #     # i indice sur l'individu Xi [indi 1, indi 2, ..., indi λ]
     #     # k indice sur la variable de l'individu i [x1, x2, xK, xN] de l'individu Xi
+    #     # n indice sur l'instance numero n
         device = self.device
-        solutionList = solutionList.to(device)
         scoreList = scoreList.to(device)
-        X = solutionList.squeeze(-1)  # (nb_instances, λ, N)
-        probs = self.forward()        # (nb_instances, N)
+        X = solutionList.to(device).squeeze(-1)  # (nb_instances, λ, N)
 
         L_Theta = 0.0
+        if self.baseline is None:
+            self.baseline = torch.zeros(self.nb_instances, device=device)
 
         for n in range(self.nb_instances):
-            Pi_Theta = probs[n]  # (N,)
+            Pi_Theta = self.forward()[n]        # (N,)
             # on agrandit Pi_Theta sous la forme (λ, N) pour faire les opérations par lot
             # -1 signifie que la dimension N reste inchangée
-            # unsqueeze(0) ajoute une dimension en position 0 pour la rempire avec λ
+            # unsqueeze(0) ajoute une dimension en position 0 pour la remplir avec λ
             Pi_Theta_expanded = Pi_Theta.unsqueeze(0).expand(self.lambda_, -1)  # (λ, N)
             actions = X[n]  # (λ, N)
             # f(Xi) pour chaque individu i de l'instance n
@@ -139,29 +186,20 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
             Pi_selected = torch.where(actions == 1.0, Pi_Theta_expanded, 1.0 - Pi_Theta_expanded)  # (λ, N)
             log_Pi = torch.log(Pi_selected).sum(dim=1) 
 
-            # L(θ) = moyenne des fitness pondérées par log π
-            
-            if self.baseline is None:
-                loss_n = torch.mean(fitness * log_Pi)
-            else:
-                loss_n = torch.mean((fitness - self.baseline) * log_Pi)
-            self.baseline = fitness.mean().item()
+            # L(θ) = moyenne des fitness moins la baseline pondérées par log π
+            loss_n = torch.mean((fitness - self.baseline[n]) * log_Pi)
+
+            self.optimizerG.zero_grad()
+            (-loss_n).backward()
+            self.optimizerG.step()
+
+            self.baseline[n] = fitness.mean().item()
 
             L_Theta += loss_n
         # L(Theta) = (1/self.lambda_) * sum( de i=1 a self.lambda_) [ fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
+        # On divise par le nombre d'instance pour un Theta global
         L_Theta /= self.nb_instances
-        self.optimizerG.zero_grad()
-        (-L_Theta).backward()
-        self.optimizerG.step()
-        return L_Theta.item()
-
-
-   
-                
-
-
-            
-
+        return L_Theta
 
     def toString(self):
         return "Strategy_Univariate_PPO_EDA number " + str(self.agent_number)
@@ -186,7 +224,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.lambda_per_agent = lambda_ // M
         remainder_lambda = lambda_ % M
 
-        learning_rates = [0.02 + 0.02 * i for i in range(M)]
 
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
@@ -202,7 +239,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 beta, 
                 typeModel, 
                 dim_variables, 
-                learning_rates[i],
+                0.02,
                 device, 
                 agent_number=i
             )
@@ -210,11 +247,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
     def reset_learned_parameters(self, nb_instances):
         self.nb_instances = nb_instances
-        print(f"Multi-agent collaboratif : {self.M} agents × {nb_instances} instances (λ total={self.lambda_})")
-        
         for i, agent in enumerate(self.agents):
             agent.reset_learned_parameters(nb_instances)  
-            print(f"  Agent {i}: λ={self.agent_lambdas[i]}, lr={agent.learning_rate:.4f}")
 
     def sample_solutions(self):
         samples_list = []
