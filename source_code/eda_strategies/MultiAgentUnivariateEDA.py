@@ -166,15 +166,11 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     #     # n indice sur l'instance numero n
         device = self.device
         scoreList = scoreList.to(device)
-        X = solutionList.to(device).squeeze(-1)  # (nb_instances, λ, N)
-
-        L_Theta = 0.0
+        actions = solutionList.to(device).squeeze(-1)  # (nb_instances, λ, N)
         if self.baseline is None:
-            self.baseline = torch.zeros(self.nb_instances, device=device)
-
+            self.baseline = torch.zeros(self.nb_instances, device=device) # (nb_instances,)
         all_Pi_Theta = self.forward()  # (nb_instances, N)
         all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, self.lambda_, -1)  # (nb_instances, λ, N)
-        actions = X  # (nb_instances, λ, N)
         fitness = scoreList  # (nb_instances, λ)
         # Log(Pi(Theta X)) = sum(log(Pi(Theta k)(a[k]))) = sum( log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 )
         Pi_selected = torch.where(actions == 1.0, all_Pi_Theta_expanded, 1.0 - all_Pi_Theta_expanded)  # (nb_instances, λ, N)
@@ -183,7 +179,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         # L(Theta) = (1/self.lambda_) * sum( de i=1 a self.lambda_) [ fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
         # L(θ) = moyenne des fitness moins la baseline pondérées par log π
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (nb_instances,)
-        loss = -loss_per_instance.sum()
+        loss = -loss_per_instance.sum() 
         self.optimizerG.zero_grad(set_to_none=True)
         loss.backward()
         self.optimizerG.step()
