@@ -11,7 +11,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     i = instance, j = variable
     """
 
-    def __init__(self, N, lambda_, beta, typeModel, dim_variables, learning_rate=0.01, device="cuda:0", agent_number=0):
+    def __init__(self, N, lambda_, beta, typeModel, dim_variables, learning_rate=0.01, device="cuda:0", agent_number=0, update_method="REINFORCE"):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
 
@@ -27,6 +27,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         self.baseline = None
         self.agent_number = agent_number
         self.theta_old = None
+        self.update_method = update_method
     def forward(self):
         """
         Retourne les probabilités p(x_i=1) = sigmoid(theta_i)
@@ -56,47 +57,47 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         return samples.to(self.device)
     
     # Version Proximal Policy Optimization PPO with Clipped Objective
-    # def updateDistribution(self, solutionList, scoreList):
-    #     device = self.device
-    #     scoreList = scoreList.to(device) 
-    #     N = self.nb_instances
-    #     K_steps = 4
-    #     eps = 0.2
-    #     total_loss = 0.0
-    #     with torch.no_grad():
-    #         theta_old = self.theta.detach().clone()
-    #         pi_theta_old = torch.sigmoid(theta_old)  # (N, nb_vars)
-    #     for n in range(N):
-    #         Dk = solutionList[n].squeeze(-1)  # (λ, nb_vars)
-    #         fitnesses = scoreList[n]  # (λ,)
-    #         advantages = (fitnesses - fitnesses.mean()) / (fitnesses.std() + 1e-10) 
-    #         for step in range(K_steps):
-    #             pi_theta = torch.sigmoid(self.theta[n])
-    #             log_pi_selected_old = torch.where(
-    #                 Dk == 1.0,
-    #                 torch.log(pi_theta_old[n] + 1e-10),
-    #                 torch.log(1.0 - pi_theta_old[n] + 1e-10)
-    #             )
-    #             log_pi_selected = torch.where(
-    #                 Dk == 1.0,
-    #                 torch.log(pi_theta + 1e-10),
-    #                 torch.log(1.0 - pi_theta + 1e-10)
-    #             )
+    def updateDistributionPPO(self, solutionList, scoreList):
+        device = self.device
+        scoreList = scoreList.to(device) 
+        N = self.nb_instances
+        K_steps = 4
+        eps = 0.2
+        total_loss = 0.0
+        with torch.no_grad():
+            theta_old = self.theta.detach().clone()
+            pi_theta_old = torch.sigmoid(theta_old)  # (N, nb_vars)
+        for n in range(N):
+            Dk = solutionList[n].squeeze(-1)  # (λ, nb_vars)
+            fitnesses = scoreList[n]  # (λ,)
+            advantages = (fitnesses - fitnesses.mean()) / (fitnesses.std() + 1e-10) 
+            for step in range(K_steps):
+                pi_theta = torch.sigmoid(self.theta[n])
+                log_pi_selected_old = torch.where(
+                    Dk == 1.0,
+                    torch.log(pi_theta_old[n] + 1e-10),
+                    torch.log(1.0 - pi_theta_old[n] + 1e-10)
+                )
+                log_pi_selected = torch.where(
+                    Dk == 1.0,
+                    torch.log(pi_theta + 1e-10),
+                    torch.log(1.0 - pi_theta + 1e-10)
+                )
 
-    #             log_pi_theta_xi = torch.sum(log_pi_selected, dim=1)
-    #             log_pi_theta_old_xi = torch.sum(log_pi_selected_old, dim=1)
-    #             ratio = torch.exp(log_pi_theta_xi - log_pi_theta_old_xi)
+                log_pi_theta_xi = torch.sum(log_pi_selected, dim=1)
+                log_pi_theta_old_xi = torch.sum(log_pi_selected_old, dim=1)
+                ratio = torch.exp(log_pi_theta_xi - log_pi_theta_old_xi)
 
-    #             clipped_ratio = torch.clamp(ratio, 1.0 - eps, 1.0 + eps)
-    #             loss = -torch.mean(torch.min(ratio * advantages, clipped_ratio * advantages))
+                clipped_ratio = torch.clamp(ratio, 1.0 - eps, 1.0 + eps)
+                loss = -torch.mean(torch.min(ratio * advantages, clipped_ratio * advantages))
 
-    #             self.optimizerG.zero_grad()
-    #             loss.backward()
-    #             self.optimizerG.step()
+                self.optimizerG.zero_grad()
+                loss.backward()
+                self.optimizerG.step()
 
-    #         total_loss += loss.item()
+            total_loss += loss.item()
 
-    #     return total_loss / N
+        return total_loss / N
 
     # Version REINFORCE non optimisée
     # def updateDistribution(self, solutionList, scoreList):
@@ -158,7 +159,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
 
     # # Version REINFORCE
-    def updateDistribution(self, solutionList, scoreList):
+    def updateDistributionREINFORCE(self, solutionList, scoreList):
     #     # X => Individu ayant N variables {-1,1} [x1, x2, ..., xN] => exemple dans QUBO 64, chaque individu est une solution de 64 variables
     #     # X = solutions  # (nb_instances, λ, N)
     #     # i indice sur l'individu Xi [indi 1, indi 2, ..., indi λ]
@@ -175,7 +176,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         # Log(Pi(Theta X)) = sum(log(Pi(Theta k)(a[k]))) = sum( log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 )
         Pi_selected = torch.where(actions == 1.0, all_Pi_Theta_expanded, 1.0 - all_Pi_Theta_expanded)  # (nb_instances, λ, N)
         log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (nb_instances, λ)
-        advantages = (fitness - self.baseline.unsqueeze(1))  # (nb_instances,
+        advantages = (fitness - self.baseline.unsqueeze(1))  # (nb_instances, λ)
         # L(Theta) = (1/self.lambda_) * sum( de i=1 a self.lambda_) [ fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
         # L(θ) = moyenne des fitness moins la baseline pondérées par log π
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (nb_instances,)
@@ -186,6 +187,13 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1)  # (nb_instances,)
         return loss_per_instance.mean()
+
+    def updateDistribution(self, solutionList, scoreList):
+        """Dispatch to PPO or REINFORCE depending on the agent flag."""
+        if self.update_method == "PPO":
+            return self.updateDistributionPPO(solutionList, scoreList)
+        else:
+            return self.updateDistributionREINFORCE(solutionList, scoreList)
 
     def toString(self):
         return "Strategy_Univariate_PPO_EDA number " + str(self.agent_number)
@@ -198,7 +206,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     - Diversité via learning rates différents
     """
 
-    def __init__(self, N, lambda_, beta, typeModel, dim_variables, M=4, device="cuda:0"):
+    def __init__(self, N, lambda_, beta, typeModel, dim_variables, M=4, device="cuda:0", updateMethod="REINFORCE"):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
 
@@ -227,7 +235,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 dim_variables, 
                 0.02,
                 device, 
-                agent_number=i
+                agent_number=i,
+                update_method=updateMethod
             )
             self.agents.append(agent)
 

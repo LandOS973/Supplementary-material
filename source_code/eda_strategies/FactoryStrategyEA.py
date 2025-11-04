@@ -10,7 +10,7 @@ from eda_strategies.MultiAgentUnivariateEDA import MultiAgentUnivariateEDA
 
 class FactoryStrategyEA:
 
-    def createStrategyEA(self, typeStrategy, N, lambda_, beta, device, typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale, M):
+    def createStrategyEA(self, typeStrategy, N, lambda_, beta, device, typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale, M, updateMethod="REINFORCE"):
         print("Création de la stratégie : " + typeStrategy)
         if (typeStrategy == "UMDA"):
             return UMDA(N, lambda_, device)
@@ -22,6 +22,7 @@ class FactoryStrategyEA:
 
         elif (typeStrategy == "PPO-EDA"):
             if(isUnivariate):
-                return MultiAgentUnivariateEDA(N, lambda_, beta, typeModel, dim_variables, M, device=device)
+                print("Using update method: " + updateMethod)
+                return MultiAgentUnivariateEDA(N, lambda_, beta, typeModel, dim_variables, M, device=device, updateMethod=updateMethod)
             else:
                 return PPO_EDA(N,  lambda_, beta, device, typeModel,numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale)

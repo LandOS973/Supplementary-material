@@ -45,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_', type=int, default=10, help='lambda : size pop EDA')
     parser.add_argument('--typeModel', type=str, default="NeuralNet", help='typeModel')
     parser.add_argument('--isUnivariate', type=int, default=0, help='isUnivariate')
+    parser.add_argument('--updateMethod', type=str, default="REINFORCE", help='updateMethod for univariate PPO-EDA')
     parser.add_argument('--numberHiddenLayersG', type=int, default=1, help='numberHiddenLayersG')
     parser.add_argument('--nh', type=int, default=20, help='nh')
     
@@ -89,6 +90,7 @@ if __name__ == '__main__':
     dropoutTrain = args.dropoutTrain
     withoutCausalMaskTraining = args.withoutCausalMaskTraining
     M = args.M
+    updateMethod = args.updateMethod
     
     learnOrder = args.learnOrder
 
@@ -156,7 +158,7 @@ if __name__ == '__main__':
         dim_variables = None
 
 
-    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M)
+    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M, updateMethod=updateMethod)
         
         
     if(knownIG):
