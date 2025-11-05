@@ -99,64 +99,6 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
         return total_loss / N
 
-    # Version REINFORCE non optimisée
-    # def updateDistribution(self, solutionList, scoreList):
-    #     device = self.device
-    #     solutionList = solutionList.to(device)
-    #     scoreList = scoreList.to(device)
-    #     solutions = solutionList.squeeze(-1)  # (nb_instances, λ, N)
-    #     # X => Individu ayant N variables {-1,1} [x1, x2, ..., xN] => exemple dans QUBO 64, chaque individu est une solution de 64 variables
-    #     X = solutions  # (nb_instances, λ, N)
-    #     # i indice sur l'individu Xi [indi 1, indi 2, ..., indi λ]
-    #     # k indice sur la variable de l'individu i [x1, x2, xK, xN] de l'individu Xi
-
-    #     # L(Theta) = (1/self.lamba_) * sum( de i=1 a self.lambda_) [ fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
-    #     # on fait les descentes de gradient des L(Theta_i) en parallèle pour chaque instance i a la fin des itérations
-    #     total_loss = 0.0
-    #     # probs = theta a qui on applique sigmoid pour avoir les proba de chaque variable
-    #     probs = self.forward()  # (nb_instances, N)
-    #     for n in range(self.nb_instances):
-    #         #sum( de i=1 a self.lambda_)
-    #         loss_n = 0.0
-    #         # probabilités pour chaque variable de l'instance n
-    #         # Theta => [Theta1, Theta2, ..., ThetaN] vecteur des probabilités pour chaque variable
-    #         Pi_Theta = probs[n]  # (N,)
-    #         # maintenant, on rentre dans chaque individu de l'instance n
-    #         for i in range(self.lambda_): # i => indice sur l'individu {0,...,self.lambda_-1}
-    #             # self.lambda_ => nombre d'individus samplés
-    #             All_Pi_Theta_k_a_i_k = []
-    #             # Log(Pi(Theta X)) = sum(log(Pi(Theta k)(a[k]))) = sum( log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 )
-    #             log_Pi_Theta_X = 0.0
-                
-    #             # on rentre maintenant dans chaque variable de l'individu k de l'instance n
-    #             for k in range(self.N): # k => indice sur la variable {0,...,N-1} (64 dans QUBO 64)
-    #                 # a[i][k] => action choisie pour la variable k de l'individu i {0,1} => valeur tirée par la proba (convertie plus tard en {-1,1} pour le calcul de la fitness)
-    #                 a_i_k = X[n, i, k]
-    #                 # Pi(Theta k) => proba de choisir 1 pour la variable k pour chaque individu
-    #                 Pi_Theta_k = Pi_Theta[k]
-    #                 # Pi(Theta k)(a[i][K]) => proba de choisir l'action a[i][k] pour chaque individu equivaut ici a Sigmoid(theta k) si a[k]=1 et 1-Sigmoid(theta k) si a[k]=-1
-    #                 # Pi_Theta = sigmoid(theta)
-    #                 Pi_Theta_k_a_i_k = Pi_Theta_k if a_i_k.item() == 1.0 else (1.0 - Pi_Theta_k)
-    #                 log_Pi_Theta_X += torch.log(Pi_Theta_k_a_i_k)
-    #                 All_Pi_Theta_k_a_i_k.append(Pi_Theta_k_a_i_k)
-                
-    #             # Pi(Theta X) => proba de trouver l'individu X = Pi(Theta1)(a[1]) * Pi(Theta2)(a[2]) * ... * Pi(ThetaN)(a[N])
-    #             # Pi_Theta_X = torch.prod(torch.stack(All_Pi_Theta_k_a_i_k))
-    #             fitness_X_i = scoreList[n, i]
-    #             # fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
-    #             loss_n += fitness_X_i * log_Pi_Theta_X
-    #         # J(Theta) => Esperance de la trajectoire générée par Pi(Theta X) sur la fitness
-    #         # On veut maximiser J(Theta)
-    #         # J(Theta) = Esperance~PiTheta [fitness(X)] => 1/self.lambda_ * sum( de i=1 a self.lambda_) [ fitness(Xi) ]
-    #         total_loss += loss_n
-
-    #     # L(Theta) = (1/self.lamba_) * sum( de i=1 a self.lambda_) [ fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
-    #     total_loss /= self.nb_instances
-    #     self.optimizerG.zero_grad()
-    #     (-total_loss).backward()
-    #     self.optimizerG.step()
-    #     return total_loss
-
 
     # # Version REINFORCE
     def updateDistributionREINFORCE(self, solutionList, scoreList):
