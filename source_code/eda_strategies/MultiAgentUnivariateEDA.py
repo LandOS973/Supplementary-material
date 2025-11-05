@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from eda_strategies.Abstract_EDA import Abstract_EDA
 import random
-
+from torch.distributions import Bernoulli, kl_divergence
 
 class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     """
@@ -11,7 +11,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     i = instance, j = variable
     """
 
-    def __init__(self, N, lambda_, beta, typeModel, dim_variables, learning_rate=0.01, device="cuda:0", agent_number=0, update_method="REINFORCE"):
+    def __init__(self, N, lambda_, beta, typeModel, dim_variables, learning_rate=0.02, device="cuda:0", agent_number=0, update_method="REINFORCE", K_steps=6):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
 
@@ -23,25 +23,35 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         self.device = device
         self.beta = beta
         self.theta = None
-        self.optimizerG = None
+        self.opt_reinforce = None
+        self.opt_ppo = None
+        self.beta_vector = None
         self.baseline = None
         self.agent_number = agent_number
         self.theta_old = None
         self.update_method = update_method
+        self.K_steps = K_steps
+
     def forward(self):
         """
         Retourne les probabilités p(x_i=1) = sigmoid(theta_i)
         theta_i sont les poids de la couche linéaire.
         """
         probs = torch.sigmoid(self.theta)
-        return probs  # (N,)
+        return probs  # (N,nb_instances)
 
     def reset_learned_parameters(self, nb_instances):
         """Réinitialise les paramètres et sauvegarde le nombre d'instances."""
         self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device))
         self.theta_old = self.theta.detach().clone()
         self.nb_instances = nb_instances
-        self.optimizerG = torch.optim.SGD([self.theta], lr=self.learning_rate)
+        self.beta_vector = torch.ones((nb_instances,), device=self.device, dtype=self.theta.dtype)
+        self.opt_reinforce = torch.optim.SGD(
+            [self.theta], lr=self.learning_rate
+        )
+        self.opt_ppo = torch.optim.Adam(
+            [self.theta], lr=self.learning_rate * 2
+        )
 
     def sample_solutions(self):
         """
@@ -56,48 +66,82 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
         return samples.to(self.device)
     
-    # Version Proximal Policy Optimization PPO with Clipped Objective
+    def kl_divergence(self, p, q):
+        """Calcule la divergence KL entre deux distributions de Bernoulli p et q."""
+        return kl_divergence(Bernoulli(probs=p), Bernoulli(probs=q))
+    
     def updateDistributionPPO(self, solutionList, scoreList):
+        B = self.nb_instances
+        V = self.N
+        L = self.lambda_
+        # ratio = torch.exp(log(πθ) - log(πθk))
+        # log(πθ(a|s)) = sum( log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 )
         device = self.device
-        scoreList = scoreList.to(device) 
-        N = self.nb_instances
-        K_steps = 4
-        eps = 0.2
+        scoreList = scoreList.to(device)                 # (B, L)
+        K_steps = self.K_steps
+        delta_target = 0.003
         total_loss = 0.0
         with torch.no_grad():
-            theta_old = self.theta.detach().clone()
-            pi_theta_old = torch.sigmoid(theta_old)  # (N, nb_vars)
-        for n in range(N):
-            Dk = solutionList[n].squeeze(-1)  # (λ, nb_vars)
-            fitnesses = scoreList[n]  # (λ,)
-            advantages = (fitnesses - fitnesses.mean()) / (fitnesses.std() + 1e-10) 
-            for step in range(K_steps):
-                pi_theta = torch.sigmoid(self.theta[n])
-                log_pi_selected_old = torch.where(
-                    Dk == 1.0,
-                    torch.log(pi_theta_old[n] + 1e-10),
-                    torch.log(1.0 - pi_theta_old[n] + 1e-10)
-                )
-                log_pi_selected = torch.where(
-                    Dk == 1.0,
-                    torch.log(pi_theta + 1e-10),
-                    torch.log(1.0 - pi_theta + 1e-10)
-                )
-
-                log_pi_theta_xi = torch.sum(log_pi_selected, dim=1)
-                log_pi_theta_old_xi = torch.sum(log_pi_selected_old, dim=1)
-                ratio = torch.exp(log_pi_theta_xi - log_pi_theta_old_xi)
-
-                clipped_ratio = torch.clamp(ratio, 1.0 - eps, 1.0 + eps)
-                loss = -torch.mean(torch.min(ratio * advantages, clipped_ratio * advantages))
-
-                self.optimizerG.zero_grad()
-                loss.backward()
-                self.optimizerG.step()
+            # capture de πθk
+            p_old = torch.sigmoid(self.theta).clamp(1e-10, 1-1e-10)    # (B, V)
+        # Données batchées
+        Dk = solutionList.squeeze(-1).to(device)                        # (B, L, V) in {0,1}
+        fitnesses = scoreList  
+        if self.baseline is None:
+            self.baseline = torch.zeros(B, device=device) # (B, L)
+        adv = fitnesses - self.baseline.unsqueeze(1); 
+        self.baseline = 0.9*self.baseline + 0.1*fitnesses.mean(dim=1)
+        adv = (adv - adv.mean())/(adv.std()+1e-10)      # (B, L)
+        # log πθk(a|s)
+        p_old_exp = p_old.unsqueeze(1).expand(-1, L, -1)                # (B, L, V)
+        log_pi_old = torch.where(
+            Dk == 1.0,
+            torch.log(p_old_exp + 1e-10),
+            torch.log(1.0 - p_old_exp + 1e-10)
+        )                                                               # (B, L, V)
+        logp_old_vec = log_pi_old.sum(dim=2)                            # (B, L)
+        for _ in range(K_steps):
+            # πθ(a|s)
+            p_new = torch.sigmoid(self.theta).clamp(1e-10, 1-1e-10)     # (B, V)
+            p_new_exp = p_new.unsqueeze(1).expand(-1, L, -1)            # (B, L, V)
+            # log πθ(a|s) et ratio
+            log_pi_new = torch.where(
+                Dk == 1.0,
+                torch.log(p_new_exp + 1e-10),
+                torch.log(1.0 - p_new_exp + 1e-10)
+            )                                                           # (B, L, V)
+            logp_new_vec = log_pi_new.sum(dim=2)                        # (B, L)
+            ratio = torch.exp(logp_new_vec - logp_old_vec)              # (B, L)
+            # mean (exp(log πθ - log πθk) * adv(s,a))
+            L_per_i = (ratio * adv).mean(dim=1)                         # (B,)
+            # DKL(πθk (.|s)|πθ(.|s)).
+            KL_mean_i = self.kl_divergence(p_old, p_new).mean(dim=1)                           # (B,)
+            # ∇θ - L_{θk}(θ) + β_k ∇θ D̄_KL(θk || θ) (minimization)
+            loss_i = -L_per_i + self.beta_vector * KL_mean_i                   # (B,)
+            # Addition des losses descentes de gradient individuelles i
+            loss = loss_i.sum()
+            self.opt_ppo.zero_grad(set_to_none=True)
+            loss.backward()
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_([self.theta], max_norm=1.0)
+            self.opt_ppo.step()
 
             total_loss += loss.item()
-
-        return total_loss / N
+        with torch.no_grad():
+            p_new_final = torch.sigmoid(self.theta).clamp(1e-10, 1-1e-10)
+            KL_final_i = self.kl_divergence(p_old, p_new_final).mean(dim=1)  # (B,)
+        # if D¯KL(θk |θk+1) ≥ 1.5δ then
+        #   βk+1 ← 2βk
+        # else if D¯KL(θk |θk+1) ≤ δ/1.5 then
+        #   βk+1 ← 0.5βk
+        # version with masks
+        mask_up = KL_final_i >= 1.5 * delta_target
+        mask_down = KL_final_i <= (delta_target / 1.5)
+        self.beta_vector[mask_up]   *= 2.0
+        self.beta_vector[mask_down] *= 0.5
+        # clamping
+        self.beta_vector = torch.clamp(self.beta_vector, 1e-4, 10)
+        return total_loss / self.nb_instances
 
 
     # # Version REINFORCE
@@ -123,9 +167,9 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         # L(θ) = moyenne des fitness moins la baseline pondérées par log π
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (nb_instances,)
         loss = -loss_per_instance.sum() 
-        self.optimizerG.zero_grad(set_to_none=True)
+        self.opt_reinforce.zero_grad(set_to_none=True)
         loss.backward()
-        self.optimizerG.step()
+        self.opt_reinforce.step()
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1)  # (nb_instances,)
         return loss_per_instance.mean()
@@ -148,7 +192,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     - Diversité via learning rates différents
     """
 
-    def __init__(self, N, lambda_, beta, typeModel, dim_variables, M=4, device="cuda:0", updateMethod="REINFORCE"):
+    def __init__(self, N, lambda_, beta, typeModel, dim_variables, M=4, device="cuda:0", updateMethod="REINFORCE", K_steps=6):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
 
@@ -178,7 +222,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 0.02,
                 device, 
                 agent_number=i,
-                update_method=updateMethod
+                update_method=updateMethod,
+                K_steps=K_steps
             )
             self.agents.append(agent)
 

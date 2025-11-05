@@ -46,6 +46,7 @@ if __name__ == '__main__':
     parser.add_argument('--typeModel', type=str, default="NeuralNet", help='typeModel')
     parser.add_argument('--isUnivariate', type=int, default=0, help='isUnivariate')
     parser.add_argument('--updateMethod', type=str, default="REINFORCE", help='updateMethod for univariate PPO-EDA')
+    parser.add_argument('--K_steps', type=int, help='K_steps for PPO update in univariate PPO-EDA', default=6)
     parser.add_argument('--numberHiddenLayersG', type=int, default=1, help='numberHiddenLayersG')
     parser.add_argument('--nh', type=int, default=20, help='nh')
     
@@ -91,6 +92,7 @@ if __name__ == '__main__':
     withoutCausalMaskTraining = args.withoutCausalMaskTraining
     M = args.M
     updateMethod = args.updateMethod
+    K_steps = args.K_steps
     
     learnOrder = args.learnOrder
 
@@ -158,7 +160,7 @@ if __name__ == '__main__':
         dim_variables = None
 
 
-    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M, updateMethod=updateMethod)
+    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M, updateMethod=updateMethod, K_steps=K_steps)
         
         
     if(knownIG):
