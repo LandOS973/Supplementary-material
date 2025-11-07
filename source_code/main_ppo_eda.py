@@ -63,6 +63,15 @@ def main(cfg: DictConfig):
     typeStrategy = "PPO-EDA"
 
     print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps} beta_adapt: {beta_adapt}")
+    if cfg.agent.updateMethod == "PPO":
+        K_steps = cfg.agent.K_steps
+        beta_adapt = cfg.agent.Beta_adapt
+        delta_target = cfg.agent.delta_target
+    else:
+        # ignorés pour REINFORCE
+        K_steps = 0
+        beta_adapt = False
+        delta_target = 0.0
 
     torch.manual_seed(seed)
     np.random.seed(seed)

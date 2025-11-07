@@ -23,9 +23,28 @@ learnOrder: false
 dropoutGen: 0.0
 dropoutTrain: 0.0
 withoutCausalMaskTraining: false
-type_strategy: PPO-EDA
+type_strategy: PPO-EDA  # utilisé par ta fabrique
+# problem.dim et problem.type_instance sont définis dans le groupe "problem/*"
 
 hydra:
   run:
-    # Use problem.* fields because dim and type_instance are defined under the problem group
     dir: ${output_dir}/${problem.name}/N${problem.dim}/t${problem.type_instance}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  sweeper:
+    params:
+      # choix d’agent (les deux fichiers agent/* exposent les mêmes clés)
+      agent: ppo,reinforce
+
+      # grille commune (les clés existent dans les deux agents)
+      agent.learning_rate: 0.01,0.02,0.03
+      agent.M: 1
+      agent.K_steps: 2,4,6,8          # ignoré par REINFORCE mais présent pour éviter les erreurs
+      agent.Beta_adapt: true,false
+      agent.beta: 0.5,1.0,2.0         # REINFORCE l’utilisera si tu l’inclus dans sa loss
+      agent.delta_target: 0.001,0.0025,0.005
+
+      # problème
+      problem.dim: 64,128,256
+      problem.type_instance: 0,1,2,3
