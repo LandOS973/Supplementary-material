@@ -45,8 +45,6 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_', type=int, default=10, help='lambda : size pop EDA')
     parser.add_argument('--typeModel', type=str, default="NeuralNet", help='typeModel')
     parser.add_argument('--isUnivariate', type=int, default=0, help='isUnivariate')
-    parser.add_argument('--updateMethod', type=str, default="REINFORCE", help='updateMethod for univariate PPO-EDA')
-    parser.add_argument('--K_steps', type=int, help='K_steps for PPO update in univariate PPO-EDA', default=6)
     parser.add_argument('--numberHiddenLayersG', type=int, default=1, help='numberHiddenLayersG')
     parser.add_argument('--nh', type=int, default=20, help='nh')
     
@@ -63,7 +61,12 @@ if __name__ == '__main__':
     parser.add_argument('--withoutCausalMaskTraining', action='store_true')
 
     # Univariate EDA
-    parser.add_argument('--M', type=int, default=4, help='Number of independent univariate agents (only for univariate PPO-EDA)')
+    parser.add_argument('--M', type=int, default=1, help='Number of independent univariate agents (only for univariate PPO-EDA)')
+    parser.add_argument('--updateMethod', type=str, default="REINFORCE", help='updateMethod for univariate PPO-EDA')
+    parser.add_argument('--K_steps', type=int, help='K_steps for PPO update in univariate PPO-EDA', default=6)
+    parser.add_argument('--Beta_adapt', action='store_true', help='Beta adapt for univariate PPO-EDA', default=False)
+    parser.add_argument('--delta_target', type=float, default=0.003, help='delta_target for PPO update in univariate PPO-EDA')
+    parser.add_argument('--learning_rate', type=float, default=0.02, help='learning rate for univariate PPO-EDA')
 
 
     args = parser.parse_args()
@@ -93,8 +96,10 @@ if __name__ == '__main__':
     M = args.M
     updateMethod = args.updateMethod
     K_steps = args.K_steps
-    
+    beta_adapt = args.Beta_adapt
     learnOrder = args.learnOrder
+    delta_target = args.delta_target
+    learning_rate = args.learning_rate
 
     typeStrategy = "PPO-EDA"
     
@@ -160,7 +165,7 @@ if __name__ == '__main__':
         dim_variables = None
 
 
-    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M, updateMethod=updateMethod, K_steps=K_steps)
+    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M, updateMethod=updateMethod, K_steps=K_steps, beta_adapt=beta_adapt, delta_target=delta_target, learning_rate=learning_rate)
         
         
     if(knownIG):
