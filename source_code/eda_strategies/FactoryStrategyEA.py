@@ -22,9 +22,6 @@ class FactoryStrategyEA:
 
         elif (typeStrategy == "PPO-EDA"):
             if(isUnivariate):
-                print("Using update method: " + updateMethod + " Number of agents: " + str(M) + " with learning_rate: " + str(learning_rate) + " delta_target: " + str(delta_target))
-                if(updateMethod == "PPO"):
-                    print("Using K_steps: " + str(K_steps) + " beta adapt: " + str(beta_adapt))
                 return MultiAgentUnivariateEDA(N, lambda_, beta, typeModel, dim_variables, M, device=device, updateMethod=updateMethod, K_steps=K_steps, beta_adapt=beta_adapt, delta_target=delta_target, learning_rate=learning_rate)
             else:
                 return PPO_EDA(N,  lambda_, beta, device, typeModel,numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale)

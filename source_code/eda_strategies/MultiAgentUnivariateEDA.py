@@ -52,7 +52,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
             [self.theta], lr=self.learning_rate
         )
         self.opt_ppo = torch.optim.Adam(
-            [self.theta], lr=self.learning_rate * 2
+            [self.theta], lr=self.learning_rate
         )
 
     def sample_solutions(self):

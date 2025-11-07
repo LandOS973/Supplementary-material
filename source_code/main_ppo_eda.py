@@ -1,5 +1,7 @@
 import numpy as np
 import argparse
+import hydra
+from omegaconf import DictConfig, OmegaConf
 import datetime
 import torch
 import os
@@ -22,116 +24,78 @@ warnings.filterwarnings("ignore")
 # Replication code for the article "Black-Box Combinatorial Optimization with Order-Invariant Reinforcement Learning"
 
 
-if __name__ == '__main__':
+@hydra.main(config_path="../config", config_name="config")
+def main(cfg: DictConfig):
 
-
-    parser = argparse.ArgumentParser(description='Black-Box Combinatorial Optimization with Order-Invariant Reinforcement Learning')
-
-    #General arguments
-    parser.add_argument('type_problem', type=str, help='type_problem : QUBO, NK or NK3')
-    parser.add_argument('dim', type=int, help='Instance size')
-    parser.add_argument('type_instance', type=int,  help='Type instance. Corresponding to K for NK landscape, or to the type of PUBOi distribution for QUBO instances')
-    
-    # General options
-    parser.add_argument('--type_strategy', type=str, default="PPO_EDA", help='type_strategy : PPO-EDA, UMDA, PBIL, ')
-    parser.add_argument('--seed', type=int, default=0, help='random seed')
-    parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--device', type=str, default="cuda:0", help='device')
-    parser.add_argument('--nb_instances_test', type=int, default=10, help="Number of different instances for the test")
-    parser.add_argument('--nb_restarts', type=int, default=10, help="Nb restarts")
-    parser.add_argument('--budget', type=int, default=10000, help='number of calls to the objective function')
-    
-    # Multivariate EDA variants
-    parser.add_argument('--lambda_', type=int, default=10, help='lambda : size pop EDA')
-    parser.add_argument('--typeModel', type=str, default="NeuralNet", help='typeModel')
-    parser.add_argument('--isUnivariate', type=int, default=0, help='isUnivariate')
-    parser.add_argument('--numberHiddenLayersG', type=int, default=1, help='numberHiddenLayersG')
-    parser.add_argument('--nh', type=int, default=20, help='nh')
-    
-    #RL options
-    parser.add_argument('--beta', type=float, default=1, help='beta : KL coefficient')
-    
-    # RL variants
-    parser.add_argument('--knownIG', action='store_true')
-    parser.add_argument('--fixSamplingOrder', action='store_true')
-    parser.add_argument('--fixUpdateOrder', action='store_true')
-    parser.add_argument('--learnOrder', action='store_true')
-    parser.add_argument('--dropoutGen', type=float, default=0.0, help='additive structural dropout during generation')
-    parser.add_argument('--dropoutTrain', type=float, default=0.0, help='additive structural dropout during learning')
-    parser.add_argument('--withoutCausalMaskTraining', action='store_true')
-
-    # Univariate EDA
-    parser.add_argument('--M', type=int, default=1, help='Number of independent univariate agents (only for univariate PPO-EDA)')
-    parser.add_argument('--updateMethod', type=str, default="REINFORCE", help='updateMethod for univariate PPO-EDA')
-    parser.add_argument('--K_steps', type=int, help='K_steps for PPO update in univariate PPO-EDA', default=6)
-    parser.add_argument('--Beta_adapt', action='store_true', help='Beta adapt for univariate PPO-EDA', default=False)
-    parser.add_argument('--delta_target', type=float, default=0.003, help='delta_target for PPO update in univariate PPO-EDA')
-    parser.add_argument('--learning_rate', type=float, default=0.02, help='learning rate for univariate PPO-EDA')
-
-
-    args = parser.parse_args()
-
-    device = args.device
-    type_strategy = args.type_strategy
-    dim = args.dim
-    type_instance = args.type_instance
-    type_problem = args.type_problem
-    nb_restarts = args.nb_restarts
-    nb_instances_test = args.nb_instances_test
-    seed = args.seed
-    lambda_ = args.lambda_
-    verbose = args.verbose
-    budget = args.budget
-    typeModel = args.typeModel
-    isUnivariate = args.isUnivariate
-    knownIG = args.knownIG
-    fixSamplingOrder = args.fixSamplingOrder
-    fixUpdateOrder = args.fixUpdateOrder
-    numberHiddenLayersG = args.numberHiddenLayersG
-    nh = args.nh
-    beta = args.beta
-    dropoutGen = args.dropoutGen
-    dropoutTrain = args.dropoutTrain
-    withoutCausalMaskTraining = args.withoutCausalMaskTraining
-    M = args.M
-    updateMethod = args.updateMethod
-    K_steps = args.K_steps
-    beta_adapt = args.Beta_adapt
-    learnOrder = args.learnOrder
-    delta_target = args.delta_target
-    learning_rate = args.learning_rate
+    # Support keeping the original variable names used previously; read them from Hydra cfg
+    device = cfg.device
+    type_strategy = cfg.agent.name if 'agent' in cfg and 'name' in cfg.agent else cfg.get('type_strategy', "PPO_EDA")
+    type_problem = cfg.problem.name if 'problem' in cfg and 'name' in cfg.problem else cfg.get('type_problem', 'QUBO')
+    print(f"Running with problem type: {type_problem}")
+    dim = cfg.problem.dim if 'problem' in cfg and 'dim' in cfg.problem else cfg.get('dim', 64)
+    type_instance = cfg.problem.type_instance if 'problem' in cfg and 'type_instance' in cfg.problem else cfg.get('type_instance', 1)
+    print(f"Running with dim={dim}, type_instance={type_instance}")
+    nb_restarts = int(cfg.nb_restarts)
+    nb_instances_test = int(cfg.nb_instances_test)
+    seed = int(cfg.seed)
+    lambda_ = int(cfg.get('lambda', cfg.get('lambda_', 10)))
+    verbose = bool(cfg.verbose)
+    budget = int(cfg.budget)
+    typeModel = cfg.typeModel
+    isUnivariate = int(cfg.isUnivariate)
+    knownIG = bool(cfg.knownIG)
+    fixSamplingOrder = bool(cfg.fixSamplingOrder)
+    fixUpdateOrder = bool(cfg.fixUpdateOrder)
+    numberHiddenLayersG = int(cfg.numberHiddenLayersG)
+    nh = int(cfg.nh)
+    beta = float(cfg.get('beta', 1.0))
+    dropoutGen = float(cfg.dropoutGen)
+    dropoutTrain = float(cfg.dropoutTrain)
+    withoutCausalMaskTraining = bool(cfg.withoutCausalMaskTraining)
+    M = int(cfg.agent.get('M', cfg.get('M', 1))) if 'agent' in cfg else int(cfg.get('M', 1))
+    updateMethod = cfg.agent.get('updateMethod', cfg.get('updateMethod', 'REINFORCE')) if 'agent' in cfg else cfg.get('updateMethod', 'REINFORCE')
+    K_steps = int(cfg.agent.get('K_steps', cfg.get('K_steps', 6))) if 'agent' in cfg else int(cfg.get('K_steps', 6))
+    beta_adapt = bool(cfg.agent.get('Beta_adapt', cfg.get('Beta_adapt', False))) if 'agent' in cfg else bool(cfg.get('Beta_adapt', False))
+    learnOrder = bool(cfg.learnOrder)
+    delta_target = float(cfg.agent.get('delta_target', cfg.get('delta_target', 0.003))) if 'agent' in cfg else float(cfg.get('delta_target', 0.003))
+    learning_rate = float(cfg.agent.get('learning_rate', cfg.get('learning_rate', 0.02))) if 'agent' in cfg else float(cfg.get('learning_rate', 0.02))
 
     typeStrategy = "PPO-EDA"
-    
-    
+
+    print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps} beta_adapt: {beta_adapt}")
+
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
     N = dim
 
-    if not os.path.exists("results/results_Multivariate-RL-EDA/" + typeStrategy ):
-        os.mkdir("results/results_Multivariate-RL-EDA/" + typeStrategy)
-
-    if not os.path.exists("results/results_Multivariate-RL-EDA/" + typeStrategy + "/" + type_problem ):
-        os.mkdir("results/results_Multivariate-RL-EDA/" + typeStrategy + "/" + str(type_problem))
-        
-    if not os.path.exists("results/results_Multivariate-RL-EDA/" + typeStrategy + "/" + type_problem + "/" + str(dim) ):
-        os.mkdir("results/results_Multivariate-RL-EDA/" + typeStrategy + "/" + type_problem + "/" + str(dim))
-
-    if not os.path.exists("results/results_Multivariate-RL-EDA/" + typeStrategy + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance) ):
-        os.mkdir("results/results_Multivariate-RL-EDA/" + typeStrategy + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance))
-    
-    pathResult = "results/results_Multivariate-RL-EDA/" + typeStrategy + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance) + "/"
-
-    name_file_result = "Test_" + type_strategy + "_" + type_problem +  "_N_" +  str(N) + "_t_" +  str(type_instance) + "_lambda_"  + str(lambda_) + "_beta_"  + str(beta) + "_typeModel_" + str(typeModel) + "_learnOrder_" + str(learnOrder) + "_knownIG_" + str(knownIG) + "_fixSamplingOrder_" + str(fixSamplingOrder) + "_fixUpdateOrder_" + str(fixUpdateOrder) + "_L_" + str(numberHiddenLayersG) + "_nh_" + str(nh)  + "_dGen_" + str(dropoutGen) + "_dTrain_" + str(dropoutTrain) + "_wCMaskTrain_" + str(withoutCausalMaskTraining)   + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
+    # Build results path relative to this script file (so it works regardless of current working dir)
+    script_dir = os.path.abspath(os.path.dirname(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    pathResult = os.path.join(repo_root, "results", "results_Multivariate-RL-EDA", typeStrategy, str(type_problem), str(dim), str(type_instance)) + os.sep
+    os.makedirs(pathResult, exist_ok=True)
     
 
     if (type_problem == "QUBO"):
 
-        instance_path = "instances/QUBO/"
-        tensor_Q_test = getTensorInstances_QUBO(instance_path, nb_instances_test, nb_restarts, N, type_instance, device,
-                                                "test")
+        # Instances live under source_code/instances in this repo; resolve absolute path
+        # add trailing sep because downstream loader concatenates filenames
+        instance_path = os.path.join(script_dir, "instances", "QUBO") + os.sep
+        try:
+            tensor_Q_test = getTensorInstances_QUBO(instance_path, nb_instances_test, nb_restarts, N, type_instance, device,
+                                                    "test")
+        except FileNotFoundError as e:
+            # fallback to a default dimension if requested instances not available
+            fallback_dim = 64
+            print(f"Requested problem dim={N} not available; falling back to default dim={fallback_dim}.")
+            N = fallback_dim
+            dim = fallback_dim
+            # recompute pathResult for fallback dim
+            pathResult = os.path.join(repo_root, "results", "results_Multivariate-RL-EDA", typeStrategy, str(type_problem), str(dim), str(type_instance)) + os.sep
+            os.makedirs(pathResult, exist_ok=True)
+            tensor_Q_test = getTensorInstances_QUBO(instance_path, nb_instances_test, nb_restarts, N, type_instance, device,
+                                                    "test")
     elif(type_problem == "NK"):
 
         D = 2
@@ -140,8 +104,8 @@ if __name__ == '__main__':
             vectorIndex[i] = D ** (type_instance - i)
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
 
-
-        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK("instances/nk/" + str(dim) + "/" + str(type_instance) + "/", nb_instances_test, nb_restarts, lambda_, dim, D, type_instance, device)
+        nk_path = os.path.join(script_dir, "instances", "nk", str(dim), str(type_instance)) + os.sep
+        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(nk_path, nb_instances_test, nb_restarts, lambda_, dim, D, type_instance, device)
 
     elif(type_problem == "NK3"):
 
@@ -151,8 +115,8 @@ if __name__ == '__main__':
             vectorIndex[i] = D ** (type_instance - i)
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
 
-
-        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK("instances/nk3/" + str(dim) + "/" + str(type_instance) + "/", nb_instances_test, nb_restarts, lambda_, dim, D, type_instance, device)
+        nk3_path = os.path.join(script_dir, "instances", "nk3", str(dim), str(type_instance)) + os.sep
+        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(nk3_path, nb_instances_test, nb_restarts, lambda_, dim, D, type_instance, device)
 
 
 
@@ -191,6 +155,9 @@ if __name__ == '__main__':
 
     
 
+    # Build result filename now that dim (and pathResult) are final
+    name_file_result = "Test_" + type_strategy + "_" + type_problem +  "_N_" +  str(N) + "_t_" +  str(type_instance) + "_lambda_"  + str(lambda_) + "_beta_"  + str(beta) + "_typeModel_" + str(typeModel) + "_learnOrder_" + str(learnOrder) + "_knownIG_" + str(knownIG) + "_fixSamplingOrder_" + str(fixSamplingOrder) + "_fixUpdateOrder_" + str(fixUpdateOrder) + "_L_" + str(numberHiddenLayersG) + "_nh_" + str(nh)  + "_dGen_" + str(dropoutGen) + "_dTrain_" + str(dropoutTrain) + "_wCMaskTrain_" + str(withoutCausalMaskTraining)   + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
+
     if (type_problem == "QUBO"):
         list_scores = get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances_test, nb_restarts, budget, lambda_, tensor_Q_test, device, verbose, pathResult + name_file_result)
     
@@ -207,6 +174,12 @@ if __name__ == '__main__':
 
     print("average_test_score : " + str(average_test_score))
     
-    
+
+
+if __name__ == '__main__':
+    # Run hydra main
+    main()
+
+
 
 
