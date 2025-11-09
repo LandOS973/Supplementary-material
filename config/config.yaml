@@ -1,4 +1,5 @@
 defaults:
+  - hydra/sweeper: filter
   - problem: qubo
   - agent: ppo
   - _self_
@@ -27,24 +28,28 @@ type_strategy: PPO-EDA  # utilisé par ta fabrique
 # problem.dim et problem.type_instance sont définis dans le groupe "problem/*"
 
 hydra:
-  run:
-    dir: ${output_dir}/${problem.name}/N${problem.dim}/t${problem.type_instance}/${agent.name}/${now:%Y-%m-%d_%H-%M-%S}
-  sweep:
-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}
   sweeper:
     params:
-      # choix d’agent (les deux fichiers agent/* exposent les mêmes clés)
       agent: ppo,reinforce
-
-      # grille commune (les clés existent dans les deux agents)
       agent.learning_rate: 0.01,0.02,0.03
       agent.M: 1
-      agent.K_steps: 2,4,6,8          # ignoré par REINFORCE mais présent pour éviter les erreurs
+      agent.K_steps: 2,4,6,8
       agent.Beta_adapt: true,false
-      agent.beta: 0.5,1.0,2.0         # REINFORCE l’utilisera si tu l’inclus dans sa loss
+      agent.beta: 0.5,1.0,2.0
       agent.delta_target: 0.001,0.0025,0.005
-
-      # problème
       problem.dim: 64,128,256
       problem.type_instance: 0,1,2,3
+
+    filters:
+      # 1) Si agent=reinforce ⇒ garder une seule combi (K_steps=2, Beta_adapt=False, delta_target=0.001)
+      - hydra_filter_sweeper.Expression:
+          expr: "agent == 'reinforce' and (agent['K_steps'] != 2 or agent['Beta_adapt'] != False or agent['delta_target'] != 0.001)"
+
+      # 2) Si Beta_adapt=True ⇒ ne pas balayer beta (on fige beta=1.0)
+      - hydra_filter_sweeper.Expression:
+          expr: "agent['Beta_adapt'] == True and agent['beta'] != 1.0"
+
+      # 3) Si Beta_adapt=False ⇒ ne pas balayer delta_target (on fige delta_target=0.001)
+      - hydra_filter_sweeper.Expression:
+          expr: "agent['Beta_adapt'] == False and agent['delta_target'] != 0.001"
+
