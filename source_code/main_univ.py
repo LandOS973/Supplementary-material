@@ -64,12 +64,12 @@ DEFAULTS = dict(
 # =========================
 GRID = dict(
     agent=["ppo", "reinforce"],
-    agent_learning_rate=[0.01, 0.02, 0.03],
+    agent_learning_rate=[0.01, 0.15, 0.02, 0.035, 0.05],
     agent_M=[1],
-    agent_K_steps=[2, 4, 6, 8],
+    agent_K_steps=[2, 3, 4, 6, 8, 12],
     agent_Beta_adapt=[True, False],
-    agent_beta=[0.5, 1.0, 2.0],
-    agent_delta_target=[0.001, 0.0025, 0.005],
+    agent_beta=[0.5, 1.0],
+    agent_delta_target=[0.0025, 0.006],
     problem_dim=[64, 128, 256],
     problem_type_instance=[0, 1, 2, 3, 4, 5],
 )
