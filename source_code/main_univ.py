@@ -5,12 +5,14 @@ import os
 import json
 import datetime
 import itertools
+import time
 from pathlib import Path
 from collections import defaultdict
 
 import numpy as np
 import torch
 import random
+import tempfile
 
 # --- imports projet (identiques à ton main) ---
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
@@ -19,8 +21,8 @@ from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 # ------------------------------------------------
 
 """
-Sweep avec mêmes defaults / grille / filtres que ton Hydra,
-affiche UNE SEULE barre tqdm par run (celle interne des fonctions get_Score_*),
+Sweep avec mêmes defaults / grille / filtres (type_instance 0..5),
+affiche UNE SEULE barre tqdm par run (on passe un fichier temporaire, puis on le supprime),
 et logge à chaque changement de config.
 
 Agrégation écrite dans:
@@ -28,6 +30,7 @@ Agrégation écrite dans:
 - results/aggregation/best_algo_overview.csv  (avec winner_avg_best_score)
 - results/aggregation/sweep_summary.json
 - results/aggregation/best_algo_summary.txt
+- results/aggregation/winner_stats.csv        (runtime + stats du vainqueur par groupe)
 """
 
 # =========================
@@ -68,7 +71,7 @@ GRID = dict(
     agent_beta=[0.5, 1.0, 2.0],
     agent_delta_target=[0.001, 0.0025, 0.005],
     problem_dim=[64, 128, 256],
-    problem_type_instance=[0, 1, 2, 3],
+    problem_type_instance=[0, 1, 2, 3, 4, 5],
 )
 
 # =========================
@@ -196,11 +199,12 @@ def main():
     per_instance_best = dict()              # key: (problem, dim, type_instance, idx) -> (best_score, algo_key)
     per_inst_algo_best = defaultdict(dict)  # key -> {algo_key: best_score}
     sweep_runs_summaries = []               # audit global des runs
+    runtime_by_group = defaultdict(float)   # key: (problem, dim, type_instance) -> seconds cumulés (vainqueur final)
 
     # Boucle d’expérimentation
     for i, cfg in enumerate(combos, 1):
         device = DEFAULTS["device"]
-        verbose = DEFAULTS["verbose"]  # on laisse True pour avoir LA barre interne unique
+        verbose = DEFAULTS["verbose"]  # True pour laisser UNE barre interne
         nb_instances_test = DEFAULTS["nb_instances_test"]
         nb_restarts = DEFAULTS["nb_restarts"]
         budget = DEFAULTS["budget"]
@@ -315,7 +319,7 @@ def main():
         )
 
         # IG / ordres
-        if knownIG and type_problem in ("QUBO", "NK", "NK3"):
+        if DEFAULTS["knownIG"] and type_problem in ("QUBO", "NK", "NK3"):
             DAG = tensor_Q_test.unsqueeze(1).repeat(1, lambda_, 1, 1).to(device)
             DAG = torch.where(DAG != 0, 1, 0)
             strategy.setKnownDAG(DAG)
@@ -328,20 +332,30 @@ def main():
         if DEFAULTS["fixUpdateOrder"]:
             strategy.setSameDagTraining()
 
-        # ---- Exécution avec chemin = os.devnull pour n'avoir QU'UNE barre interne ----
-        sink = os.devnull
-        if type_problem == "QUBO":
-            list_scores = get_Score_trajectoriesQUBO_cuda(
-                strategy, dim, nb_instances_test, nb_restarts, budget, lambda_,
-                tensor_Q_test, device, verbose, sink
-            )
-        elif type_problem in ("NK", "NK3"):
-            list_scores = get_Score_trajectoriesNK_cuda(
-                strategy, dim, type_instance, D, nb_instances_test, nb_restarts, budget, lambda_,
-                vectorIndex_th, tensor_matrix_locus, tensor_matrix_contrib, device, verbose, sink
-            )
-        else:
-            raise ValueError("Cas non prévu")
+        # ---- Exécution avec chemin TEMPORAIRE (UNE barre), puis suppression immédiate ----
+        t0 = time.time()
+        with tempfile.NamedTemporaryFile(prefix="rl_eda_", suffix=".log", delete=False) as tmpf:
+            temp_path = tmpf.name
+        try:
+            if type_problem == "QUBO":
+                list_scores = get_Score_trajectoriesQUBO_cuda(
+                    strategy, dim, nb_instances_test, nb_restarts, budget, lambda_,
+                    tensor_Q_test, device, verbose, temp_path
+                )
+            elif type_problem in ("NK", "NK3"):
+                list_scores = get_Score_trajectoriesNK_cuda(
+                    strategy, dim, type_instance, D, nb_instances_test, nb_restarts, budget, lambda_,
+                    vectorIndex_th, tensor_matrix_locus, tensor_matrix_contrib, device, verbose, temp_path
+                )
+            else:
+                raise ValueError("Cas non prévu")
+        finally:
+            # on supprime systématiquement le fichier temporaire
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+        dt = time.time() - t0
 
         avg_score = float(np.mean(
             list_scores if isinstance(list_scores, (list, tuple))
@@ -352,15 +366,18 @@ def main():
 
         # Mise à jour "meilleur algo par instance"
         algo_key = f"{updateMethod}:{DEFAULTS['type_strategy']}:lr{learning_rate}:K{K_steps}:BetaAdapt{Beta_adapt}:beta{beta_param}:delta{delta_target}:M{M}"
+        group_key = (type_problem, dim, type_instance)
+
         for inst_idx, rest_scores in enumerate(by_instance):
             best_on_restarts = max(rest_scores) if rest_scores else float("-inf")
-            key = (type_problem, dim, type_instance, inst_idx)
-            per_inst_algo_best[key][algo_key] = best_on_restarts
-            prev = per_instance_best.get(key, (float("-inf"), None))
+            inst_key = (type_problem, dim, type_instance, inst_idx)
+            per_inst_algo_best[inst_key][algo_key] = best_on_restarts
+            prev = per_instance_best.get(inst_key, (float("-inf"), None))
             if best_on_restarts > prev[0]:
-                per_instance_best[key] = (best_on_restarts, algo_key)
+                per_instance_best[inst_key] = (best_on_restarts, algo_key)
 
-        nowstamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        # On accumule le temps sur ce groupe pour l’algo qui gagnera au final (on le saura plus tard)
+        # => on stocke le runtime de ce run, et on réaffectera au vainqueur au moment du calcul des stats
         sweep_runs_summaries.append({
             "problem": type_problem,
             "dim": dim,
@@ -377,10 +394,11 @@ def main():
             "beta_param": beta_param,
             "delta_target": delta_target,
             "avg_score": avg_score,
-            "timestamp": nowstamp,
+            "runtime_sec": dt,
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
         })
 
-        print(f"   ↳ avg_score={avg_score:.6f}")
+        print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
 
     # ===== Écriture des logs finaux =====
     agg_outdir = os.path.join(repo_root, "results", "aggregation")
@@ -396,7 +414,7 @@ def main():
     Path(per_instance_csv).write_text("\n".join(lines), encoding="utf-8")
     print(f"[OK] Écrit: {per_instance_csv}")
 
-    # 2) Vue overview + moyenne du vainqueur
+    # 2) Vue overview + moyenne du vainqueur, et calcul du vainqueur par groupe
     tally = defaultdict(lambda: defaultdict(int))
     for key, val in per_instance_best.items():
         (problem, dim, type_instance, inst_idx) = key
@@ -405,10 +423,13 @@ def main():
 
     lines2 = ["problem,dim,type_instance,winner_algo,wins,n_instances,winner_avg_best_score"]
     human_lines = []
+    winner_for_group = {}  # (problem,dim,type_instance) -> winner_algo
+
     for k, counter in sorted(tally.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])):
         problem, dim, type_instance = k
         wins_total = sum(counter.values())
         winner_algo, wins = max(counter.items(), key=lambda kv: kv[1])
+        winner_for_group[k] = winner_algo
 
         scores_for_winner = []
         for inst_idx in range(DEFAULTS["nb_instances_test"]):
@@ -447,6 +468,40 @@ def main():
     ]
     Path(pretty_txt).write_text("\n".join(header), encoding="utf-8")
     print(f"[OK] Écrit: {pretty_txt}")
+
+    # 5) Stats du vainqueur par groupe (runtime + distribution des meilleurs scores par instance)
+    #    Colonnes: problem,dim,type_instance,winner_algo,runtime_sec,mean,median,std,p2,p5,p10,p25,p50,p75,p90,p95,p98
+    #    Le runtime reporté est la somme des temps des runs appartenant au vainqueur du groupe.
+    runtime_accum = defaultdict(float)
+    for run in sweep_runs_summaries:
+        g = (run["problem"], run["dim"], run["type_instance"])
+        if winner_for_group.get(g) == run["algo_key"]:
+            runtime_accum[g] += float(run.get("runtime_sec", 0.0))
+
+    stats_lines = ["problem,dim,type_instance,winner_algo,runtime_sec,mean,median,std,p2,p5,p10,p25,p50,p75,p90,p95,p98"]
+    for g, w_algo in sorted(winner_for_group.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])):
+        problem, dim, type_instance = g
+        vals = []
+        for inst_idx in range(DEFAULTS["nb_instances_test"]):
+            key_inst = (problem, dim, type_instance, inst_idx)
+            if w_algo in per_inst_algo_best.get(key_inst, {}):
+                vals.append(per_inst_algo_best[key_inst][w_algo])
+        if len(vals) == 0:
+            continue
+        arr = np.array(vals, dtype=float)
+        mean = float(np.mean(arr))
+        median = float(np.median(arr))
+        std = float(np.std(arr, ddof=0))
+        pcts = np.percentile(arr, [2,5,10,25,50,75,90,95,98]).tolist()
+        runtime_sec = runtime_accum.get(g, 0.0)
+        stats_lines.append(
+            f"{problem},{dim},{type_instance},{w_algo},{runtime_sec:.3f},{mean},{median},{std},"
+            + ",".join(str(x) for x in pcts)
+        )
+
+    winner_stats_csv = os.path.join(agg_outdir, "winner_stats.csv")
+    Path(winner_stats_csv).write_text("\n".join(stats_lines), encoding="utf-8")
+    print(f"[OK] Écrit: {winner_stats_csv}")
 
 
 if __name__ == "__main__":
