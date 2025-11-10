@@ -70,6 +70,8 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     
     def kl_divergence(self, p, q):
         """Calcule la divergence KL entre deux distributions de Bernoulli p et q."""
+        p = torch.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0).clamp(1e-10, 1-1e-10)
+        q = torch.nan_to_num(q, nan=0.5, posinf=1.0, neginf=0.0).clamp(1e-10, 1-1e-10)
         return kl_divergence(Bernoulli(probs=p), Bernoulli(probs=q))
     
     def updateDistributionPPO(self, solutionList, scoreList):

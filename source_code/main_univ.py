@@ -3,6 +3,7 @@
 
 import os
 import json
+import csv
 import datetime
 import itertools
 import time
@@ -64,9 +65,9 @@ DEFAULTS = dict(
 # =========================
 GRID = dict(
     agent=["ppo", "reinforce"],
-    agent_learning_rate=[0.01, 0.15, 0.02, 0.035, 0.05],
+    agent_learning_rate=[0.01, 0.015, 0.02, 0.035, 0.05],
     agent_M=[1],
-    agent_K_steps=[2, 3, 4, 6, 8, 12],
+    agent_K_steps=[3, 4, 6, 8, 12, 16],
     agent_Beta_adapt=[True, False],
     agent_beta=[0.5, 1.0],
     agent_delta_target=[0.0025, 0.006],
@@ -173,6 +174,92 @@ def flat_or_matrix_to_instances(list_scores, nb_instances, nb_restarts):
     raise ValueError(f"Format list_scores non supporté (type={t}). Aperçu={head}")
 
 
+def rank_vs_global_ranking(repo_root: str, dim: int, type_instance: int, my_score: float):
+    path = os.path.join(
+        repo_root, "additional_results", "global_ranking",
+        f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+    )
+    if not os.path.isfile(path):
+        return None, None, None, 0, None
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            rows = [row for row in reader if row]
+        if not rows:
+            return None, None, None, 0, None
+
+        header = [h.strip().lower() for h in rows[0]]
+        rows = rows[1:]
+
+        algo_candidates = ["name_algo", "algo", "algorithm", "name"]
+        score_candidates = ["score", "best_score", "value", "objective", "obj"]
+
+        def find_idx(cands):
+            for c in cands:
+                if c in header:
+                    return header.index(c)
+            return None
+
+        idx_algo = find_idx(algo_candidates)
+        idx_score = find_idx(score_candidates)
+        if idx_score is None:
+            return None, None, None, 0, None
+
+        entries = []
+        for r in rows:
+            if idx_score >= len(r):
+                continue
+            try:
+                s = float(r[idx_score])
+            except Exception:
+                continue
+            name = r[idx_algo] if (idx_algo is not None and idx_algo < len(r)) else "unknown"
+            entries.append((name, s))
+
+        if not entries:
+            return None, None, None, 0, None
+
+        scores_only = [s for _, s in entries]
+        n = len(scores_only)
+
+        # --- Détection du sens ---
+        # Heuristique: si >80% des scores CSV sont positifs et ton score est négatif,
+        # on suppose que ton score est un coût (à minimiser) -> on compare avec -my_score
+        frac_pos = sum(1 for s in scores_only if s > 0) / max(1, n)
+        flip_sign = (frac_pos > 0.8 and my_score < 0)
+
+        def to_cmp(v):
+            return (-v) if flip_sign else v
+
+        # Meilleur dans le fichier (selon le sens détecté)
+        if flip_sign:
+            # Si on “minimise” côté toi, mais le CSV semble en “maximise”,
+            # alors le meilleur dans le CSV reste celui au score max (ils sont déjà positifs).
+            best_algo, best_score = max(entries, key=lambda t: t[1])
+        else:
+            # Cas standard “on maximise”
+            best_algo, best_score = max(entries, key=lambda t: t[1])
+
+        my_cmp = to_cmp(my_score)
+
+        # Rang de ton score comparé aux scores CSV (1 = meilleur).
+        # On compare dans le même sens que le CSV (max).
+        # my_rank = 1 + nombre de scores strictement supérieurs à my_cmp
+        count_gt = sum(1 for s in scores_only if s > my_cmp)
+        my_rank = 1 + count_gt
+        # Clamp [1..n] pour éviter n+1 quand on est en-dessous de tout.
+        my_rank = min(max(1, my_rank), n)
+
+        # Percentile (100% = top, 0% ~ dernier)
+        my_percentile = 100.0 * (n - my_rank + 1) / n if n > 0 else None
+
+        return best_algo, best_score, my_rank, n, my_percentile
+
+    except Exception:
+        return None, None, None, 0, None
+
+
 # =========================
 # 5) Programme principal
 # =========================
@@ -199,7 +286,6 @@ def main():
     per_instance_best = dict()              # key: (problem, dim, type_instance, idx) -> (best_score, algo_key)
     per_inst_algo_best = defaultdict(dict)  # key -> {algo_key: best_score}
     sweep_runs_summaries = []               # audit global des runs
-    runtime_by_group = defaultdict(float)   # key: (problem, dim, type_instance) -> seconds cumulés (vainqueur final)
 
     # Boucle d’expérimentation
     for i, cfg in enumerate(combos, 1):
@@ -209,11 +295,6 @@ def main():
         nb_restarts = DEFAULTS["nb_restarts"]
         budget = DEFAULTS["budget"]
         lambda_ = DEFAULTS["lambda_"]
-        typeModel = DEFAULTS["typeModel"]
-        isUnivariate = DEFAULTS["isUnivariate"]
-        knownIG = DEFAULTS["knownIG"]
-        fixSamplingOrder = DEFAULTS["fixSamplingOrder"]
-        fixUpdateOrder = DEFAULTS["fixUpdateOrder"]
         learnOrder = DEFAULTS["learnOrder"]
         dropoutGen = DEFAULTS["dropoutGen"]
         dropoutTrain = DEFAULTS["dropoutTrain"]
@@ -377,7 +458,6 @@ def main():
                 per_instance_best[inst_key] = (best_on_restarts, algo_key)
 
         # On accumule le temps sur ce groupe pour l’algo qui gagnera au final (on le saura plus tard)
-        # => on stocke le runtime de ce run, et on réaffectera au vainqueur au moment du calcul des stats
         sweep_runs_summaries.append({
             "problem": type_problem,
             "dim": dim,
@@ -399,6 +479,14 @@ def main():
         })
 
         print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+
+        # --- Affichage ranking global (meilleur + rang de ton avg) ---
+        best_algo, best_score, my_rank, n_rank, my_pct = rank_vs_global_ranking(repo_root, dim, type_instance, avg_score)
+        if best_algo is not None:
+            pct_str = f"{my_pct:.1f}%" if my_pct is not None else "n/a"
+            print(f"   ↳ ranking file: best={best_algo} ({best_score:.2f}) | your avg rank: {my_rank}/{n_rank} ({pct_str})")
+        else:
+            print("   ↳ ranking file: introuvable/illisible pour ce groupe (pas d'affichage).")
 
     # ===== Écriture des logs finaux =====
     agg_outdir = os.path.join(repo_root, "results", "aggregation")
