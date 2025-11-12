@@ -52,21 +52,28 @@ def main(cfg: DictConfig):
     dropoutGen = float(cfg.dropoutGen)
     dropoutTrain = float(cfg.dropoutTrain)
     withoutCausalMaskTraining = bool(cfg.withoutCausalMaskTraining)
-    M = int(cfg.agent.get('M', cfg.get('M', 1))) if 'agent' in cfg else int(cfg.get('M', 1))
-    updateMethod = cfg.agent.get('updateMethod', cfg.get('updateMethod', 'REINFORCE')) if 'agent' in cfg else cfg.get('updateMethod', 'REINFORCE')
-    K_steps = int(cfg.agent.get('K_steps', cfg.get('K_steps', 6))) if 'agent' in cfg else int(cfg.get('K_steps', 6))
-    beta_adapt = bool(cfg.agent.get('Beta_adapt', cfg.get('Beta_adapt', False))) if 'agent' in cfg else bool(cfg.get('Beta_adapt', False))
+    # safe getter for possibly nested agent configs (cfg.agent can be a string when only the group name is set)
+    def oget(path, default=None):
+        try:
+            val = OmegaConf.select(cfg, path)
+            return val if val is not None else default
+        except Exception:
+            return default
+
+    M = int(oget('agent.M', oget('M', 1)))
+    updateMethod = oget('agent.updateMethod', oget('updateMethod', 'REINFORCE'))
+    K_steps = int(oget('agent.K_steps', oget('K_steps', 6)))
+    beta_adapt = bool(oget('agent.Beta_adapt', oget('Beta_adapt', False)))
     learnOrder = bool(cfg.learnOrder)
-    delta_target = float(cfg.agent.get('delta_target', cfg.get('delta_target', 0.003))) if 'agent' in cfg else float(cfg.get('delta_target', 0.003))
-    learning_rate = float(cfg.agent.get('learning_rate', cfg.get('learning_rate', 0.02))) if 'agent' in cfg else float(cfg.get('learning_rate', 0.02))
+    delta_target = float(oget('agent.delta_target', oget('delta_target', 0.003)))
+    learning_rate = float(oget('agent.learning_rate', oget('learning_rate', 0.02)))
 
     typeStrategy = "PPO-EDA"
 
     print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps} beta_adapt: {beta_adapt}")
-    if cfg.agent.updateMethod == "PPO":
-        K_steps = cfg.agent.K_steps
-        beta_adapt = cfg.agent.Beta_adapt
-        delta_target = cfg.agent.delta_target
+    if updateMethod == "PPO":
+        # keep values already read from config via oget; nothing to do
+        pass
     else:
         # ignorés pour REINFORCE
         K_steps = 0
@@ -82,8 +89,11 @@ def main(cfg: DictConfig):
     # Build results path relative to this script file (so it works regardless of current working dir)
     script_dir = os.path.abspath(os.path.dirname(__file__))
     repo_root = os.path.abspath(os.path.join(script_dir, ".."))
-    pathResult = os.path.join(repo_root, "results", "results_Multivariate-RL-EDA", typeStrategy, str(type_problem), str(dim), str(type_instance)) + os.sep
-    os.makedirs(pathResult, exist_ok=True)
+    write_logs = bool(cfg.get('write_logs', False))
+    pathResult = None
+    if write_logs:
+        pathResult = os.path.join(repo_root, "results", "results_Multivariate-RL-EDA", typeStrategy, str(type_problem), str(dim), str(type_instance)) + os.sep
+        os.makedirs(pathResult, exist_ok=True)
     
 
     if (type_problem == "QUBO"):
@@ -101,8 +111,9 @@ def main(cfg: DictConfig):
             N = fallback_dim
             dim = fallback_dim
             # recompute pathResult for fallback dim
-            pathResult = os.path.join(repo_root, "results", "results_Multivariate-RL-EDA", typeStrategy, str(type_problem), str(dim), str(type_instance)) + os.sep
-            os.makedirs(pathResult, exist_ok=True)
+            if write_logs:
+                pathResult = os.path.join(repo_root, "results", "results_Multivariate-RL-EDA", typeStrategy, str(type_problem), str(dim), str(type_instance)) + os.sep
+                os.makedirs(pathResult, exist_ok=True)
             tensor_Q_test = getTensorInstances_QUBO(instance_path, nb_instances_test, nb_restarts, N, type_instance, device,
                                                     "test")
     elif(type_problem == "NK"):
@@ -165,16 +176,20 @@ def main(cfg: DictConfig):
     
 
     # Build result filename now that dim (and pathResult) are final
-    name_file_result = "Test_" + type_strategy + "_" + type_problem +  "_N_" +  str(N) + "_t_" +  str(type_instance) + "_lambda_"  + str(lambda_) + "_beta_"  + str(beta) + "_typeModel_" + str(typeModel) + "_learnOrder_" + str(learnOrder) + "_knownIG_" + str(knownIG) + "_fixSamplingOrder_" + str(fixSamplingOrder) + "_fixUpdateOrder_" + str(fixUpdateOrder) + "_L_" + str(numberHiddenLayersG) + "_nh_" + str(nh)  + "_dGen_" + str(dropoutGen) + "_dTrain_" + str(dropoutTrain) + "_wCMaskTrain_" + str(withoutCausalMaskTraining)   + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
+    if write_logs:
+        name_file_result = "Test_" + type_strategy + "_" + type_problem +  "_N_" +  str(N) + "_t_" +  str(type_instance) + "_lambda_"  + str(lambda_) + "_beta_"  + str(beta) + "_typeModel_" + str(typeModel) + "_learnOrder_" + str(learnOrder) + "_knownIG_" + str(knownIG) + "_fixSamplingOrder_" + str(fixSamplingOrder) + "_fixUpdateOrder_" + str(fixUpdateOrder) + "_L_" + str(numberHiddenLayersG) + "_nh_" + str(nh)  + "_dGen_" + str(dropoutGen) + "_dTrain_" + str(dropoutTrain) + "_wCMaskTrain_" + str(withoutCausalMaskTraining)   + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
+        name_file_result = pathResult + name_file_result
+    else:
+        name_file_result = None
 
     if (type_problem == "QUBO"):
-        list_scores = get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances_test, nb_restarts, budget, lambda_, tensor_Q_test, device, verbose, pathResult + name_file_result)
-    
+        list_scores = get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances_test, nb_restarts, budget, lambda_, tensor_Q_test, device, verbose, name_file_result)
+
     elif (type_problem == "NK" or type_problem == "NK3"):
         list_scores = get_Score_trajectoriesNK_cuda(strategy, N,  type_instance, D, nb_instances_test, nb_restarts, 
                                                     budget, lambda_,
                                                     vectorIndex_th, tensor_matrix_locus,
-                                                    tensor_matrix_contrib, device, verbose, pathResult + name_file_result)
+                                                    tensor_matrix_contrib, device, verbose, name_file_result)
         
 
 
@@ -188,7 +203,6 @@ def main(cfg: DictConfig):
 if __name__ == '__main__':
     # Run hydra main
     main()
-
 
 
 

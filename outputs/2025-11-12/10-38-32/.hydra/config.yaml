@@ -1,9 +1,9 @@
-defaults:
-  - problem: qubo
-  - agent: ppo
-  - _self_
-
-# génériques
+problem:
+  name: QUBO
+  type_problem: QUBO
+  dim: 256
+  type_instance: 0
+agent: ppo
 device: cuda:0
 seed: 0
 verbose: true
@@ -23,9 +23,7 @@ learnOrder: false
 dropoutGen: 0.0
 dropoutTrain: 0.0
 withoutCausalMaskTraining: false
-type_strategy: PPO-EDA  # utilisé par ta fabrique
-# problem.dim et problem.type_instance sont définis dans le groupe "problem/*"
-agent: ppo
+type_strategy: PPO-EDA
 agent.learning_rate: 0.01
 agent.M: 1
 agent.K_steps: 2
@@ -33,5 +31,3 @@ agent.Beta_adapt: true
 agent.delta_target: 0.005
 problem.dim: 128
 problem.type_instance: 0
-
-
