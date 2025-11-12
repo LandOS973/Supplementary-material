@@ -238,36 +238,23 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
                 f_results.close()
 
 
-    if(name_file is not None):
+    if name_file is not None:
         f_hamming = open(name_file + "_HD", "w")
-        #f_hamming = open("hamming_distance.csv", "w")
         f_hamming.write("runtime, avg distance, avg std pop" + "\n")
         f_hamming.close()
 
+        bestGlobalSolution = bestGlobalSolution.unsqueeze(1).repeat(1,10,1)
 
-        
-    lastSolution = tensor_solution[:,0,:,:].squeeze(2)
+        for idx, tensor_solution in enumerate(list_tensor_solution):
+            hamming_distance = torch.sum(torch.abs(tensor_solution.squeeze(3) - bestGlobalSolution), dim=2).cpu().numpy()
+            avg_distance = np.mean(hamming_distance)
+            avg_std_distance = np.mean(np.std(hamming_distance, axis = 1))
 
-    
-    bestGlobalSolution = bestGlobalSolution.unsqueeze(1).repeat(1,10,1)
-    #lastSolution = lastSolution.unsqueeze(1).repeat(1,10,1)
-    
-    for idx, tensor_solution in enumerate(list_tensor_solution):
-        
-
-        
-        hamming_distance = torch.sum(torch.abs(tensor_solution.squeeze(3) - bestGlobalSolution), dim=2).cpu().numpy()
-        
-        #hamming_distance = torch.sum(torch.abs(tensor_solution.squeeze(3) - lastSolution), dim=2).cpu().numpy()
-        
-        
-        avg_distance = np.mean(hamming_distance)
-        avg_std_distance = np.mean(np.std(hamming_distance, axis = 1))
-
-        f_hamming = open(name_file + "_HD_best", "a")
-        f_hamming.write(str((idx + 1)*size_pop) + "," +  str(avg_distance) + "," +  str(avg_std_distance) + "\n")
-        f_hamming.close()
+            f_hamming = open(name_file + "_HD_best", "a")
+            f_hamming.write(str((idx + 1)*size_pop) + "," +  str(avg_distance) + "," +  str(avg_std_distance) + "\n")
+            f_hamming.close()
             
+    bestScore_np = -bestScore.detach().cpu().numpy()/N
     return -bestScore_np
 
 
