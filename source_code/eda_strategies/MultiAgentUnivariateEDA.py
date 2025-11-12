@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from eda_strategies.Abstract_EDA import Abstract_EDA
 import random
-from torch.distributions import Bernoulli, kl_divergence
+from torch.distributions import Bernoulli, kl_divergence as torch_kl_divergence
 
 class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     """
@@ -25,8 +25,8 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         self.theta = None
         self.opt_reinforce = None
         self.opt_ppo = None
-        self.beta_vector = None
-        self.baseline = None
+        self.register_buffer("beta_vector", torch.empty(0, dtype=torch.float32), persistent=False)
+        self.register_buffer("baseline",    torch.empty(0, dtype=torch.float32), persistent=False)
         self.agent_number = agent_number
         self.theta_old = None
         self.update_method = update_method
@@ -47,7 +47,8 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device))
         self.theta_old = self.theta.detach().clone()
         self.nb_instances = nb_instances # B
-        self.beta_vector = torch.ones((nb_instances,), device=self.device, dtype=self.theta.dtype)
+        self.beta_vector.resize_(nb_instances).fill_(1.0)
+        self.baseline.resize_(nb_instances).zero_()
         self.opt_reinforce = torch.optim.SGD(
             [self.theta], lr=self.learning_rate
         )
@@ -56,23 +57,18 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         )
 
     def sample_solutions(self):
-        """
-        Échantillonne λ solutions selon Bernoulli(p).
-        Sortie : (B, λ, N, 1)
-        """
-        probs = self.forward() # (B, N)
-        probs_pop = probs.unsqueeze(1).expand(-1, self.lambda_, -1)        # (B, λ, N)
+        probs = torch.sigmoid(self.theta)                     # (B, N)
+        probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), 1e-6, 1 - 1e-6)
+        u = torch.rand((self.nb_instances, self.lambda_, self.N), device=self.device)
+        samples = (u < probs.unsqueeze(1)).float().unsqueeze(-1)   # (B, λ, N, 1)
+        return samples
 
-        with torch.no_grad():
-            samples = torch.bernoulli(probs_pop).unsqueeze(-1)             # (B, λ, N, 1)
-
-        return samples.to(self.device)
     
     def kl_divergence(self, p, q):
-        """Calcule la divergence KL entre deux distributions de Bernoulli p et q."""
-        p = torch.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0).clamp(1e-10, 1-1e-10)
-        q = torch.nan_to_num(q, nan=0.5, posinf=1.0, neginf=0.0).clamp(1e-10, 1-1e-10)
-        return kl_divergence(Bernoulli(probs=p), Bernoulli(probs=q))
+        eps = 1e-7
+        p = torch.clamp(torch.nan_to_num(p, nan=0.5), eps, 1 - eps)
+        q = torch.clamp(torch.nan_to_num(q, nan=0.5), eps, 1 - eps)
+        return p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
     
     def updateDistributionPPO(self, solutionList, scoreList):
         B = self.nb_instances
@@ -92,9 +88,8 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         fitnesses = scoreList  
         if self.baseline is None:
             self.baseline = torch.zeros(B, device=device) # (B,)
-        adv = fitnesses - self.baseline.unsqueeze(1); 
-        self.baseline = 0.9*self.baseline + 0.1*fitnesses.mean(dim=1)
-        adv = (adv - adv.mean())/(adv.std()+1e-10)      # (B, λ)
+        adv = fitnesses - self.baseline.unsqueeze(1)          # (B, λ)
+        adv = (adv - adv.mean(dim=1, keepdim=True)) / (adv.std(dim=1, keepdim=True) + 1e-10)
         # log πθk(a|s)
         p_old_exp = p_old.unsqueeze(1).expand(-1, λ, -1) # (B, λ, N) => pour comparer avec Dk
         # log πθk(a|s) = ∑ k=1 a n de log(πθk(a k|s)) => ak est la valeur de la variable k dans l'action a (la variable k sur l'individu λi)  # (B, λ) 
@@ -134,18 +129,19 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
             total_loss += loss.item()
         with torch.no_grad():
             p_new_final = torch.sigmoid(self.theta).clamp(1e-10, 1-1e-10)
-            KL_final_i = self.kl_divergence(p_old, p_new_final).mean(dim=1)  # (B,)
         if self.beta_adapt is True:
             # if D¯KL(θk |θk+1) ≥ 1.5δ then
             #   βk+1 ← 2βk
             # else if D¯KL(θk |θk+1) ≤ δ/1.5 then
             #   βk+1 ← 0.5βk
             # version with masks
+            with torch.no_grad():
+                KL_final_i = self.kl_divergence(p_old, p_new_final).mean(dim=1)  # (B,)
             mask_up = KL_final_i >= 1.5 * self.delta_target
             mask_down = KL_final_i <= (self.delta_target / 1.5)
             self.beta_vector[mask_up]   *= 2.0
             self.beta_vector[mask_down] *= 0.5
-        # clamping
+            # clamping
             self.beta_vector = torch.clamp(self.beta_vector, 1e-4, 10)
         return total_loss / self.nb_instances
 

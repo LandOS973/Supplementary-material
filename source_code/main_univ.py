@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import json
 import csv
 import datetime
 import itertools
@@ -22,16 +21,20 @@ from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 # ------------------------------------------------
 
 """
-Sweep avec mêmes defaults / grille / filtres (type_instance 0..5),
-affiche UNE SEULE barre tqdm par run (on passe un fichier temporaire, puis on le supprime),
-et logge à chaque changement de config.
+Sweep avec:
+- UNE SEULE barre tqdm par run (via fichier temporaire)
+- Mise à jour en TEMPS RÉEL:
+    - results/aggregation/best_algo_overview.csv        (winner par groupe + rank/percent + winner_avg_score)
+    - results/aggregation/best_algo_summary.txt         (résumé humain)
 
-Agrégation écrite dans:
-- results/aggregation/best_algo_per_instance.csv
-- results/aggregation/best_algo_overview.csv  (avec winner_avg_best_score)
-- results/aggregation/sweep_summary.json
-- results/aggregation/best_algo_summary.txt
-- results/aggregation/winner_stats.csv        (runtime + stats du vainqueur par groupe)
+Supprimé:
+- sweep_summary.json
+
+Conventions:
+- Problème de MINIMISATION (plus bas = meilleur)
+- Winner d’un groupe = algo avec la plus faible **moyenne** (winner_avg_score) sur les instances observées.
+- La dernière colonne de l’overview est `winner_avg_score` (moyenne des moyennes par instance).
+- On ajoute `rank`, `percent` via le fichier additional_results/global_ranking/UBQP_N_{dim}_K_{type}.csv
 """
 
 # =========================
@@ -65,9 +68,9 @@ DEFAULTS = dict(
 # =========================
 GRID = dict(
     agent=["ppo", "reinforce"],
-    agent_learning_rate=[0.01, 0.015, 0.02, 0.035, 0.05],
+    agent_learning_rate=[0.001, 0.003, 0.005, 0.008, 0.02, 0.01, 0.015],
     agent_M=[1],
-    agent_K_steps=[3, 4, 6, 8, 12, 16],
+    agent_K_steps=[4, 6, 8, 20, 10, 15],
     agent_Beta_adapt=[True, False],
     agent_beta=[0.5, 1.0],
     agent_delta_target=[0.0025, 0.006],
@@ -223,35 +226,20 @@ def rank_vs_global_ranking(repo_root: str, dim: int, type_instance: int, my_scor
         scores_only = [s for _, s in entries]
         n = len(scores_only)
 
-        # --- Détection du sens ---
-        # Heuristique: si >80% des scores CSV sont positifs et ton score est négatif,
-        # on suppose que ton score est un coût (à minimiser) -> on compare avec -my_score
+        # Heuristique: CSV très probablement en maximisation si majoritairement positif
         frac_pos = sum(1 for s in scores_only if s > 0) / max(1, n)
         flip_sign = (frac_pos > 0.8 and my_score < 0)
 
         def to_cmp(v):
             return (-v) if flip_sign else v
 
-        # Meilleur dans le fichier (selon le sens détecté)
-        if flip_sign:
-            # Si on “minimise” côté toi, mais le CSV semble en “maximise”,
-            # alors le meilleur dans le CSV reste celui au score max (ils sont déjà positifs).
-            best_algo, best_score = max(entries, key=lambda t: t[1])
-        else:
-            # Cas standard “on maximise”
-            best_algo, best_score = max(entries, key=lambda t: t[1])
+        # Meilleur dans le CSV (max)
+        best_algo, best_score = max(entries, key=lambda t: t[1])
 
         my_cmp = to_cmp(my_score)
-
-        # Rang de ton score comparé aux scores CSV (1 = meilleur).
-        # On compare dans le même sens que le CSV (max).
-        # my_rank = 1 + nombre de scores strictement supérieurs à my_cmp
         count_gt = sum(1 for s in scores_only if s > my_cmp)
         my_rank = 1 + count_gt
-        # Clamp [1..n] pour éviter n+1 quand on est en-dessous de tout.
         my_rank = min(max(1, my_rank), n)
-
-        # Percentile (100% = top, 0% ~ dernier)
         my_percentile = 100.0 * (n - my_rank + 1) / n if n > 0 else None
 
         return best_algo, best_score, my_rank, n, my_percentile
@@ -282,10 +270,12 @@ def main():
     combos = [c for c in combos if passes_filters(c)]
     total = len(combos)
 
-    # Accumulateurs
-    per_instance_best = dict()              # key: (problem, dim, type_instance, idx) -> (best_score, algo_key)
-    per_inst_algo_best = defaultdict(dict)  # key -> {algo_key: best_score}
-    sweep_runs_summaries = []               # audit global des runs
+    # Accumulateurs pour overview en temps réel
+    # - best par instance (min) pour les victoires
+    # - avg par instance pour calculer winner_avg_score
+    per_instance_best = dict()              # (problem, dim, type_instance, idx) -> (best_score, algo_key)
+    per_inst_algo_best = defaultdict(dict)  # (problem,dim,type,inst) -> {algo_key: best_on_restarts}
+    per_inst_algo_avg  = defaultdict(dict)  # (problem,dim,type,inst) -> {algo_key: avg_on_restarts}
 
     # Boucle d’expérimentation
     for i, cfg in enumerate(combos, 1):
@@ -323,8 +313,8 @@ def main():
             Beta_adapt = False
             delta_target = 0.0
 
-        # Affiche le changement de config (clair et sur une ligne)
         print(
+            f"=========================================================DEBUT=======================================================================\n"
             f"▶ Run {i}/{total} | agent={agent} lr={learning_rate} K={K_steps} "
             f"BetaAdapt={Beta_adapt} beta={beta_param} delta={delta_target} M={M} "
             f"| problem={type_problem} dim={dim} t={type_instance}"
@@ -388,7 +378,7 @@ def main():
         else:
             raise ValueError(f"type_problem inconnu: {type_problem}")
 
-        # Fabrique de stratégie (aucun print doublon ici)
+        # Fabrique de stratégie
         factory = FactoryStrategyEA()
         strategy = factory.createStrategyEA(
             typeStrategy, dim, lambda_, beta_param, device,
@@ -398,6 +388,12 @@ def main():
             updateMethod=updateMethod, K_steps=K_steps, beta_adapt=Beta_adapt,
             delta_target=delta_target, learning_rate=learning_rate
         )
+
+        try:
+            if torch.__version__ >= "2.0":
+                strategy = torch.compile(strategy, mode="max-autotune")  # une seule fois
+        except Exception as e:
+            print("torch.compile désactivé:", e)
 
         # IG / ordres
         if DEFAULTS["knownIG"] and type_problem in ("QUBO", "NK", "NK3"):
@@ -438,158 +434,137 @@ def main():
                 pass
         dt = time.time() - t0
 
+        # Moyenne globale du run (toutes instances × restarts)
         avg_score = float(np.mean(
             list_scores if isinstance(list_scores, (list, tuple))
             else (list_scores.detach().cpu().numpy() if torch.is_tensor(list_scores) else list_scores)
         ))
 
-        by_instance = flat_or_matrix_to_instances(list_scores, nb_instances_test, nb_restarts)
-
-        # Mise à jour "meilleur algo par instance"
-        algo_key = f"{updateMethod}:{DEFAULTS['type_strategy']}:lr{learning_rate}:K{K_steps}:BetaAdapt{Beta_adapt}:beta{beta_param}:delta{delta_target}:M{M}"
-        group_key = (type_problem, dim, type_instance)
-
-        for inst_idx, rest_scores in enumerate(by_instance):
-            best_on_restarts = max(rest_scores) if rest_scores else float("-inf")
-            inst_key = (type_problem, dim, type_instance, inst_idx)
-            per_inst_algo_best[inst_key][algo_key] = best_on_restarts
-            prev = per_instance_best.get(inst_key, (float("-inf"), None))
-            if best_on_restarts > prev[0]:
-                per_instance_best[inst_key] = (best_on_restarts, algo_key)
-
-        # On accumule le temps sur ce groupe pour l’algo qui gagnera au final (on le saura plus tard)
-        sweep_runs_summaries.append({
-            "problem": type_problem,
-            "dim": dim,
-            "type_instance": type_instance,
-            "nb_instances_test": nb_instances_test,
-            "nb_restarts": nb_restarts,
-            "budget": budget,
-            "algo_key": algo_key,
-            "agent": agent,
-            "learning_rate": learning_rate,
-            "M": M,
-            "K_steps": K_steps,
-            "Beta_adapt": Beta_adapt,
-            "beta_param": beta_param,
-            "delta_target": delta_target,
-            "avg_score": avg_score,
-            "runtime_sec": dt,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
-        })
-
         print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
 
-        # --- Affichage ranking global (meilleur + rang de ton avg) ---
-        best_algo, best_score, my_rank, n_rank, my_pct = rank_vs_global_ranking(repo_root, dim, type_instance, avg_score)
-        if best_algo is not None:
+        # Affichage ranking pour ce run (optionnel)
+        best_algo_csv, best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(repo_root, dim, type_instance, avg_score)
+        if best_algo_csv is not None:
             pct_str = f"{my_pct:.1f}%" if my_pct is not None else "n/a"
-            print(f"   ↳ ranking file: best={best_algo} ({best_score:.2f}) | your avg rank: {my_rank}/{n_rank} ({pct_str})")
+            print(f"   ↳ ranking file: best={best_algo_csv} ({best_score_csv:.2f}) | your avg rank: {my_rank}/{n_rank} ({pct_str})")
         else:
             print("   ↳ ranking file: introuvable/illisible pour ce groupe (pas d'affichage).")
 
-    # ===== Écriture des logs finaux =====
-    agg_outdir = os.path.join(repo_root, "results", "aggregation")
-    Path(agg_outdir).mkdir(parents=True, exist_ok=True)
+        # Mise en forme par instance: [[r1..rR], [r1..rR], ...] len = nb_instances_test
+        by_instance = flat_or_matrix_to_instances(list_scores, nb_instances_test, nb_restarts)
 
-    # 1) CSV par instance
-    lines = ["problem,dim,type_instance,instance_idx,best_algo,best_score"]
-    for key, val in sorted(per_instance_best.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2], kv[0][3])):
-        (problem, dim, type_instance, inst_idx) = key
-        best_score, best_algo = val
-        lines.append(f"{problem},{dim},{type_instance},{inst_idx},{best_algo},{best_score}")
-    per_instance_csv = os.path.join(agg_outdir, "best_algo_per_instance.csv")
-    Path(per_instance_csv).write_text("\n".join(lines), encoding="utf-8")
-    print(f"[OK] Écrit: {per_instance_csv}")
+        # Mise à jour "meilleur algo par instance" (minimisation) + stockage des moyennes
+        algo_key = f"{updateMethod}:{DEFAULTS['type_strategy']}:lr{learning_rate}:K{K_steps}:BetaAdapt{Beta_adapt}:beta{beta_param}:delta{delta_target}:M{M}"
 
-    # 2) Vue overview + moyenne du vainqueur, et calcul du vainqueur par groupe
-    tally = defaultdict(lambda: defaultdict(int))
-    for key, val in per_instance_best.items():
-        (problem, dim, type_instance, inst_idx) = key
-        best_score, best_algo = val
-        tally[(problem, dim, type_instance)][best_algo] += 1
+        for inst_idx, rest_scores in enumerate(by_instance):
+            # MINIMISATION
+            best_on_restarts = min(rest_scores) if rest_scores else float("+inf")
+            avg_on_restarts  = float(np.mean(rest_scores)) if rest_scores else float("nan")
+            inst_key = (type_problem, dim, type_instance, inst_idx)
+            per_inst_algo_best[inst_key][algo_key] = best_on_restarts
+            per_inst_algo_avg[inst_key][algo_key]  = avg_on_restarts
+            prev = per_instance_best.get(inst_key, (float("+inf"), None))
+            if best_on_restarts < prev[0]:
+                per_instance_best[inst_key] = (best_on_restarts, algo_key)
 
-    lines2 = ["problem,dim,type_instance,winner_algo,wins,n_instances,winner_avg_best_score"]
+        # ===== Mise à jour temps réel des agrégats (avec rank/percent) =====
+        _write_realtime_aggregation(
+            repo_root,
+            agg_outdir,
+            per_instance_best,
+            per_inst_algo_best,
+            per_inst_algo_avg
+        )
+
+    print("[DONE] Sweep terminé.")
+
+
+def _write_realtime_aggregation(
+    repo_root: str,
+    agg_outdir: str,
+    per_instance_best: dict,
+    per_inst_algo_best: dict,
+    per_inst_algo_avg: dict
+):
+    """
+    Écrit/Met à jour en temps réel:
+      - best_algo_overview.csv (par groupe: winner + rank/percent + winner_avg_score)
+      - best_algo_summary.txt  (lisible humain)
+
+    **Winner = algo à la plus faible moyenne (winner_avg_score) sur les instances observées.**
+    """
+    # 1) Instances vues par groupe
+    n_instances_seen = defaultdict(int)
+    for (problem, dim, type_instance, inst_idx) in per_inst_algo_best.keys():
+        n_instances_seen[(problem, dim, type_instance)] = max(
+            n_instances_seen[(problem, dim, type_instance)],
+            inst_idx + 1
+        )
+
+    # 2) Pour chaque groupe, calculer la moyenne par algo, puis choisir l'algo au score moyen minimal
+    lines2 = ["problem,dim,type_instance,winner_algo,rank,percent,winner_avg_score"]
     human_lines = []
-    winner_for_group = {}  # (problem,dim,type_instance) -> winner_algo
 
-    for k, counter in sorted(tally.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])):
-        problem, dim, type_instance = k
-        wins_total = sum(counter.values())
-        winner_algo, wins = max(counter.items(), key=lambda kv: kv[1])
-        winner_for_group[k] = winner_algo
+    # Regrouper toutes (problem, dim, type_instance)
+    groups = sorted({(p, d, t) for (p, d, t, _) in per_inst_algo_avg.keys()},
+                    key=lambda x: (x[0], x[1], x[2]))
 
-        scores_for_winner = []
-        for inst_idx in range(DEFAULTS["nb_instances_test"]):
+    for (problem, dim, type_instance) in groups:
+        n_inst = n_instances_seen.get((problem, dim, type_instance), 0)
+        # Agréger moyennes par algo
+        algo_to_avgs = defaultdict(list)
+        for inst_idx in range(n_inst):
             key_inst = (problem, dim, type_instance, inst_idx)
-            if winner_algo in per_inst_algo_best.get(key_inst, {}):
-                scores_for_winner.append(per_inst_algo_best[key_inst][winner_algo])
-        winner_avg = float(np.mean(scores_for_winner)) if scores_for_winner else float("nan")
+            for algo_key, avg_val in per_inst_algo_avg.get(key_inst, {}).items():
+                if not (avg_val is None or np.isnan(avg_val)):
+                    algo_to_avgs[algo_key].append(avg_val)
 
-        lines2.append(f"{problem},{dim},{type_instance},{winner_algo},{wins},{wins_total},{winner_avg}")
+        if not algo_to_avgs:
+            # Rien à écrire pour ce groupe
+            continue
+
+        # Moyenne globale par algo (sur les instances où on a des données)
+        algo_mean = {
+            algo: float(np.mean(vals)) for algo, vals in algo_to_avgs.items() if len(vals) > 0
+        }
+        if not algo_mean:
+            continue
+
+        # Winner = algo avec la plus faible moyenne (minimisation)
+        winner_algo = min(algo_mean.items(), key=lambda kv: kv[1])[0]
+        winner_avg_score = algo_mean[winner_algo]
+
+        # Rank & percent vs tableau global (sur winner_avg_score)
+        _best_algo_csv, _best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(
+            repo_root, int(dim), int(type_instance), winner_avg_score
+        )
+        rank_val = my_rank if my_rank is not None else ""
+        percent_str = f"{my_pct:.1f}" if my_pct is not None else ""
+
+        lines2.append(f"{problem},{dim},{type_instance},{winner_algo},{rank_val},{percent_str},{winner_avg_score}")
+        pct_disp = f"{percent_str}%" if percent_str != "" else "n/a"
+        rank_disp = f"{rank_val}/{n_rank}" if (rank_val != "" and n_rank is not None) else "n/a"
         human_lines.append(
             f"{problem} | dim={dim} | type_instance={type_instance} -> "
-            f"winner={winner_algo} [{wins}/{wins_total}] | avg={winner_avg:.6f}"
+            f"winner={winner_algo} | rank={rank_disp} ({pct_disp}) | winner_avg_score={winner_avg_score:.6f}"
         )
 
     overview_csv = os.path.join(agg_outdir, "best_algo_overview.csv")
     Path(overview_csv).write_text("\n".join(lines2), encoding="utf-8")
-    print(f"[OK] Écrit: {overview_csv}")
 
-    # 3) JSON complet
-    summary_json = os.path.join(agg_outdir, "sweep_summary.json")
-    Path(summary_json).write_text(json.dumps(sweep_runs_summaries, indent=2), encoding="utf-8")
-    print(f"[OK] Écrit: {summary_json}")
-
-    # 4) Résumé humain lisible
     pretty_txt = os.path.join(agg_outdir, "best_algo_summary.txt")
     header = [
-        "=== BEST ALGO SUMMARY (par (problem, dim, type_instance)) ===",
+        "=== BEST ALGO OVERVIEW (temps réel) ===",
         f"Généré le {datetime.datetime.now().isoformat(timespec='seconds')}",
         "",
         *human_lines,
         "",
-        f"Détails par instance : {per_instance_csv}",
-        f"Vue overview           : {overview_csv}",
-        f"Résumé runs (JSON)     : {summary_json}",
+        f"CSV : {overview_csv}",
         ""
     ]
     Path(pretty_txt).write_text("\n".join(header), encoding="utf-8")
-    print(f"[OK] Écrit: {pretty_txt}")
 
-    # 5) Stats du vainqueur par groupe (runtime + distribution des meilleurs scores par instance)
-    #    Colonnes: problem,dim,type_instance,winner_algo,runtime_sec,mean,median,std,p2,p5,p10,p25,p50,p75,p90,p95,p98
-    #    Le runtime reporté est la somme des temps des runs appartenant au vainqueur du groupe.
-    runtime_accum = defaultdict(float)
-    for run in sweep_runs_summaries:
-        g = (run["problem"], run["dim"], run["type_instance"])
-        if winner_for_group.get(g) == run["algo_key"]:
-            runtime_accum[g] += float(run.get("runtime_sec", 0.0))
-
-    stats_lines = ["problem,dim,type_instance,winner_algo,runtime_sec,mean,median,std,p2,p5,p10,p25,p50,p75,p90,p95,p98"]
-    for g, w_algo in sorted(winner_for_group.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])):
-        problem, dim, type_instance = g
-        vals = []
-        for inst_idx in range(DEFAULTS["nb_instances_test"]):
-            key_inst = (problem, dim, type_instance, inst_idx)
-            if w_algo in per_inst_algo_best.get(key_inst, {}):
-                vals.append(per_inst_algo_best[key_inst][w_algo])
-        if len(vals) == 0:
-            continue
-        arr = np.array(vals, dtype=float)
-        mean = float(np.mean(arr))
-        median = float(np.median(arr))
-        std = float(np.std(arr, ddof=0))
-        pcts = np.percentile(arr, [2,5,10,25,50,75,90,95,98]).tolist()
-        runtime_sec = runtime_accum.get(g, 0.0)
-        stats_lines.append(
-            f"{problem},{dim},{type_instance},{w_algo},{runtime_sec:.3f},{mean},{median},{std},"
-            + ",".join(str(x) for x in pcts)
-        )
-
-    winner_stats_csv = os.path.join(agg_outdir, "winner_stats.csv")
-    Path(winner_stats_csv).write_text("\n".join(stats_lines), encoding="utf-8")
-    print(f"[OK] Écrit: {winner_stats_csv}")
+    print("=========================================================FIN==========================================================================\n")
 
 
 if __name__ == "__main__":
