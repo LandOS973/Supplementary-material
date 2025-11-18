@@ -4,7 +4,7 @@ import torch
 from eda_strategies.UMDA import UMDA
 from eda_strategies.PBIL import PBIL
 from eda_strategies.PPO_EDA import PPO_EDA
-from eda_strategies.MultiAgentUnivariateEDA import MultiAgentUnivariateEDA 
+from eda_strategies.MultiAgentUnivariate.MultiAgentUnivariateEDA import MultiAgentUnivariateEDA 
 
 
 

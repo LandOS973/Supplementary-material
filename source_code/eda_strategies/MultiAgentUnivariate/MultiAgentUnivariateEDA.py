@@ -3,6 +3,7 @@ import torch.nn as nn
 from eda_strategies.Abstract_EDA import Abstract_EDA
 import random
 from torch.distributions import Bernoulli, kl_divergence as torch_kl_divergence
+from . import SVGD, rbf
 
 class UnivariatePPOEDA(Abstract_EDA, nn.Module):
     """
@@ -33,6 +34,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         self.K_steps = K_steps
         self.beta_adapt = beta_adapt
         self.delta_target = delta_target
+        self.register_buffer("grad_rl", torch.empty(0, dtype=torch.float32), persistent=False)
 
     def forward(self):
         """
@@ -44,10 +46,11 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
     def reset_learned_parameters(self, nb_instances):
         """Réinitialise les paramètres et sauvegarde le nombre d'instances."""
-        self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device))
+        self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device)) # (B, N)
         self.theta_old = self.theta.detach().clone()
         self.nb_instances = nb_instances # B
         self.beta_vector.resize_(nb_instances).fill_(1.0)
+        self.grad_rl.resize_(nb_instances, self.N).zero_()
         self.baseline.resize_(nb_instances).zero_()
         self.opt_reinforce = torch.optim.SGD(
             [self.theta], lr=self.learning_rate
@@ -123,6 +126,8 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
             loss = loss_i.sum()
             self.opt_ppo.zero_grad(set_to_none=True)
             loss.backward()
+            with torch.no_grad():
+                self.grad_rl.copy_(-self.theta.grad)
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_([self.theta], max_norm=1.0)
             self.opt_ppo.step()
@@ -171,9 +176,10 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         loss = -loss_per_instance.sum() 
         self.opt_reinforce.zero_grad(set_to_none=True)
         loss.backward()
-        self.opt_reinforce.step()
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1)  # (nb_instances,)
+            self.grad_rl.copy_(-self.theta.grad)
+        self.opt_reinforce.step()
         return loss_per_instance.mean()
 
     def updateDistribution(self, solutionList, scoreList):
@@ -222,6 +228,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             ).to(device)
             self.agents.append(agent)
 
+        # SVGD coupling between agents: kernel and step size
+        # Default step size can be tuned; keep small by default
+        self.svgd = SVGD.SVGD(rbf.RBF())
+        self.eta_svgd = 0.001
+
     def reset_learned_parameters(self, nb_instances):
         self.nb_instances = nb_instances
         for i, agent in enumerate(self.agents):
@@ -248,8 +259,34 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             total_loss += loss
 
             start_lambda = end_lambda
+        try:
+            grads = torch.stack([agent.grad_rl for agent in self.agents], dim=0)  # (M, B, N)
+        except Exception:
+            grads = None
+
+        if grads is not None:
+            M = len(self.agents)
+            B = self.nb_instances
+            device = self.device
+            # For each instance b, compute phi over agents and apply update to each agent.theta[b]
+            for b in range(B):
+                # build theta matrix (M, N) and score matrix (M, N)
+                theta_mat = torch.stack([agent.theta.data[b].detach() for agent in self.agents], dim=0).to(device)
+                score_mat = grads[:, b, :].to(device)
+                # compute SVGD direction phi (M, N)
+                phi = self.svgd.phi(theta_mat, score_mat)  # returns detached tensor (M, N)
+                with torch.no_grad():
+                    for a in range(M):
+                        self.agents[a].theta.data[b].add_(self.eta_svgd * phi[a].to(self.agents[a].theta.device))
 
         return total_loss / self.M
+    
+    def get_score_b(self):
+        return torch.stack([agent.grad_rl for agent in self.agents], dim=0)  # (M, nb_instances, N)
+    
+    
+    
+
 
     def forward(self):
         return torch.stack([agent.forward() for agent in self.agents], dim=0)

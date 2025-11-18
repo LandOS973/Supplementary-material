@@ -1,10 +1,17 @@
-defaults:
-  - hydra/sweeper: filter
-  - problem: qubo
-  - agent: ppo
-  - _self_
-
-# génériques
+problem:
+  name: QUBO
+  type_problem: QUBO
+  dim: 256
+  type_instance: 0
+agent:
+  name: PPO-EDA
+  updateMethod: PPO
+  M: 1
+  K_steps: 6
+  Beta_adapt: true
+  beta: 1.0
+  delta_target: 0.0025
+  learning_rate: 0.02
 device: cuda:0
 seed: 0
 verbose: true
@@ -24,6 +31,4 @@ learnOrder: false
 dropoutGen: 0.0
 dropoutTrain: 0.0
 withoutCausalMaskTraining: false
-type_strategy: PPO-EDA 
-
-
+type_strategy: PPO-EDA
