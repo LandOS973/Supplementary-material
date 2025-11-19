@@ -31,7 +31,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
-        self.svgd_step_size = 1
+        self.svgd_step_size = 0.2
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
         bonus_indices = random.sample(range(M), remainder_lambda) if remainder_lambda > 0 else []
@@ -96,8 +96,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             else:
                 rl_step = -agent.last_theta_grad  # gradient descent direction
             rl_directions.append(rl_step.detach())
-
-        self._apply_svgd(rl_directions)
+        if self.M > 1:
+            self._apply_svgd(rl_directions)
 
         return total_loss / self.M
 

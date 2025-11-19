@@ -129,16 +129,17 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
 
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
             leader_idx = torch.argmax(agent_mean_scores).item()
-            leader_solution = agent_best_solutions[leader_idx]
-            total_dist = 0.0
-            comparisons = 0
-            for idx, sol in enumerate(agent_best_solutions):
-                if idx == leader_idx:
-                    continue
-                dist = torch.abs(sol - leader_solution).sum(dim=1).float()
-                total_dist += torch.mean(dist).item()
-                comparisons += 1
-            avg_hamming = (total_dist / comparisons) if comparisons > 0 else 0.0
+
+            pairwise_distances = []
+            for i in range(len(agent_best_solutions)):
+                for j in range(i + 1, len(agent_best_solutions)):
+                    dist = torch.abs(agent_best_solutions[i] - agent_best_solutions[j]).sum(dim=1).float()
+                    pairwise_distances.append(dist)
+            if pairwise_distances:
+                stacked = torch.stack(pairwise_distances, dim=0)
+                avg_hamming = torch.mean(stacked).item()
+            else:
+                avg_hamming = 0.0
 
             avg_kl = _compute_average_kl(strategy.agents)
             avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
@@ -266,7 +267,7 @@ def _compute_average_kl(agents):
         return 0.0
 
     eps = 1e-8
-    total_kl = 0.0
+    total_pairwise_kl = 0.0
     comparisons = 0
     with torch.no_grad():
         agent_probs = [torch.sigmoid(agent.theta).detach() for agent in agents]
@@ -275,12 +276,17 @@ def _compute_average_kl(agents):
         for j in range(i + 1, len(agent_probs)):
             p = torch.clamp(agent_probs[i], eps, 1 - eps)
             q = torch.clamp(agent_probs[j], eps, 1 - eps)
-            kl_pq = torch.mean(p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q)))
-            kl_qp = torch.mean(q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p)))
-            total_kl += 0.5 * (kl_pq + kl_qp).item()
+            kl_pq_inst = (
+                p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
+            ).mean(dim=1)  # moyenne par instance
+            kl_qp_inst = (
+                q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p))
+            ).mean(dim=1)
+            kl_pair_inst = 0.5 * (kl_pq_inst + kl_qp_inst)
+            total_pairwise_kl += kl_pair_inst.mean().item()
             comparisons += 1
 
-    return (total_kl / comparisons) if comparisons > 0 else 0.0
+    return (total_pairwise_kl / comparisons) if comparisons > 0 else 0.0
 
 
 def _render_agent_plots(iterations, hamming_history, kl_history, agent_fitness_history, num_agents):
