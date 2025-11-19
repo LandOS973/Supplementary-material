@@ -1,0 +1,327 @@
+import numpy as np
+import torch
+
+try:
+    import tkinter as tk
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover - plotting optional
+    tk = None
+    FigureCanvasTkAgg = None
+    plt = None
+
+
+def render_agent_dashboard(iterations, hamming_history, kl_history, agent_fitness_history, num_agents, theta_history):
+    if tk is None or plt is None or FigureCanvasTkAgg is None:
+        print("Tkinter/matplotlib not available, skipping dashboard.")
+        return
+
+    try:
+        root = tk.Tk()
+        root.title("Agent Dashboard")
+        try:
+            root.state("zoomed")
+        except Exception:
+            root.attributes("-zoomed", True)
+
+        main_frame = tk.Frame(root)
+        main_frame.pack(fill="both", expand=True)
+
+        metrics_frame = tk.Frame(main_frame)
+        metrics_frame.pack(side="left", fill="both", expand=True)
+
+        rows = 3 if agent_fitness_history and num_agents > 0 else 2
+        fig, axes = plt.subplots(rows, 1, figsize=(10, 6), sharex=True)
+        axes = [axes] if not isinstance(axes, (list, np.ndarray)) else axes
+
+        if iterations and hamming_history:
+            axes[0].plot(iterations, hamming_history, color="tab:blue")
+        axes[0].set_title("Average Hamming Distance")
+        axes[0].set_ylabel("Hamming")
+        axes[0].grid(True, linestyle="--", alpha=0.4)
+
+        if iterations and kl_history:
+            axes[1].plot(iterations, kl_history, color="tab:orange")
+        axes[1].set_title("Average KL Distance")
+        axes[1].set_ylabel("KL")
+        axes[1].grid(True, linestyle="--", alpha=0.4)
+
+        if len(axes) == 3:
+            axes[2].set_title("Agent Fitness Evolution")
+            axes[2].set_ylabel("Fitness")
+            if iterations:
+                for agent_idx in range(num_agents):
+                    series = [epoch[agent_idx] for epoch in agent_fitness_history]
+                    axes[2].plot(iterations, series, label=f"Agent {agent_idx}")
+            axes[2].grid(True, linestyle="--", alpha=0.4)
+            axes[2].legend()
+
+        axes[-1].set_xlabel("Evaluations")
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=metrics_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        if theta_history and theta_history.get("values"):
+            _build_theta_panel(main_frame, root, theta_history)
+
+        def _close():
+            root.quit()
+            root.destroy()
+
+        root.protocol("WM_DELETE_WINDOW", _close)
+        root.mainloop()
+        plt.close(fig)
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to render Tkinter plots: {exc}")
+
+
+def render_svgd_field_plot(snapshot):
+    if tk is None or plt is None or FigureCanvasTkAgg is None:
+        print("Tkinter/matplotlib not available, skipping SVGD field plot.")
+        return
+
+    theta = snapshot.get("theta")
+    phi = snapshot.get("phi")
+    dims = snapshot.get("dims", (0, 1))
+    if theta is None or phi is None:
+        return
+
+    theta = torch.tensor(theta) if isinstance(theta, np.ndarray) else theta
+    phi = torch.tensor(phi) if isinstance(phi, np.ndarray) else phi
+    num_instances = theta.shape[0]
+    num_agents = theta.shape[1]
+
+    try:
+        root = tk.Tk()
+        root.title("SVGD Field Snapshot")
+        fig, axes = plt.subplots(1, num_instances, figsize=(5 * num_instances, 5), squeeze=False)
+        axes = axes.flatten()
+        colors = plt.cm.get_cmap("tab10", num_agents)
+
+        for inst_idx in range(num_instances):
+            ax = axes[inst_idx]
+            ax.set_title(f"Instance {inst_idx}")
+            ax.set_xlabel(f"theta[{dims[0]}]")
+            ax.set_ylabel(f"theta[{dims[1]}]")
+            ax.grid(True, linestyle="--", alpha=0.3)
+            for agent_idx in range(num_agents):
+                x, y = theta[inst_idx, agent_idx].tolist()
+                dx, dy = phi[inst_idx, agent_idx].tolist()
+                color = colors(agent_idx)
+                ax.scatter(x, y, color=color, label=f"Agent {agent_idx}" if inst_idx == 0 else None)
+                ax.arrow(
+                    x,
+                    y,
+                    dx,
+                    dy,
+                    color=color,
+                    head_width=0.02,
+                    head_length=0.02,
+                    length_includes_head=True,
+                    alpha=0.8,
+                )
+
+        handles, labels = axes[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc="upper right")
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=root)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        def _close():
+            root.quit()
+            root.destroy()
+
+        root.protocol("WM_DELETE_WINDOW", _close)
+        root.mainloop()
+        plt.close(fig)
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to render SVGD field plot: {exc}")
+
+
+def _build_theta_panel(container, root_window, history):
+    values = history.get("values") or []
+    if not values:
+        return
+
+    first_entry = values[0]
+    num_agents = len(first_entry.get("final", []))
+    if num_agents == 0:
+        return
+
+    sample = first_entry["final"][0]
+    num_instances = sample.shape[0]
+    num_dims = sample.shape[1]
+
+    panel = tk.LabelFrame(container, text="Theta Evolution Explorer")
+    panel.pack(side="right", fill="both", expand=True, padx=10, pady=6)
+
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.grid(True, linestyle="--", alpha=0.4)
+    ax.set_xlabel("sigmoid(theta[dim X])")
+    ax.set_ylabel("sigmoid(theta[dim Y])")
+
+    scatters = [
+        ax.scatter([], [], color="tab:blue", label="Agent A"),
+        ax.scatter([], [], color="tab:orange", label="Agent B"),
+    ]
+    rl_arrows = [None, None]
+    svgd_arrows = [None, None]
+
+    def _set_arrow(store, idx, start, end, color):
+        if store[idx] is not None:
+            store[idx].remove()
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            store[idx] = None
+            return
+        arrow = ax.arrow(
+            start[0],
+            start[1],
+            dx,
+            dy,
+            color=color,
+            head_width=0.02,
+            head_length=0.02,
+            length_includes_head=True,
+            alpha=0.9,
+        )
+        store[idx] = arrow
+
+    fig.tight_layout()
+    canvas = FigureCanvasTkAgg(fig, master=panel)
+    canvas.draw()
+    canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    controls = tk.Frame(panel)
+    controls.pack(fill="x", padx=10, pady=6)
+
+    epoch_var = tk.IntVar(value=0)
+    agent_a_var = tk.IntVar(value=0)
+    agent_b_var = tk.IntVar(value=min(1, num_agents - 1))
+    instance_var = tk.IntVar(value=0)
+    dim_x_var = tk.IntVar(value=0)
+    dim_y_var = tk.IntVar(value=1 if num_dims > 1 else 0)
+
+    def clamp(var, upper):
+        val = max(0, min(upper, var.get()))
+        var.set(val)
+        return val
+
+    status_var = tk.StringVar()
+    tk.Label(panel, textvariable=status_var).pack(pady=2)
+    kl_var = tk.StringVar()
+    tk.Label(panel, textvariable=kl_var).pack(pady=2)
+    legend = tk.Frame(panel)
+    legend.pack(pady=2)
+    tk.Label(legend, text="RL step", fg="red").pack(side="left", padx=6)
+    tk.Label(legend, text="SVGD step", fg="green").pack(side="left", padx=6)
+
+    def _sym_kl(p, q):
+        eps = 1e-8
+        p = torch.clamp(p, eps, 1 - eps)
+        q = torch.clamp(q, eps, 1 - eps)
+        kl_pq = p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
+        kl_qp = q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p))
+        return 0.5 * (kl_pq.mean() + kl_qp.mean())
+
+    def update_plot(*_):
+        epoch_idx = clamp(epoch_var, len(values) - 1)
+        inst_idx = clamp(instance_var, num_instances - 1)
+        dx = clamp(dim_x_var, num_dims - 1)
+        dy = clamp(dim_y_var, num_dims - 1)
+        agent_indices = [
+            clamp(agent_a_var, num_agents - 1),
+            clamp(agent_b_var, num_agents - 1),
+        ]
+
+        ax.set_title(f"Instance {inst_idx} – dims ({dx},{dy})")
+
+        for axis_idx, (scatter, agent_idx) in enumerate(zip(scatters, agent_indices)):
+            entry = values[epoch_idx]
+            final_probs = entry["final"][agent_idx]
+            rl_probs = entry["rl"][agent_idx]
+            prev_final = entry["prev"][agent_idx]
+
+            x = float(final_probs[inst_idx, dx].item())
+            y = float(final_probs[inst_idx, dy].item())
+            scatter.set_offsets([[x, y]])
+            scatter.set_label(f"Agent {agent_idx}")
+
+            start_rl = (
+                float(prev_final[inst_idx, dx].item()),
+                float(prev_final[inst_idx, dy].item()),
+            )
+            end_rl = (
+                float(rl_probs[inst_idx, dx].item()),
+                float(rl_probs[inst_idx, dy].item()),
+            )
+            start_svgd = end_rl
+            end_svgd = (x, y)
+            _set_arrow(rl_arrows, axis_idx, start_rl, end_rl, "red")
+            _set_arrow(svgd_arrows, axis_idx, start_svgd, end_svgd, "green")
+        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)}")
+        if agent_indices[0] != agent_indices[1]:
+            p = values[epoch_idx]["final"][agent_indices[0]][inst_idx]
+            q = values[epoch_idx]["final"][agent_indices[1]][inst_idx]
+            kl_val = _sym_kl(p, q).item()
+            kl_var.set(f"Instance KL (Agent {agent_indices[0]} vs {agent_indices[1]}): {kl_val:.4f}")
+        else:
+            kl_var.set("Instance KL: n/a (same agent)")
+        ax.legend(loc="upper right")
+        canvas.draw_idle()
+
+    def labeled_spinbox(parent, text, var, upper, width=5):
+        frame = tk.Frame(parent)
+        frame.pack(side="left", padx=4)
+        tk.Label(frame, text=text).pack()
+        spin = tk.Spinbox(
+            frame,
+            from_=0,
+            to=max(0, upper),
+            textvariable=var,
+            width=width,
+            command=update_plot,
+        )
+        spin.pack()
+        var.trace_add("write", lambda *args: update_plot())
+        return spin
+
+    tk.Label(controls, text="Agent A").pack(side="left", padx=4)
+    agent_options = [str(i) for i in range(num_agents)]
+    agent_menu_a = tk.OptionMenu(controls, agent_a_var, *agent_options, command=lambda *_: update_plot())
+    agent_menu_a.pack(side="left", padx=4)
+
+    tk.Label(controls, text="Agent B").pack(side="left", padx=4)
+    agent_menu_b = tk.OptionMenu(controls, agent_b_var, *agent_options, command=lambda *_: update_plot())
+    agent_menu_b.pack(side="left", padx=4)
+
+    labeled_spinbox(controls, "Instance", instance_var, num_instances - 1)
+    labeled_spinbox(controls, "Dim X", dim_x_var, num_dims - 1)
+    labeled_spinbox(controls, "Dim Y", dim_y_var, num_dims - 1)
+
+    slider = tk.Scale(
+        panel,
+        from_=0,
+        to=len(values) - 1,
+        orient="horizontal",
+        length=450,
+        command=lambda val: (epoch_var.set(int(float(val))), update_plot()),
+        label="Epoch",
+    )
+    slider.pack(fill="x", padx=12, pady=6)
+
+    def step_epoch(delta):
+        new_idx = max(0, min(len(values) - 1, epoch_var.get() + delta))
+        slider.set(new_idx)
+
+    root_window.bind("<Left>", lambda event: step_epoch(-1))
+    root_window.bind("<Right>", lambda event: step_epoch(1))
+
+    update_plot()

@@ -61,6 +61,7 @@ DEFAULTS = dict(
     withoutCausalMaskTraining=False,
     type_strategy="PPO-EDA",   # utilisé par la fabrique
     problem_name="QUBO",       # defaults: problem: qubo
+    visualization=True,
 )
 
 # =========================
@@ -417,7 +418,7 @@ def main():
             if type_problem == "QUBO":
                 list_scores = get_Score_trajectoriesQUBO_cuda(
                     strategy, dim, nb_instances_test, nb_restarts, budget, lambda_,
-                    tensor_Q_test, device, verbose, temp_path
+                    tensor_Q_test, device, verbose, temp_path, enable_visualization=DEFAULTS.get("visualization", True)
                 )
             elif type_problem in ("NK", "NK3"):
                 list_scores = get_Score_trajectoriesNK_cuda(

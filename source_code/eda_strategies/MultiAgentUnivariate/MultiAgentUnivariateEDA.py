@@ -33,6 +33,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.svgd = SVGD(RBF())
         self.svgd_step_size = 1
         self.theta_history = []
+        self.last_final_snapshot = None
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
         bonus_indices = random.sample(range(M), remainder_lambda) if remainder_lambda > 0 else []
@@ -73,6 +74,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         for agent in self.agents:
             agent.reset_learned_parameters(nb_instances)
         self.theta_history = []
+        self.last_final_snapshot = None
 
     def sample_solutions(self):
         samples_list = []
@@ -98,10 +100,13 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             else:
                 rl_step = -agent.last_theta_grad  # gradient descent direction
             rl_directions.append(rl_step.detach())
+        rl_snapshot = self._capture_prob_snapshot()
+        prev_snapshot = self.last_final_snapshot if self.last_final_snapshot is not None else rl_snapshot
         if self.M > 1:
             self._apply_svgd(rl_directions)
-
-        self._record_theta_snapshot()
+        final_snapshot = self._capture_prob_snapshot()
+        self._record_theta_snapshot(prev_snapshot, rl_snapshot, final_snapshot)
+        self.last_final_snapshot = final_snapshot
 
         return total_loss / self.M
 
@@ -128,16 +133,20 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             for idx, agent in enumerate(self.agents):
                 agent.theta.add_(self.svgd_step_size * phi_buffer[:, idx, :])
 
-    def _record_theta_snapshot(self):
+    def _capture_prob_snapshot(self):
         if not self.agents or self.nb_instances <= 0:
-            return
-
+            return []
         snapshot = []
         with torch.no_grad():
             for agent in self.agents:
-                probs = torch.sigmoid(agent.theta).detach().cpu()
-                snapshot.append(probs)
-        self.theta_history.append(snapshot)
+                snapshot.append(torch.sigmoid(agent.theta).detach().cpu())
+        return snapshot
+
+    def _record_theta_snapshot(self, prev_snapshot, rl_snapshot, final_snapshot):
+        if not rl_snapshot or not final_snapshot or not prev_snapshot:
+            return
+        entry = {"prev": prev_snapshot, "rl": rl_snapshot, "final": final_snapshot}
+        self.theta_history.append(entry)
 
     def get_theta_history(self):
         return {"values": self.theta_history}

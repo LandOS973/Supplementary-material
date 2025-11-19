@@ -52,6 +52,7 @@ def main(cfg: DictConfig):
     dropoutGen = float(cfg.dropoutGen)
     dropoutTrain = float(cfg.dropoutTrain)
     withoutCausalMaskTraining = bool(cfg.withoutCausalMaskTraining)
+    visualization_enabled = bool(cfg.get('visualization', True))
     # safe getter for possibly nested agent configs (cfg.agent can be a string when only the group name is set)
     def oget(path, default=None):
         try:
@@ -183,7 +184,7 @@ def main(cfg: DictConfig):
         name_file_result = None
 
     if (type_problem == "QUBO"):
-        list_scores = get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances_test, nb_restarts, budget, lambda_, tensor_Q_test, device, verbose, name_file_result)
+        list_scores = get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances_test, nb_restarts, budget, lambda_, tensor_Q_test, device, verbose, name_file_result, enable_visualization=visualization_enabled)
 
     elif (type_problem == "NK" or type_problem == "NK3"):
         list_scores = get_Score_trajectoriesNK_cuda(strategy, N,  type_instance, D, nb_instances_test, nb_restarts, 
