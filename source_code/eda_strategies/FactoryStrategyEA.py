@@ -11,7 +11,6 @@ from eda_strategies.MultiAgentUnivariate.MultiAgentUnivariateEDA import MultiAge
 class FactoryStrategyEA:
 
     def createStrategyEA(self, typeStrategy, N, lambda_, beta, device, typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale, M, updateMethod, K_steps, beta_adapt, delta_target, learning_rate=None):
-        print("Création de la stratégie : " + typeStrategy)
         if (typeStrategy == "UMDA"):
             return UMDA(N, lambda_, device)
 

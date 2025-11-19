@@ -15,15 +15,14 @@ class RBF(nn.Module):
 
     dnorm2 = -2 * XY + XX.diag().unsqueeze(1) + YY.diag().unsqueeze(0)
 
+    # Apply the median heuristic (PyTorch does not give true median)
     if self.sigma is None:
-        h = dnorm2.detach().view(-1).median()
-        h = h / (2 * torch.log(torch.tensor(X.size(0) + 1.0, device=X.device)))
-        sigma = h.clamp(min=1e-8).sqrt()
+      np_dnorm2 = dnorm2.detach().cpu().numpy()
+      h = np.median(np_dnorm2) / (2 * np.log(X.size(0) + 1))
+      sigma = np.sqrt(h).item()
     else:
-        sigma = self.sigma
-
+      sigma = self.sigma
 
     gamma = 1.0 / (1e-8 + 2 * sigma ** 2)
     K_XY = (-gamma * dnorm2).exp()
-
     return K_XY

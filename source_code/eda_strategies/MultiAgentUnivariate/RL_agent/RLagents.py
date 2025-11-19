@@ -23,6 +23,7 @@ class UnivariateBase(Abstract_EDA, nn.Module):
         self.theta = None
         self.nb_instances = 0
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
+        self.last_theta_grad = None
 
     def forward(self):
         """
@@ -123,6 +124,10 @@ class PPOAgent(UnivariateBase):
             torch.nn.utils.clip_grad_norm_([self.theta], max_norm=1.0)
             self.opt_ppo.step()
             total_loss += loss.item()
+        if self.theta.grad is None:
+            self.last_theta_grad = torch.zeros_like(self.theta)
+        else:
+            self.last_theta_grad = self.theta.grad.detach().clone()
         with torch.no_grad():
             p_new_final = torch.sigmoid(self.theta).clamp(1e-10, 1 - 1e-10)
         if self.beta_adapt is True:
@@ -168,6 +173,10 @@ class REINFORCEAgent(UnivariateBase):
         self.opt_reinforce.zero_grad(set_to_none=True)
         loss.backward()
         self.opt_reinforce.step()
+        if self.theta.grad is None:
+            self.last_theta_grad = torch.zeros_like(self.theta)
+        else:
+            self.last_theta_grad = self.theta.grad.detach().clone()
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1)  # (nb_instances,)
         return loss_per_instance.mean()

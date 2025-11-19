@@ -117,6 +117,11 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
     strategy.reset_learned_parameters(nb_instances*nb_restarts)
 
     bestScore = torch.ones(nb_instances*nb_restarts).to(device)*(-99999)
+    agent_lambdas = getattr(strategy, "agent_lambdas", None)
+    track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
+    agent_best_overall = None
+    if track_leader:
+        agent_best_overall = [torch.ones(nb_instances*nb_restarts).to(device)*(-99999) for _ in agent_lambdas]
 
 
     size_pop = strategy.lambda_
@@ -213,9 +218,48 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
 
         strategy.updateDistribution(tensor_solution, tensor_score)
 
+        global_current = torch.mean(current_score).item()/N
+        global_best = torch.mean(bestScore).item()/N
+
+        leader_idx = None
+        avg_hamming = None
+        if track_leader:
+            agent_best_scores = []
+            agent_best_solutions = []
+            start_idx = 0
+            for idx, agent_lambda in enumerate(agent_lambdas):
+                end_idx = start_idx + agent_lambda
+                agent_scores = tensor_score[:, start_idx:end_idx]
+                agent_solutions = tensor_solution[:, start_idx:end_idx, :, :]
+                agent_best_values, agent_best_idx = torch.max(agent_scores, dim=1)
+                gather_idx = agent_best_idx.view(-1, 1, 1, 1).repeat(1, 1, N, 1)
+                best_sol = torch.gather(agent_solutions, 1, gather_idx).squeeze(1).squeeze(-1)
+                agent_best_scores.append(agent_best_values)
+                agent_best_solutions.append(best_sol)
+                agent_best_overall[idx] = torch.where(agent_best_values > agent_best_overall[idx],
+                                                       agent_best_values,
+                                                       agent_best_overall[idx])
+                start_idx = end_idx
+
+            agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
+            leader_idx = torch.argmax(agent_mean_scores).item()
+            leader_solution = agent_best_solutions[leader_idx]
+            total_dist = 0.0
+            comparisons = 0
+            for idx, sol in enumerate(agent_best_solutions):
+                if idx == leader_idx:
+                    continue
+                dist = torch.abs(sol - leader_solution).sum(dim=1).float()
+                total_dist += torch.mean(dist).item()
+                comparisons += 1
+            avg_hamming = (total_dist / comparisons) if comparisons > 0 else 0.0
+
         if(verbose):
-            pbar.set_postfix(bestScore=torch.mean(bestScore).item()/N,
-                            current_score = torch.mean(current_score).item()/N)
+            postfix = {"bestScore": -global_best, "current_score": -global_current}
+            if track_leader and leader_idx is not None:
+                postfix["leader"] = leader_idx
+                postfix["avg_hamming"] = avg_hamming
+            pbar.set_postfix(**postfix)
 
         if(name_file is not None):
             if(((epoch +1)*size_pop) % 100 == 0):
@@ -255,6 +299,12 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
             f_hamming.close()
             
     bestScore_np = -bestScore.detach().cpu().numpy()/N
+    if track_leader and agent_best_overall is not None and hasattr(strategy, "agents"):
+        print("Per-agent summary:")
+        for idx, agent in enumerate(strategy.agents):
+            avg_best = -torch.mean(agent_best_overall[idx]).item()/N
+            theta_mean = torch.mean(agent.theta).item()
+            print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
     return -bestScore_np
 
 

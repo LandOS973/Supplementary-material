@@ -5,6 +5,8 @@ import torch.nn as nn
 
 from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.RL_agent import PPOAgent, REINFORCEAgent
+from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
+from eda_strategies.MultiAgentUnivariate.SVGD.rbf import RBF
 
 
 class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
@@ -26,6 +28,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         self.lambda_per_agent = lambda_ // M
         remainder_lambda = lambda_ % M
+
+        # interaction SVGD (simple constant pour l'instant)
+        self.svgd = SVGD(RBF())
+        self.svgd_step_size = 0.00
 
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
@@ -78,6 +84,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     def updateDistribution(self, solutionList, scoreList):
         total_loss = 0.0
         start_lambda = 0
+        rl_directions = []
 
         for i, agent in enumerate(self.agents):
             agent_lambda = self.agent_lambdas[i]
@@ -87,7 +94,15 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             loss = agent.updateDistribution(agent_solutions, agent_scores)
             total_loss += loss
 
+            if agent.last_theta_grad is None:
+                rl_step = torch.zeros_like(agent.theta)
+            else:
+                rl_step = -agent.last_theta_grad  # gradient descent direction
+            rl_directions.append(rl_step.detach())
+
             start_lambda = end_lambda
+
+        self._apply_svgd(rl_directions)
 
         return total_loss / self.M
 
@@ -96,3 +111,32 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
     def toString(self):
         return f"MultiAgent_Collaborative_M{self.M}_lambda{self.lambda_}"
+
+    def _apply_svgd(self, rl_directions):
+        """
+        Applique un pas SVGD instance par instance en se basant sur les directions RL observées.
+        rl_directions : liste de tenseurs (nb_instances, N)
+        """
+        if not rl_directions:
+            return
+
+        theta_stack = torch.stack([agent.theta.detach() for agent in self.agents], dim=1)  # (B, M, N)
+        score_stack = torch.stack(rl_directions, dim=1)  # (B, M, N)
+        B = theta_stack.size(0)
+        phi_buffer = torch.zeros_like(score_stack)
+
+        for b in range(B):
+            phi_buffer[b] = self.svgd.phi(theta_stack[b], score_stack[b])
+
+        if len(self.agents) > 1:
+            ref_theta = self.agents[0].theta.detach()
+            norms = []
+            for idx, agent in enumerate(self.agents[1:], start=1):
+                diff = torch.norm(agent.theta.detach() - ref_theta).item()
+                norms.append(f"||theta_{idx}-theta_0||={diff:.4f}")
+            if norms:
+                print("Theta distances:", ", ".join(norms))
+
+        with torch.no_grad():
+            for idx, agent in enumerate(self.agents):
+                agent.theta.add_(self.svgd_step_size * phi_buffer[:, idx, :])
