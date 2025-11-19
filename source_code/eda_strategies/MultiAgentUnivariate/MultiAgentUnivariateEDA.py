@@ -32,10 +32,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
         self.svgd_step_size = 1
-        self.svgd_field_dims = (0, 1)
-        self.svgd_field_max_instances = 3
-        self.svgd_field_snapshot = None
-
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
         bonus_indices = random.sample(range(M), remainder_lambda) if remainder_lambda > 0 else []
@@ -86,14 +82,12 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
     def updateDistribution(self, solutionList, scoreList):
         total_loss = 0.0
-        start_lambda = 0
         rl_directions = []
 
-        for i, agent in enumerate(self.agents):
-            agent_lambda = self.agent_lambdas[i]
-            end_lambda = start_lambda + agent_lambda
-            agent_solutions = solutionList[:, start_lambda:end_lambda, :, :]  # (nb_instances, λ_agent, N, 1)
-            agent_scores = scoreList[:, start_lambda:end_lambda]  # (nb_instances, λ_agent)
+        solution_chunks = torch.split(solutionList, self.agent_lambdas, dim=1)
+        score_chunks = torch.split(scoreList, self.agent_lambdas, dim=1)
+
+        for agent, agent_solutions, agent_scores in zip(self.agents, solution_chunks, score_chunks):
             loss = agent.updateDistribution(agent_solutions, agent_scores)
             total_loss += loss
 
@@ -103,9 +97,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 rl_step = -agent.last_theta_grad  # gradient descent direction
             rl_directions.append(rl_step.detach())
 
-            start_lambda = end_lambda
-
-        #self._apply_svgd(rl_directions)
+        self._apply_svgd(rl_directions)
 
         return total_loss / self.M
 
@@ -125,14 +117,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         theta_stack = torch.stack([agent.theta.detach() for agent in self.agents], dim=1)  # (B, M, N)
         score_stack = torch.stack(rl_directions, dim=1)  # (B, M, N)
-        B = theta_stack.size(0)
-        phi_buffer = torch.zeros_like(score_stack)
-
-        for b in range(B):
-            phi_buffer[b] = self.svgd.phi(theta_stack[b], score_stack[b])
-
-        self._store_svgd_field_snapshot(theta_stack, phi_buffer)
+        phi_chunks = [self.svgd.phi(theta_stack[b], score_stack[b]) for b in range(theta_stack.size(0))]
+        phi_buffer = torch.stack(phi_chunks, dim=0)
 
         with torch.no_grad():
+            theta_updates = theta_stack + self.svgd_step_size * phi_buffer
             for idx, agent in enumerate(self.agents):
-                agent.theta.add_(self.svgd_step_size * phi_buffer[:, idx, :])
+                agent.theta.copy_(theta_updates[:, idx, :])
