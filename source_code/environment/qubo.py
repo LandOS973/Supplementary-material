@@ -207,6 +207,18 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
         num_agents = len(strategy.agents) if hasattr(strategy, "agents") else 0
         _render_agent_plots(iterations, avg_hamming_history, avg_kl_history, agent_fitness_history, num_agents)
 
+    svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)
+    if callable(svgd_snapshot_fn):
+        snapshot = svgd_snapshot_fn()
+        if snapshot:
+            _render_svgd_field_plot(snapshot)
+
+    theta_history_fn = getattr(strategy, "get_theta_history", None)
+    if callable(theta_history_fn):
+        theta_history = theta_history_fn()
+        if theta_history and theta_history.get("values"):
+            _render_theta_slider(theta_history)
+
     return bestScore_np
 
 
@@ -336,3 +348,213 @@ def _render_agent_plots(iterations, hamming_history, kl_history, agent_fitness_h
         plt.close(fig)
     except Exception as exc:  # pragma: no cover - GUI failure is non critical
         print(f"Failed to render Tkinter plots: {exc}")
+
+
+def _render_svgd_field_plot(snapshot):
+    if tk is None or plt is None or FigureCanvasTkAgg is None:
+        print("Tkinter/matplotlib not available, skipping SVGD field plot.")
+        return
+
+    theta = snapshot.get("theta")
+    phi = snapshot.get("phi")
+    dims = snapshot.get("dims", (0, 1))
+    if theta is None or phi is None:
+        return
+
+    theta = torch.tensor(theta) if isinstance(theta, np.ndarray) else theta
+    phi = torch.tensor(phi) if isinstance(phi, np.ndarray) else phi
+    num_instances = theta.shape[0]
+    num_agents = theta.shape[1]
+
+    try:
+        root = tk.Tk()
+        root.title("SVGD Field Snapshot")
+        fig, axes = plt.subplots(1, num_instances, figsize=(5 * num_instances, 5), squeeze=False)
+        axes = axes.flatten()
+        colors = plt.cm.get_cmap("tab10", num_agents)
+
+        for inst_idx in range(num_instances):
+            ax = axes[inst_idx]
+            ax.set_title(f"Instance {inst_idx}")
+            ax.set_xlabel(f"theta[{dims[0]}]")
+            ax.set_ylabel(f"theta[{dims[1]}]")
+            ax.grid(True, linestyle="--", alpha=0.3)
+            for agent_idx in range(num_agents):
+                x, y = theta[inst_idx, agent_idx].tolist()
+                dx, dy = phi[inst_idx, agent_idx].tolist()
+                color = colors(agent_idx)
+                ax.scatter(x, y, color=color, label=f"Agent {agent_idx}" if inst_idx == 0 else None)
+                ax.arrow(
+                    x,
+                    y,
+                    dx,
+                    dy,
+                    color=color,
+                    head_width=0.02,
+                    head_length=0.02,
+                    length_includes_head=True,
+                    alpha=0.8,
+                )
+
+        handles, labels = axes[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(handles, labels, loc="upper right")
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=root)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        def _close():
+            root.quit()
+            root.destroy()
+
+        root.protocol("WM_DELETE_WINDOW", _close)
+        root.mainloop()
+        plt.close(fig)
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to render SVGD field plot: {exc}")
+
+
+def _render_theta_slider(history):
+    if tk is None or plt is None or FigureCanvasTkAgg is None:
+        print("Tkinter/matplotlib not available, skipping theta slider plot.")
+        return
+
+    values = history.get("values") or []
+    if not values:
+        return
+
+    num_agents = len(values[0])
+    if num_agents == 0:
+        return
+
+    sample = values[0][0]
+    num_instances = sample.shape[0]
+    num_dims = sample.shape[1]
+
+    def _sym_kl(p, q):
+        eps = 1e-8
+        p = torch.clamp(p, eps, 1 - eps)
+        q = torch.clamp(q, eps, 1 - eps)
+        kl_pq = p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
+        kl_qp = q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p))
+        return 0.5 * (kl_pq.mean() + kl_qp.mean())
+
+    try:
+        root = tk.Tk()
+        root.title("Theta Evolution Explorer")
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5), squeeze=False)
+        axes = axes.flatten()
+        for ax in axes:
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.grid(True, linestyle="--", alpha=0.4)
+
+        scatters = [axes[0].scatter([], [], color="tab:blue"), axes[1].scatter([], [], color="tab:orange")]
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=root)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        controls = tk.Frame(root)
+        controls.pack(fill="x", padx=10, pady=6)
+
+        epoch_var = tk.IntVar(value=0)
+        agent_a_var = tk.IntVar(value=0)
+        agent_b_var = tk.IntVar(value=min(1, num_agents - 1))
+        instance_var = tk.IntVar(value=0)
+        dim_x_var = tk.IntVar(value=0)
+        dim_y_var = tk.IntVar(value=1 if num_dims > 1 else 0)
+
+        def clamp(var, upper):
+            val = max(0, min(upper, var.get()))
+            var.set(val)
+            return val
+
+        status_var = tk.StringVar()
+        status_label = tk.Label(root, textvariable=status_var)
+        status_label.pack(pady=2)
+        kl_var = tk.StringVar()
+        kl_label = tk.Label(root, textvariable=kl_var)
+        kl_label.pack(pady=2)
+
+        def update_plot(*_):
+            epoch_idx = clamp(epoch_var, len(values) - 1)
+            inst_idx = clamp(instance_var, num_instances - 1)
+            dx = clamp(dim_x_var, num_dims - 1)
+            dy = clamp(dim_y_var, num_dims - 1)
+            agent_indices = [
+                clamp(agent_a_var, num_agents - 1),
+                clamp(agent_b_var, num_agents - 1),
+            ]
+
+            for ax, scatter, agent_idx in zip(axes, scatters, agent_indices):
+                probs = values[epoch_idx][agent_idx]
+                x = float(probs[inst_idx, dx].item())
+                y = float(probs[inst_idx, dy].item())
+                scatter.set_offsets([[x, y]])
+                ax.set_title(f"Agent {agent_idx} – Instance {inst_idx} – dims ({dx},{dy})")
+            status_var.set(f"Epoch {epoch_idx + 1}/{len(values)}")
+            if agent_indices[0] != agent_indices[1]:
+                p = values[epoch_idx][agent_indices[0]][inst_idx]
+                q = values[epoch_idx][agent_indices[1]][inst_idx]
+                kl_val = _sym_kl(p, q).item()
+                kl_var.set(f"Instance KL (Agent {agent_indices[0]} vs {agent_indices[1]}): {kl_val:.4f}")
+            else:
+                kl_var.set("Instance KL: n/a (same agent)")
+            canvas.draw_idle()
+
+        def labeled_spinbox(parent, text, var, upper, width=5):
+            frame = tk.Frame(parent)
+            frame.pack(side="left", padx=4)
+            tk.Label(frame, text=text).pack()
+            spin = tk.Spinbox(
+                frame,
+                from_=0,
+                to=max(0, upper),
+                textvariable=var,
+                width=width,
+                command=update_plot,
+            )
+            spin.pack()
+            var.trace_add("write", lambda *args: update_plot())
+            return spin
+
+        tk.Label(controls, text="Agent A").pack(side="left", padx=4)
+        agent_options = [str(i) for i in range(num_agents)]
+        agent_menu_a = tk.OptionMenu(controls, agent_a_var, *agent_options, command=lambda *_: update_plot())
+        agent_menu_a.pack(side="left", padx=4)
+
+        tk.Label(controls, text="Agent B").pack(side="left", padx=4)
+        agent_menu_b = tk.OptionMenu(controls, agent_b_var, *agent_options, command=lambda *_: update_plot())
+        agent_menu_b.pack(side="left", padx=4)
+
+        labeled_spinbox(controls, "Instance", instance_var, num_instances - 1)
+        labeled_spinbox(controls, "Dim X", dim_x_var, num_dims - 1)
+        labeled_spinbox(controls, "Dim Y", dim_y_var, num_dims - 1)
+
+        slider = tk.Scale(
+            root,
+            from_=0,
+            to=len(values) - 1,
+            orient="horizontal",
+            length=450,
+            command=lambda val: (epoch_var.set(int(float(val))), update_plot()),
+            label="Epoch",
+        )
+        slider.pack(fill="x", padx=12, pady=6)
+
+        update_plot()
+
+        def _close():
+            root.quit()
+            root.destroy()
+
+        root.protocol("WM_DELETE_WINDOW", _close)
+        root.mainloop()
+        plt.close(fig)
+    except Exception as exc:  # pragma: no cover
+        print(f"Failed to render theta slider: {exc}")

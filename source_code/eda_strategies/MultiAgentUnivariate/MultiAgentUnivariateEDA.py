@@ -32,6 +32,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
         self.svgd_step_size = 1
+        self.theta_history = []
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
         bonus_indices = random.sample(range(M), remainder_lambda) if remainder_lambda > 0 else []
@@ -71,6 +72,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.nb_instances = nb_instances
         for agent in self.agents:
             agent.reset_learned_parameters(nb_instances)
+        self.theta_history = []
 
     def sample_solutions(self):
         samples_list = []
@@ -99,6 +101,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.M > 1:
             self._apply_svgd(rl_directions)
 
+        self._record_theta_snapshot()
+
         return total_loss / self.M
 
     def forward(self):
@@ -123,3 +127,17 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         with torch.no_grad():
             for idx, agent in enumerate(self.agents):
                 agent.theta.add_(self.svgd_step_size * phi_buffer[:, idx, :])
+
+    def _record_theta_snapshot(self):
+        if not self.agents or self.nb_instances <= 0:
+            return
+
+        snapshot = []
+        with torch.no_grad():
+            for agent in self.agents:
+                probs = torch.sigmoid(agent.theta).detach().cpu()
+                snapshot.append(probs)
+        self.theta_history.append(snapshot)
+
+    def get_theta_history(self):
+        return {"values": self.theta_history}
