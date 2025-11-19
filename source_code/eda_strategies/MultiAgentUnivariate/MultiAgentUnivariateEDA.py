@@ -31,7 +31,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
-        self.svgd_step_size = 0.00
+        self.svgd_step_size = 1
+        self.svgd_field_dims = (0, 1)
+        self.svgd_field_max_instances = 3
+        self.svgd_field_snapshot = None
 
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
@@ -102,7 +105,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
             start_lambda = end_lambda
 
-        self._apply_svgd(rl_directions)
+        #self._apply_svgd(rl_directions)
 
         return total_loss / self.M
 
@@ -128,14 +131,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         for b in range(B):
             phi_buffer[b] = self.svgd.phi(theta_stack[b], score_stack[b])
 
-        if len(self.agents) > 1:
-            ref_theta = self.agents[0].theta.detach()
-            norms = []
-            for idx, agent in enumerate(self.agents[1:], start=1):
-                diff = torch.norm(agent.theta.detach() - ref_theta).item()
-                norms.append(f"||theta_{idx}-theta_0||={diff:.4f}")
-            if norms:
-                print("Theta distances:", ", ".join(norms))
+        self._store_svgd_field_snapshot(theta_stack, phi_buffer)
 
         with torch.no_grad():
             for idx, agent in enumerate(self.agents):

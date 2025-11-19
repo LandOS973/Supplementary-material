@@ -5,6 +5,15 @@ import torch
 from random import sample
 import numpy as np
 
+try:
+    import tkinter as tk
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover - plotting is optional
+    tk = None
+    FigureCanvasTkAgg = None
+    plt = None
+
 
 
 def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budget, size_pop, tensor_Q, device, verbose , name_file):
@@ -27,6 +36,10 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
     if track_leader:
         agent_best_overall = [torch.ones(total_cases).to(device) * (-99999) for _ in agent_lambdas]
     nb_iterations = budget // size_pop
+
+    avg_hamming_history = []
+    avg_kl_history = []
+    agent_fitness_history = []
 
     if(verbose):
         pbar = tqdm(range(nb_iterations))
@@ -95,6 +108,7 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
 
         leader_idx = None
         avg_hamming = None
+        avg_kl = None
         if track_leader:
             agent_best_scores = []
             agent_best_solutions = []
@@ -126,11 +140,17 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
                 comparisons += 1
             avg_hamming = (total_dist / comparisons) if comparisons > 0 else 0.0
 
+            avg_kl = _compute_average_kl(strategy.agents)
+            avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
+            avg_kl_history.append(avg_kl if avg_kl is not None else 0.0)
+            agent_fitness_history.append([score.item() for score in agent_mean_scores])
+
         if(verbose):
            postfix = {"bestScore": -global_best, "current_score": -global_current}
            if track_leader and leader_idx is not None:
                postfix["leader"] = leader_idx
                postfix["avg_hamming"] = avg_hamming
+               postfix["avg_kl"] = avg_kl
            pbar.set_postfix(**postfix)
 
 
@@ -180,6 +200,11 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
             avg_best = -torch.mean(agent_best_overall[idx]).item()
             theta_mean = torch.mean(agent.theta).item()
             print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
+
+    if track_leader and avg_hamming_history and avg_kl_history:
+        iterations = [(idx + 1) * size_pop for idx in range(len(avg_hamming_history))]
+        num_agents = len(strategy.agents) if hasattr(strategy, "agents") else 0
+        _render_agent_plots(iterations, avg_hamming_history, avg_kl_history, agent_fitness_history, num_agents)
 
     return bestScore_np
 
@@ -234,3 +259,74 @@ def getTensorInstances_QUBO(path, nb_instances, nb_restarts,  N, t, device, phas
 
 
     return tensor_Q
+
+
+def _compute_average_kl(agents):
+    if agents is None or len(agents) < 2:
+        return 0.0
+
+    eps = 1e-8
+    total_kl = 0.0
+    comparisons = 0
+    with torch.no_grad():
+        agent_probs = [torch.sigmoid(agent.theta).detach() for agent in agents]
+
+    for i in range(len(agent_probs)):
+        for j in range(i + 1, len(agent_probs)):
+            p = torch.clamp(agent_probs[i], eps, 1 - eps)
+            q = torch.clamp(agent_probs[j], eps, 1 - eps)
+            kl_pq = torch.mean(p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q)))
+            kl_qp = torch.mean(q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p)))
+            total_kl += 0.5 * (kl_pq + kl_qp).item()
+            comparisons += 1
+
+    return (total_kl / comparisons) if comparisons > 0 else 0.0
+
+
+def _render_agent_plots(iterations, hamming_history, kl_history, agent_fitness_history, num_agents):
+    if tk is None or plt is None or FigureCanvasTkAgg is None:
+        print("Tkinter/matplotlib not available, skipping diversity plot.")
+        return
+
+    try:
+        rows = 3 if agent_fitness_history and num_agents > 0 else 2
+        root = tk.Tk()
+        root.title("Agent Metrics")
+        fig, axes = plt.subplots(rows, 1, figsize=(8, 4 * rows), sharex=True)
+        if rows == 2:
+            axes = [axes] if not isinstance(axes, (list, np.ndarray)) else axes
+
+        axes[0].plot(iterations, hamming_history, color="tab:blue")
+        axes[0].set_title("Average Hamming Distance")
+        axes[0].set_ylabel("Hamming")
+        axes[0].grid(True, linestyle="--", alpha=0.4)
+
+        axes[1].plot(iterations, kl_history, color="tab:orange")
+        axes[1].set_title("Average KL Distance")
+        axes[1].set_ylabel("KL")
+        axes[1].grid(True, linestyle="--", alpha=0.4)
+
+        if rows == 3:
+            axes[2].set_title("Agent Fitness Evolution")
+            axes[2].set_ylabel("Fitness")
+            for agent_idx in range(num_agents):
+                series = [epoch[agent_idx] for epoch in agent_fitness_history]
+                axes[2].plot(iterations, series, label=f"Agent {agent_idx}")
+            axes[2].grid(True, linestyle="--", alpha=0.4)
+            axes[2].legend()
+
+        axes[-1].set_xlabel("Evaluations")
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=root)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        def _close():
+            root.quit()
+            root.destroy()
+
+        root.protocol("WM_DELETE_WINDOW", _close)
+        root.mainloop()
+        plt.close(fig)
+    except Exception as exc:  # pragma: no cover - GUI failure is non critical
+        print(f"Failed to render Tkinter plots: {exc}")
