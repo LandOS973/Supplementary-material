@@ -31,7 +31,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
-        self.svgd_step_size = 0.2
+        self.svgd_step_size = 1
         self.agents = nn.ModuleList()
         self.agent_lambdas = []
         bonus_indices = random.sample(range(M), remainder_lambda) if remainder_lambda > 0 else []
@@ -115,12 +115,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if not rl_directions:
             return
 
-        theta_stack = torch.stack([agent.theta.detach() for agent in self.agents], dim=1)  # (B, M, N)
+        with torch.no_grad():
+            theta_stack = torch.stack([agent.theta.detach() for agent in self.agents], dim=1)  # (B, M, N)
         score_stack = torch.stack(rl_directions, dim=1)  # (B, M, N)
-        phi_chunks = [self.svgd.phi(theta_stack[b], score_stack[b]) for b in range(theta_stack.size(0))]
-        phi_buffer = torch.stack(phi_chunks, dim=0)
+        phi_buffer = self.svgd.phi(theta_stack, score_stack)
 
         with torch.no_grad():
-            theta_updates = theta_stack + self.svgd_step_size * phi_buffer
             for idx, agent in enumerate(self.agents):
-                agent.theta.copy_(theta_updates[:, idx, :])
+                agent.theta.add_(self.svgd_step_size * phi_buffer[:, idx, :])

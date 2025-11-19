@@ -1,5 +1,5 @@
 import torch
-import torch.autograd as autograd
+
 
 class SVGD:
     def __init__(self, kernel):
@@ -7,21 +7,36 @@ class SVGD:
 
     def phi(self, theta, score):
         """
-        theta : (M, N)  paramètres des M agents pour UNE instance
-        score : (M, N)  direction 'score' pour chaque agent (ici g_RL déjà calculé)
-
-        Retourne phi(theta) de taille (M, N).
+        theta : (M, N) ou (B, M, N)
+        score : (M, N) ou (B, M, N)
         """
-        # on veut des gradients par rapport à theta dans le calcul du noyau
-        theta = theta.detach().requires_grad_(True)
+        squeeze_batch = False
+        if theta.dim() == 2:
+            theta = theta.unsqueeze(0)
+            score = score.unsqueeze(0)
+            squeeze_batch = True
 
-        # noyau entre agents
-        K = self.kernel(theta, theta)        # (M, M)
+        K = self.kernel(theta, theta)  # (B, M, M)
+        if K.dim() == 2:
+            K = K.unsqueeze(0)
 
-        # ∇_{theta_j} k(theta_j, theta_i)
-        grad_K = -autograd.grad(K.sum(), theta)[0]  # (M, N)
+        gamma = getattr(self.kernel, "last_gamma", None)
+        if gamma is None:
+            gamma = torch.tensor(1.0, device=theta.device, dtype=theta.dtype)
+        elif not torch.is_tensor(gamma):
+            gamma = torch.tensor(gamma, device=theta.device, dtype=theta.dtype)
+        else:
+            gamma = gamma.to(device=theta.device, dtype=theta.dtype)
 
-        # direction SVGD : 1/M Σ_j [ k_ji * score_j + ∇_{theta_j} k_ji ]
-        phi = (K.detach() @ score + grad_K) / theta.size(0)
+        K_transpose = K.transpose(-2, -1)
 
-        return phi.detach()
+        score_term = torch.matmul(K_transpose, score)
+
+        theta_diff = theta[:, None, :, :] - theta[:, :, None, :]
+        grad_term = -2.0 * gamma.view(1) * torch.sum(K_transpose.unsqueeze(-1) * theta_diff, dim=2)
+
+        phi = (score_term + grad_term) / theta.size(1)
+
+        if squeeze_batch:
+            return phi.squeeze(0)
+        return phi
