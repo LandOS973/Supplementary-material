@@ -2,16 +2,15 @@ import torch
 import torch.nn as nn
 from eda_strategies.Abstract_EDA import Abstract_EDA
 import random
-from torch.distributions import Bernoulli, kl_divergence as torch_kl_divergence
-from . import SVGD, rbf
+from torch.distributions import Bernoulli
 
-class UnivariatePPOEDA(Abstract_EDA, nn.Module):
+
+class UnivariateBase(Abstract_EDA, nn.Module):
     """
     Version univariée propre : chaque variable Xi est indépendante, 
     p(Xi,j=1) = sigmoid(theta_i_j) avec theta_i_j appris via une couche linéaire.
     i = instance, j = variable
     """
-
     def __init__(self, N, lambda_, beta, typeModel, dim_variables, learning_rate, device, agent_number, update_method, K_steps, beta_adapt, delta_target):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
@@ -20,21 +19,20 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         self.learning_rate = learning_rate
         self.dim_variables = dim_variables
         self.lambda_ = lambda_
-        self.N = N # nombre de variables
+        self.N = N  # nombre de variables
         self.device = device
         self.beta = beta
         self.theta = None
         self.opt_reinforce = None
         self.opt_ppo = None
         self.register_buffer("beta_vector", torch.empty(0, dtype=torch.float32), persistent=False)
-        self.register_buffer("baseline",    torch.empty(0, dtype=torch.float32), persistent=False)
+        self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
         self.agent_number = agent_number
         self.theta_old = None
         self.update_method = update_method
         self.K_steps = K_steps
         self.beta_adapt = beta_adapt
         self.delta_target = delta_target
-        self.register_buffer("grad_rl", torch.empty(0, dtype=torch.float32), persistent=False)
 
     def forward(self):
         """
@@ -46,11 +44,10 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
 
     def reset_learned_parameters(self, nb_instances):
         """Réinitialise les paramètres et sauvegarde le nombre d'instances."""
-        self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device)) # (B, N)
+        self.theta = nn.Parameter(torch.zeros((nb_instances, self.N), device=self.device))
         self.theta_old = self.theta.detach().clone()
         self.nb_instances = nb_instances # B
         self.beta_vector.resize_(nb_instances).fill_(1.0)
-        self.grad_rl.resize_(nb_instances, self.N).zero_()
         self.baseline.resize_(nb_instances).zero_()
         self.opt_reinforce = torch.optim.SGD(
             [self.theta], lr=self.learning_rate
@@ -72,8 +69,14 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         p = torch.clamp(torch.nan_to_num(p, nan=0.5), eps, 1 - eps)
         q = torch.clamp(torch.nan_to_num(q, nan=0.5), eps, 1 - eps)
         return p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
-    
-    def updateDistributionPPO(self, solutionList, scoreList):
+
+    # common sampling / forward implemented in base class
+
+
+class PPOAgent(UnivariateBase):
+    """Agent qui utilise PPO pour mettre à jour la distribution univariée."""
+
+    def updateDistribution(self, solutionList, scoreList):
         B = self.nb_instances
         N = self.N # nombre de variables
         λ = self.lambda_
@@ -97,6 +100,7 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         p_old_exp = p_old.unsqueeze(1).expand(-1, λ, -1) # (B, λ, N) => pour comparer avec Dk
         # log πθk(a|s) = ∑ k=1 a n de log(πθk(a k|s)) => ak est la valeur de la variable k dans l'action a (la variable k sur l'individu λi)  # (B, λ) 
         # πθk(a k|s) = Sigmoid(θk) si ak=1 et 1-Sigmoid(θk) si ak=0
+        # log(πθ) = ∑ log(πθk(a k|s))
         log_pi_old = torch.where(
             Dk == 1.0,
             torch.log(p_old_exp + 1e-10),
@@ -126,8 +130,6 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
             loss = loss_i.sum()
             self.opt_ppo.zero_grad(set_to_none=True)
             loss.backward()
-            with torch.no_grad():
-                self.grad_rl.copy_(-self.theta.grad)
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_([self.theta], max_norm=1.0)
             self.opt_ppo.step()
@@ -151,13 +153,10 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         return total_loss / self.nb_instances
 
 
-    # # Version REINFORCE
-    def updateDistributionREINFORCE(self, solutionList, scoreList):
-    #     # X => Individu ayant N variables {-1,1} [x1, x2, ..., xN] => exemple dans QUBO 64, chaque individu est une solution de 64 variables
-    #     # X = solutions  # (nb_instances, λ, N)
-    #     # i indice sur l'individu Xi [indi 1, indi 2, ..., indi λ]
-    #     # k indice sur la variable de l'individu i [x1, x2, xK, xN] de l'individu Xi
-    #     # n indice sur l'instance numero n
+class REINFORCEAgent(UnivariateBase):
+    """Agent qui utilise REINFORCE pour mettre à jour la distribution univariée."""
+
+    def updateDistribution(self, solutionList, scoreList):
         device = self.device
         scoreList = scoreList
         actions = solutionList.squeeze(-1)  # (nb_instances, λ, N)
@@ -166,31 +165,17 @@ class UnivariatePPOEDA(Abstract_EDA, nn.Module):
         all_Pi_Theta = self.forward()  # (nb_instances, N)
         all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, self.lambda_, -1)  # (nb_instances, λ, N)
         fitness = scoreList  # (nb_instances, λ)
-        # Log(Pi(Theta X)) = sum(log(Pi(Theta k)(a[k]))) = sum( log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 )
         Pi_selected = torch.where(actions == 1.0, all_Pi_Theta_expanded, 1.0 - all_Pi_Theta_expanded)  # (nb_instances, λ, N)
         log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (nb_instances, λ)
         advantages = (fitness - self.baseline.unsqueeze(1))  # (nb_instances, λ)
-        # L(Theta) = (1/self.lambda_) * sum( de i=1 a self.lambda_) [ fitness(Xi) * sum( de k=1 a N ) [ log(Sigmoid(Theta k)) si a[k]=1 et log(1-Sigmoid(Theta k)) si a[k]=-1 ] ]
-        # L(θ) = moyenne des fitness moins la baseline pondérées par log π
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (nb_instances,)
-        loss = -loss_per_instance.sum() 
+        loss = -loss_per_instance.sum()
         self.opt_reinforce.zero_grad(set_to_none=True)
         loss.backward()
+        self.opt_reinforce.step()
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1)  # (nb_instances,)
-            self.grad_rl.copy_(-self.theta.grad)
-        self.opt_reinforce.step()
         return loss_per_instance.mean()
-
-    def updateDistribution(self, solutionList, scoreList):
-        """Dispatch to PPO or REINFORCE depending on the agent flag."""
-        if self.update_method == "PPO":
-            return self.updateDistributionPPO(solutionList, scoreList)
-        else:
-            return self.updateDistributionREINFORCE(solutionList, scoreList)
-
-    def toString(self):
-        return "Strategy_Univariate_PPO_EDA number " + str(self.agent_number)
 
 class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     """
@@ -220,18 +205,15 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             agent_lambda = self.lambda_per_agent + (1 if i in bonus_indices else 0)
             self.agent_lambdas.append(agent_lambda)
             
-            agent = UnivariatePPOEDA(
+            # instantiate the appropriate agent class depending on updateMethod
+            agent_cls = PPOAgent if (isinstance(updateMethod, str) and updateMethod.upper() == "PPO") else REINFORCEAgent
+            agent = agent_cls(
                 N, agent_lambda, beta, typeModel, dim_variables,
                 learning_rate,
                 device, agent_number=i, update_method=updateMethod,
                 K_steps=K_steps, beta_adapt=beta_adapt, delta_target=delta_target
             ).to(device)
             self.agents.append(agent)
-
-        # SVGD coupling between agents: kernel and step size
-        # Default step size can be tuned; keep small by default
-        self.svgd = SVGD.SVGD(rbf.RBF())
-        self.eta_svgd = 0.001
 
     def reset_learned_parameters(self, nb_instances):
         self.nb_instances = nb_instances
@@ -259,34 +241,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             total_loss += loss
 
             start_lambda = end_lambda
-        try:
-            grads = torch.stack([agent.grad_rl for agent in self.agents], dim=0)  # (M, B, N)
-        except Exception:
-            grads = None
-
-        if grads is not None:
-            M = len(self.agents)
-            B = self.nb_instances
-            device = self.device
-            # For each instance b, compute phi over agents and apply update to each agent.theta[b]
-            for b in range(B):
-                # build theta matrix (M, N) and score matrix (M, N)
-                theta_mat = torch.stack([agent.theta.data[b].detach() for agent in self.agents], dim=0).to(device)
-                score_mat = grads[:, b, :].to(device)
-                # compute SVGD direction phi (M, N)
-                phi = self.svgd.phi(theta_mat, score_mat)  # returns detached tensor (M, N)
-                with torch.no_grad():
-                    for a in range(M):
-                        self.agents[a].theta.data[b].add_(self.eta_svgd * phi[a].to(self.agents[a].theta.device))
 
         return total_loss / self.M
-    
-    def get_score_b(self):
-        return torch.stack([agent.grad_rl for agent in self.agents], dim=0)  # (M, nb_instances, N)
-    
-    
-    
-
 
     def forward(self):
         return torch.stack([agent.forward() for agent in self.agents], dim=0)
