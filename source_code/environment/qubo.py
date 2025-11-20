@@ -175,7 +175,7 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
         f_hamming.write("runtime, avg distance, avg std pop" + "\n")
         f_hamming.close()
 
-        bestGlobalSolution = bestGlobalSolution.unsqueeze(1).repeat(1,10,1)
+        bestGlobalSolution = bestGlobalSolution.unsqueeze(1).repeat(1, size_pop, 1)
 
         for idx, tensor_solution in enumerate(list_tensor_solution):
             hamming_distance = torch.sum(torch.abs(tensor_solution.squeeze(3) - bestGlobalSolution), dim=2).cpu().numpy()

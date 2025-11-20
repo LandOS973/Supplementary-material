@@ -13,6 +13,8 @@ import numpy as np
 import torch
 import random
 import tempfile
+import argparse
+import sys
 
 # --- imports projet (identiques à ton main) ---
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
@@ -70,13 +72,14 @@ DEFAULTS = dict(
 GRID = dict(
     agent=["ppo", "reinforce"],
     agent_learning_rate=[0.001, 0.003, 0.005, 0.008, 0.02, 0.01, 0.015],
-    agent_M=[1],
+    agent_M=[1,2,3,4],
     agent_K_steps=[4, 6, 8, 20, 10, 15],
-    agent_Beta_adapt=[True, False],
-    agent_beta=[0.5, 1.0],
+    agent_Beta_adapt=[True],
+    agent_beta=[1.0],
     agent_delta_target=[0.0025, 0.006],
     problem_dim=[64, 128, 256],
     problem_type_instance=[0, 1, 2, 3, 4, 5],
+    agent_lambda=[8,10,15,20],
 )
 
 # =========================
@@ -253,6 +256,29 @@ def rank_vs_global_ranking(repo_root: str, dim: int, type_instance: int, my_scor
 # 5) Programme principal
 # =========================
 def main():
+    # --- CLI overrides ---
+    # Support both `--visualization false` and Hydra-style `visualization=false` (e.g. via `-m`).
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--visualization", type=str, default=None,
+                        help="Enable/disable visualization: true|false")
+    args, _ = parser.parse_known_args()
+    if args.visualization is not None:
+        v = args.visualization.strip().lower()
+        if v in ("0", "false", "no", "f"):
+            DEFAULTS["visualization"] = False
+        elif v in ("1", "true", "yes", "t"):
+            DEFAULTS["visualization"] = True
+
+    # Hydra-style overrides often appear as `visualization=false` in `sys.argv` (or after a `-m`).
+    # If present, prefer these explicit overrides.
+    for tok in sys.argv[1:]:
+        if tok.startswith("visualization="):
+            v = tok.split("=", 1)[1].strip().lower()
+            if v in ("0", "false", "no", "f"):
+                DEFAULTS["visualization"] = False
+            elif v in ("1", "true", "yes", "t"):
+                DEFAULTS["visualization"] = True
+            break
     # Seeds
     torch.manual_seed(DEFAULTS["seed"])
     np.random.seed(DEFAULTS["seed"])
@@ -285,7 +311,7 @@ def main():
         nb_instances_test = DEFAULTS["nb_instances_test"]
         nb_restarts = DEFAULTS["nb_restarts"]
         budget = DEFAULTS["budget"]
-        lambda_ = DEFAULTS["lambda_"]
+        lambda_ = int(cfg.get("agent_lambda", DEFAULTS["lambda_"]))
         learnOrder = DEFAULTS["learnOrder"]
         dropoutGen = DEFAULTS["dropoutGen"]
         dropoutTrain = DEFAULTS["dropoutTrain"]
@@ -304,6 +330,8 @@ def main():
         Beta_adapt = bool(cfg["agent_Beta_adapt"])
         beta_param = float(cfg["agent_beta"])
         delta_target = float(cfg["agent_delta_target"])
+        lambda_per_agent = (lambda_ / M) if M > 0 else float(lambda_)
+        lambda_per_agent_str = f"{lambda_per_agent:.3f}".rstrip("0").rstrip(".")
 
         # Conventions fabrique
         if agent.lower() == "ppo":
@@ -318,7 +346,7 @@ def main():
             f"=========================================================DEBUT=======================================================================\n"
             f"▶ Run {i}/{total} | agent={agent} lr={learning_rate} K={K_steps} "
             f"BetaAdapt={Beta_adapt} beta={beta_param} delta={delta_target} M={M} "
-            f"| problem={type_problem} dim={dim} t={type_instance}"
+            f"lambda/M={lambda_per_agent_str} | problem={type_problem} dim={dim} t={type_instance}"
         )
 
         # Préparation des chemins (instances)
@@ -455,7 +483,11 @@ def main():
         by_instance = flat_or_matrix_to_instances(list_scores, nb_instances_test, nb_restarts)
 
         # Mise à jour "meilleur algo par instance" (minimisation) + stockage des moyennes
-        algo_key = f"{updateMethod}:{DEFAULTS['type_strategy']}:lr{learning_rate}:K{K_steps}:BetaAdapt{Beta_adapt}:beta{beta_param}:delta{delta_target}:M{M}"
+        algo_key = (
+            f"{updateMethod}:{DEFAULTS['type_strategy']}:lr{learning_rate}:K{K_steps}:"
+            f"BetaAdapt{Beta_adapt}:beta{beta_param}:delta{delta_target}:M{M}:"
+            f"lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}"
+        )
 
         for inst_idx, rest_scores in enumerate(by_instance):
             # MINIMISATION
