@@ -10,7 +10,7 @@ from eda_strategies.MultiAgentUnivariate.MultiAgentUnivariateEDA import MultiAge
 
 class FactoryStrategyEA:
 
-    def createStrategyEA(self, typeStrategy, N, lambda_, beta, device, typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale, M, updateMethod, K_steps, beta_adapt, delta_target, learning_rate=None):
+    def createStrategyEA(self, typeStrategy, N, lambda_, beta, device, typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale, M, updateMethod, K_steps, beta_adapt, delta_target, learning_rate, learning_rate_svgd, enable_visualization=False):
         if (typeStrategy == "UMDA"):
             return UMDA(N, lambda_, device)
 
@@ -21,6 +21,21 @@ class FactoryStrategyEA:
 
         elif (typeStrategy == "PPO-EDA"):
             if(isUnivariate):
-                return MultiAgentUnivariateEDA(N, lambda_, beta, typeModel, dim_variables, M, device=device, updateMethod=updateMethod, K_steps=K_steps, beta_adapt=beta_adapt, delta_target=delta_target, learning_rate=learning_rate)
+                return MultiAgentUnivariateEDA(
+                    N,
+                    lambda_,
+                    beta,
+                    typeModel,
+                    dim_variables,
+                    M,
+                    device=device,
+                    updateMethod=updateMethod,
+                    K_steps=K_steps,
+                    beta_adapt=beta_adapt,
+                    delta_target=delta_target,
+                    learning_rate=learning_rate,
+                    learning_rate_svgd=learning_rate_svgd,
+                    enable_visualization=enable_visualization,
+                )
             else:
                 return PPO_EDA(N,  lambda_, beta, device, typeModel,numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale)

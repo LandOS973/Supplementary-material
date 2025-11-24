@@ -12,18 +12,8 @@ nb_instances_test: 10
 nb_restarts: 10
 budget: 10000
 lambda: 15
-typeModel: NeuralNet
-isUnivariate: 1
-numberHiddenLayersG: 1
-nh: 20
-knownIG: false
-fixSamplingOrder: false
-fixUpdateOrder: false
-learnOrder: false
-dropoutGen: 0.0
-dropoutTrain: 0.0
-withoutCausalMaskTraining: false
-type_strategy: PPO-EDA 
-visualization: true
 
+type_strategy: PPO-EDA
+visualization: true
+learning_rate_svgd: 0.2
 

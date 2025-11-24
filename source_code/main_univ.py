@@ -415,7 +415,8 @@ def main():
             DEFAULTS["isUnivariate"], dropoutGen, dropoutTrain, withoutCausalMaskTraining,
             dim_variables, learnOrder, 1, M,
             updateMethod=updateMethod, K_steps=K_steps, beta_adapt=Beta_adapt,
-            delta_target=delta_target, learning_rate=learning_rate
+            delta_target=delta_target, learning_rate=learning_rate,
+            enable_visualization=DEFAULTS.get("visualization", True)
         )
 
         try:

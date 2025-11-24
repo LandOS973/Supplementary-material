@@ -17,7 +17,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     - Diversité via learning rates différents
     """
 
-    def __init__(self, N, lambda_, beta, typeModel, dim_variables, M, device, updateMethod, K_steps, beta_adapt, delta_target, learning_rate):
+    def __init__(self, N, lambda_, beta, typeModel, dim_variables, M, device, updateMethod, K_steps, beta_adapt, delta_target, learning_rate, learning_rate_svgd=None, enable_visualization=False):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
 
@@ -25,13 +25,14 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.N = N
         self.lambda_ = lambda_
         self.device = device
+        self.learning_rate_svgd = learning_rate_svgd
+        self.enable_visualization = bool(enable_visualization)
 
         self.lambda_per_agent = lambda_ // M
         remainder_lambda = lambda_ % M
 
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
-        self.svgd_step_size = 1
         self.theta_history = []
         self.last_final_snapshot = None
         self.agents = nn.ModuleList()
@@ -100,13 +101,18 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             else:
                 rl_step = -agent.last_theta_grad  # gradient descent direction
             rl_directions.append(rl_step.detach())
-        rl_snapshot = self._capture_prob_snapshot()
-        prev_snapshot = self.last_final_snapshot if self.last_final_snapshot is not None else rl_snapshot
+        if self.enable_visualization:
+            rl_snapshot = self._capture_prob_snapshot()
+            prev_snapshot = self.last_final_snapshot if self.last_final_snapshot is not None else rl_snapshot
+        else:
+            rl_snapshot = None
+            prev_snapshot = None
         if self.M > 1:
             self._apply_svgd(rl_directions)
-        final_snapshot = self._capture_prob_snapshot()
-        self._record_theta_snapshot(prev_snapshot, rl_snapshot, final_snapshot)
-        self.last_final_snapshot = final_snapshot
+        if self.enable_visualization:
+            final_snapshot = self._capture_prob_snapshot()
+            self._record_theta_snapshot(prev_snapshot, rl_snapshot, final_snapshot)
+            self.last_final_snapshot = final_snapshot
 
         return total_loss / self.M
 
@@ -127,11 +133,17 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         with torch.no_grad():
             theta_stack = torch.stack([agent.theta.detach() for agent in self.agents], dim=1)  # (B, M, N)
         score_stack = torch.stack(rl_directions, dim=1)  # (B, M, N)
-        phi_buffer = self.svgd.phi(theta_stack, score_stack)
+        phi_buffer = self.svgd.phi(theta_stack, score_stack) # (B, M, N)
 
         with torch.no_grad():
+            # Vectorized update: stack agent thetas -> add all updates at once -> copy back.
+            # theta_stack_param shape: (B, M, N)
+            theta_stack_param = torch.stack([agent.theta.data for agent in self.agents], dim=1)
+            # in-place vectorized add
+            theta_stack_param += (self.learning_rate_svgd * phi_buffer)
+            # copy updated slices back to agent parameters
             for idx, agent in enumerate(self.agents):
-                agent.theta.add_(self.svgd_step_size * phi_buffer[:, idx, :])
+                agent.theta.data.copy_(theta_stack_param[:, idx, :])
 
     def _capture_prob_snapshot(self):
         if not self.agents or self.nb_instances <= 0:

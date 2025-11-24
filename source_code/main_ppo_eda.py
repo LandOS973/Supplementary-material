@@ -41,18 +41,24 @@ def main(cfg: DictConfig):
     lambda_ = int(cfg.get('lambda', cfg.get('lambda_', 10)))
     verbose = bool(cfg.verbose)
     budget = int(cfg.budget)
-    typeModel = cfg.typeModel
-    isUnivariate = int(cfg.isUnivariate)
-    knownIG = bool(cfg.knownIG)
-    fixSamplingOrder = bool(cfg.fixSamplingOrder)
-    fixUpdateOrder = bool(cfg.fixUpdateOrder)
-    numberHiddenLayersG = int(cfg.numberHiddenLayersG)
-    nh = int(cfg.nh)
+    # Fixed settings: we always test the univariate model in this workflow.
+    typeModel = "NeuralNet"
+    isUnivariate = 1
+    # Keep IG from cfg if provided, otherwise False
+    knownIG = False
+    # Force no fixed/frozen orders for these experiments
+    fixSamplingOrder = False
+    fixUpdateOrder = False
+    # Keep a simple, small generator network
+    numberHiddenLayersG = 1
+    nh = 20
     beta = float(cfg.get('beta', 1.0))
-    dropoutGen = float(cfg.dropoutGen)
-    dropoutTrain = float(cfg.dropoutTrain)
-    withoutCausalMaskTraining = bool(cfg.withoutCausalMaskTraining)
+    # No dropout in our experiments
+    dropoutGen = 0.0
+    dropoutTrain = 0.0
+    withoutCausalMaskTraining = False
     visualization_enabled = bool(cfg.get('visualization', True))
+    learning_rate_svgd = float(cfg.get('learning_rate_svgd', 0.5))
     # safe getter for possibly nested agent configs (cfg.agent can be a string when only the group name is set)
     def oget(path, default=None):
         try:
@@ -65,13 +71,14 @@ def main(cfg: DictConfig):
     updateMethod = oget('agent.updateMethod', oget('updateMethod', 'REINFORCE'))
     K_steps = int(oget('agent.K_steps', oget('K_steps', 6)))
     beta_adapt = bool(oget('agent.Beta_adapt', oget('Beta_adapt', False)))
-    learnOrder = bool(cfg.learnOrder)
+    # We always test the univariate model without learning an order
+    learnOrder = False
     delta_target = float(oget('agent.delta_target', oget('delta_target', 0.003)))
     learning_rate = float(oget('agent.learning_rate', oget('learning_rate', 0.02)))
 
     typeStrategy = "PPO-EDA"
 
-    print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps} beta_adapt: {beta_adapt}")
+    print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps} beta_adapt: {beta_adapt}, learning_rate_svgd: {learning_rate_svgd}")
     if updateMethod == "PPO":
         # keep values already read from config via oget; nothing to do
         pass
@@ -150,7 +157,31 @@ def main(cfg: DictConfig):
         dim_variables = None
 
 
-    strategy = factory.createStrategyEA(typeStrategy, dim, lambda_, beta, device,  typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnOrder, 1, M, updateMethod=updateMethod, K_steps=K_steps, beta_adapt=beta_adapt, delta_target=delta_target, learning_rate=learning_rate)
+    strategy = factory.createStrategyEA(
+        typeStrategy,
+        dim,
+        lambda_,
+        beta,
+        device,
+        typeModel,
+        numberHiddenLayersG,
+        nh,
+        isUnivariate,
+        dropoutGen,
+        dropoutTrain,
+        withoutCausalMaskTraining,
+        dim_variables,
+        learnOrder,
+        1,
+        M,
+        updateMethod=updateMethod,
+        K_steps=K_steps,
+        beta_adapt=beta_adapt,
+        delta_target=delta_target,
+        learning_rate=learning_rate,
+        learning_rate_svgd=learning_rate_svgd,
+        enable_visualization=visualization_enabled,
+    )
         
         
     if(knownIG):

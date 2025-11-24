@@ -100,6 +100,7 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
         global_best = torch.mean(bestScore).item()
 
         leader_idx = None
+        # avg hamming = sum of pairwise hamming distances between agent best solutions
         avg_hamming = None
         avg_kl = None
         if track_leader:
