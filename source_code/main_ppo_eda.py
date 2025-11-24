@@ -19,7 +19,7 @@ from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 
 import warnings
 warnings.filterwarnings("ignore")
-
+np.set_printoptions(suppress=True, formatter={"float_kind": lambda x: f"{x:.6f}"})
 
 # Replication code for the article "Black-Box Combinatorial Optimization with Order-Invariant Reinforcement Learning"
 
@@ -199,6 +199,20 @@ def main(cfg: DictConfig):
 
     print("average_test_score : " + str(average_test_score))
     
+    if hasattr(strategy, "agents"):
+        agents = strategy.agents
+        for i in range(len(agents) - 1):
+            theta1 = torch.sigmoid(agents[i].theta).detach()
+            theta2 = torch.sigmoid(agents[i + 1].theta).detach()
+            diff = torch.abs(theta1 - theta2)
+
+            # extrait 10 instances × 10 variables
+            diff_slice = diff[:10, :10]
+            print(f"Agent {i} vs {i+1} diff (10 instances × 10 vars):")
+            print(diff_slice.cpu().numpy())
+
+            # éventuelle moyenne sur ce sous-morceau
+            print("mean diff on slice:", diff_slice.mean().item())
 
 
 if __name__ == '__main__':

@@ -3,40 +3,51 @@ import torch
 
 class SVGD:
     def __init__(self, kernel):
-        self.kernel = kernel  # ex: RBF()
+        # kernel is typically an RBF; it provides k(x, y) and exposes last_gamma.
+        self.kernel = kernel
 
     def phi(self, theta, score):
         """
-        theta : (M, N) ou (B, M, N)
-        score : (M, N) ou (B, M, N)
+        theta : (B, M, N)   particles per batch (B instances, M agents, N dims)
+        score : (B, M, N)   ∇_theta log p(theta) supplied by RL agents
+
+        Implements standard SVGD update:
+            φ_i = (1/M) * [ Σ_j k(θ_j, θ_i) * score_j  +  Σ_j ∇_θ_j k(θ_j, θ_i) ]
         """
-        squeeze_batch = False
-        if theta.dim() == 2:
-            theta = theta.unsqueeze(0)
-            score = score.unsqueeze(0)
-            squeeze_batch = True
+        theta_req = theta.detach().clone().requires_grad_(True)
 
-        K = self.kernel(theta, theta)  # (B, M, M)
-        if K.dim() == 2:
-            K = K.unsqueeze(0)
+        # Gram matrix of kernel evaluations k(θ_b_i, θ_b_j) for each batch b.
+        K = self.kernel(theta_req, theta_req)  # (B, M, M)
 
-        gamma = getattr(self.kernel, "last_gamma", None)
-        if gamma is None:
-            gamma = torch.tensor(1.0, device=theta.device, dtype=theta.dtype)
-        elif not torch.is_tensor(gamma):
-            gamma = torch.tensor(gamma, device=theta.device, dtype=theta.dtype)
-        else:
-            gamma = gamma.to(device=theta.device, dtype=theta.dtype)
+        # Reorder axes so matmul matches Σ_j k_j,i * score_j.
+        K_transpose = K.transpose(-2, -1)  # (B, M_dest, M_src)
 
-        K_transpose = K.transpose(-2, -1)
-
+        # First SVGD term: (Kᵗ @ score) -> B × M × N.
         score_term = torch.matmul(K_transpose, score)
 
-        theta_diff = theta[:, None, :, :] - theta[:, :, None, :]
-        grad_term = -2.0 * gamma.view(1) * torch.sum(K_transpose.unsqueeze(-1) * theta_diff, dim=2)
+        # Second SVGD term computed via autograd:
+        #   grad_term[b, i, :] = Σ_j ∇_{θ_j} k(θ_j, θ_i).
+        grad_batches = []
+        for b in range(theta_req.size(0)):
+            grads_per_i = []
+            for i in range(theta_req.size(1)):
+                grad_outputs = torch.zeros_like(K_transpose[b])
+                grad_outputs[i, :].fill_(1.0)
+                grad_theta = torch.autograd.grad(
+                    K_transpose[b],
+                    theta_req[b],
+                    grad_outputs=grad_outputs,
+                    retain_graph=True,
+                    create_graph=False,
+                    allow_unused=True,
+                )[0]
+                if grad_theta is None:
+                    grad_theta = torch.zeros_like(theta_req[b])
+                grads_per_i.append(grad_theta.sum(dim=0))
+            grad_batches.append(torch.stack(grads_per_i, dim=0))
+        grad_term = torch.stack(grad_batches, dim=0).detach()
 
+        # Average over M particles to obtain φ.
         phi = (score_term + grad_term) / theta.size(1)
 
-        if squeeze_batch:
-            return phi.squeeze(0)
         return phi
