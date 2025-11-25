@@ -64,6 +64,7 @@ DEFAULTS = dict(
     type_strategy="PPO-EDA",   # utilisé par la fabrique
     problem_name="QUBO",       # defaults: problem: qubo
     visualization=True,
+    learning_rate_svgd=0.1,
 )
 
 # =========================
@@ -71,15 +72,16 @@ DEFAULTS = dict(
 # =========================
 GRID = dict(
     agent=["ppo", "reinforce"],
-    agent_learning_rate=[0.001, 0.003, 0.005, 0.008, 0.02, 0.01, 0.015],
-    agent_M=[1,2,3,4],
-    agent_K_steps=[4, 6, 8, 20, 10, 15],
+    agent_learning_rate=[0.008, 0.02, 0.012, 0.03],
+    agent_M=[1,2,4,5],
+    agent_K_steps=[6, 8, 20, 14],
     agent_Beta_adapt=[True],
     agent_beta=[1.0],
     agent_delta_target=[0.0025, 0.006],
+    agent_learning_rate_svgd=[0.1, 0.2, 0.5, 1.0],
     problem_dim=[64, 128, 256],
     problem_type_instance=[0, 1, 2, 3, 4, 5],
-    agent_lambda=[8,10,15,20],
+    agent_lambda=[10,15,20,25],
 )
 
 # =========================
@@ -325,6 +327,7 @@ def main():
         # Agent params
         agent = cfg["agent"]  # "ppo" ou "reinforce"
         learning_rate = float(cfg["agent_learning_rate"])
+        learning_rate_svgd = float(cfg.get("agent_learning_rate_svgd", DEFAULTS.get("learning_rate_svgd", 0.1)))
         M = int(cfg["agent_M"])
         K_steps = int(cfg["agent_K_steps"])
         Beta_adapt = bool(cfg["agent_Beta_adapt"])
@@ -415,7 +418,7 @@ def main():
             DEFAULTS["isUnivariate"], dropoutGen, dropoutTrain, withoutCausalMaskTraining,
             dim_variables, learnOrder, 1, M,
             updateMethod=updateMethod, K_steps=K_steps, beta_adapt=Beta_adapt,
-            delta_target=delta_target, learning_rate=learning_rate,
+            delta_target=delta_target, learning_rate=learning_rate, learning_rate_svgd=learning_rate_svgd,
             enable_visualization=DEFAULTS.get("visualization", True)
         )
 
