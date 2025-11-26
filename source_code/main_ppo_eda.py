@@ -29,7 +29,6 @@ def main(cfg: DictConfig):
 
     # Support keeping the original variable names used previously; read them from Hydra cfg
     device = cfg.device
-    type_strategy = cfg.agent.name if 'agent' in cfg and 'name' in cfg.agent else cfg.get('type_strategy', "PPO_EDA")
     type_problem = cfg.problem.name if 'problem' in cfg and 'name' in cfg.problem else cfg.get('type_problem', 'QUBO')
     print(f"Running with problem type: {type_problem}")
     dim = cfg.problem.dim if 'problem' in cfg and 'dim' in cfg.problem else cfg.get('dim', 64)
@@ -41,22 +40,6 @@ def main(cfg: DictConfig):
     lambda_ = int(cfg.get('lambda', cfg.get('lambda_', 10)))
     verbose = bool(cfg.verbose)
     budget = int(cfg.budget)
-    # Fixed settings: we always test the univariate model in this workflow.
-    typeModel = "NeuralNet"
-    isUnivariate = 1
-    # Keep IG from cfg if provided, otherwise False
-    knownIG = False
-    # Force no fixed/frozen orders for these experiments
-    fixSamplingOrder = False
-    fixUpdateOrder = False
-    # Keep a simple, small generator network
-    numberHiddenLayersG = 1
-    nh = 20
-    beta = float(cfg.get('beta', 1.0))
-    # No dropout in our experiments
-    dropoutGen = 0.0
-    dropoutTrain = 0.0
-    withoutCausalMaskTraining = False
     visualization_enabled = bool(cfg.get('visualization', True))
     learning_rate_svgd = float(cfg.get('learning_rate_svgd', 0.5))
     # safe getter for possibly nested agent configs (cfg.agent can be a string when only the group name is set)
@@ -70,22 +53,17 @@ def main(cfg: DictConfig):
     M = int(oget('agent.M', oget('M', 1)))
     updateMethod = oget('agent.updateMethod', oget('updateMethod', 'REINFORCE'))
     K_steps = int(oget('agent.K_steps', oget('K_steps', 6)))
-    beta_adapt = bool(oget('agent.Beta_adapt', oget('Beta_adapt', False)))
-    # We always test the univariate model without learning an order
-    learnOrder = False
     delta_target = float(oget('agent.delta_target', oget('delta_target', 0.003)))
     learning_rate = float(oget('agent.learning_rate', oget('learning_rate', 0.02)))
-
     typeStrategy = "PPO-EDA"
 
-    print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps} beta_adapt: {beta_adapt}, learning_rate_svgd: {learning_rate_svgd}")
+    print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps}, learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}")
     if updateMethod == "PPO":
         # keep values already read from config via oget; nothing to do
         pass
     else:
         # ignorés pour REINFORCE
         K_steps = 0
-        beta_adapt = False
         delta_target = 0.0
 
     torch.manual_seed(seed)
@@ -99,10 +77,6 @@ def main(cfg: DictConfig):
     repo_root = os.path.abspath(os.path.join(script_dir, ".."))
     write_logs = bool(cfg.get('write_logs', False))
     pathResult = None
-    if write_logs:
-        pathResult = os.path.join(repo_root, "results", "results_Multivariate-RL-EDA", typeStrategy, str(type_problem), str(dim), str(type_instance)) + os.sep
-        os.makedirs(pathResult, exist_ok=True)
-    
 
     if (type_problem == "QUBO"):
 
@@ -161,59 +135,17 @@ def main(cfg: DictConfig):
         typeStrategy,
         dim,
         lambda_,
-        beta,
         device,
-        typeModel,
-        numberHiddenLayersG,
-        nh,
-        isUnivariate,
-        dropoutGen,
-        dropoutTrain,
-        withoutCausalMaskTraining,
         dim_variables,
-        learnOrder,
-        1,
         M,
         updateMethod=updateMethod,
         K_steps=K_steps,
-        beta_adapt=beta_adapt,
         delta_target=delta_target,
         learning_rate=learning_rate,
         learning_rate_svgd=learning_rate_svgd,
         enable_visualization=visualization_enabled,
-    )
-        
-        
-    if(knownIG):
-        
-        if(type_problem == "QUBO" or type_problem == "NK" or type_problem == "NK3"):
-            DAG = tensor_Q_test.unsqueeze(1).repeat(1, lambda_, 1, 1).to(device)
-            DAG = torch.where(DAG != 0, 1, 0)
-        else:
-            print("IG unknown")
-            
-        strategy.setKnownDAG(DAG)
-    
-    if(fixSamplingOrder):
-        
-        order = torch.tensor(np.arange(dim)).to(device)
-        
-        order = order.unsqueeze(0).unsqueeze(1)
-        order = order.repeat(nb_instances_test*nb_restarts, lambda_, 1)
-        strategy.setKnownOrder(order)
-    
-    if(fixUpdateOrder):
-        strategy.setSameDagTraining()
-
-    
-
-    # Build result filename now that dim (and pathResult) are final
-    if write_logs:
-        name_file_result = "Test_" + type_strategy + "_" + type_problem +  "_N_" +  str(N) + "_t_" +  str(type_instance) + "_lambda_"  + str(lambda_) + "_beta_"  + str(beta) + "_typeModel_" + str(typeModel) + "_learnOrder_" + str(learnOrder) + "_knownIG_" + str(knownIG) + "_fixSamplingOrder_" + str(fixSamplingOrder) + "_fixUpdateOrder_" + str(fixUpdateOrder) + "_L_" + str(numberHiddenLayersG) + "_nh_" + str(nh)  + "_dGen_" + str(dropoutGen) + "_dTrain_" + str(dropoutTrain) + "_wCMaskTrain_" + str(withoutCausalMaskTraining)   + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
-        name_file_result = pathResult + name_file_result
-    else:
-        name_file_result = None
-
+    ).to(device)
+    name_file_result = None
     if (type_problem == "QUBO"):
         list_scores = get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances_test, nb_restarts, budget, lambda_, tensor_Q_test, device, verbose, name_file_result, enable_visualization=visualization_enabled)
 
@@ -223,28 +155,10 @@ def main(cfg: DictConfig):
                                                     vectorIndex_th, tensor_matrix_locus,
                                                     tensor_matrix_contrib, device, verbose, name_file_result)
         
-
-
     print(list_scores)
     average_test_score = np.mean(list_scores)
 
     print("average_test_score : " + str(average_test_score))
-    
-    if hasattr(strategy, "agents"):
-        agents = strategy.agents
-        for i in range(len(agents) - 1):
-            theta1 = torch.sigmoid(agents[i].theta).detach()
-            theta2 = torch.sigmoid(agents[i + 1].theta).detach()
-            diff = torch.abs(theta1 - theta2)
-
-            # extrait 10 instances × 10 variables
-            diff_slice = diff[:10, :10]
-            print(f"Agent {i} vs {i+1} diff (10 instances × 10 vars):")
-            print(diff_slice.cpu().numpy())
-
-            # éventuelle moyenne sur ce sous-morceau
-            print("mean diff on slice:", diff_slice.mean().item())
-
 
 if __name__ == '__main__':
     # Run hydra main

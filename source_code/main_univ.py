@@ -420,13 +420,7 @@ def main():
             updateMethod=updateMethod, K_steps=K_steps, beta_adapt=Beta_adapt,
             delta_target=delta_target, learning_rate=learning_rate, learning_rate_svgd=learning_rate_svgd,
             enable_visualization=DEFAULTS.get("visualization", True)
-        )
-
-        try:
-            if torch.__version__ >= "2.0":
-                strategy = torch.compile(strategy, mode="max-autotune")  # une seule fois
-        except Exception as e:
-            print("torch.compile désactivé:", e)
+        ).to(device)
 
         # IG / ordres
         if DEFAULTS["knownIG"] and type_problem in ("QUBO", "NK", "NK3"):

@@ -1,7 +1,16 @@
+import os
 import numpy as np
 import torch
 
+_HEADLESS = not (
+    os.environ.get("DISPLAY")
+    or os.environ.get("WAYLAND_DISPLAY")
+    or os.environ.get("MPLBACKEND")
+)
+
 try:
+    if _HEADLESS:
+        raise RuntimeError("Headless environment detected")
     import tkinter as tk
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     import matplotlib.pyplot as plt
@@ -9,6 +18,7 @@ except Exception:  # pragma: no cover - plotting optional
     tk = None
     FigureCanvasTkAgg = None
     plt = None
+    _HEADLESS = True
 
 
 def render_agent_dashboard(iterations, hamming_history, kl_history, agent_fitness_history, num_agents, theta_history):

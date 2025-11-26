@@ -10,32 +10,25 @@ from eda_strategies.MultiAgentUnivariate.MultiAgentUnivariateEDA import MultiAge
 
 class FactoryStrategyEA:
 
-    def createStrategyEA(self, typeStrategy, N, lambda_, beta, device, typeModel, numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale, M, updateMethod, K_steps, beta_adapt, delta_target, learning_rate, learning_rate_svgd, enable_visualization=False):
-        if (typeStrategy == "UMDA"):
-            return UMDA(N, lambda_, device)
-
-        elif(typeStrategy == "PBIL"):
-
-            return PBIL(N, lambda_, device)
-
-
-        elif (typeStrategy == "PPO-EDA"):
-            if(isUnivariate):
+    def createStrategyEA(self, typeStrategy, N, lambda_, device, dim_variables, M, updateMethod, K_steps, delta_target, learning_rate, learning_rate_svgd, enable_visualization=False):
+        match typeStrategy:
+            case "UMDA":
+                return UMDA(N, lambda_, device)
+            case "PBIL":
+                return PBIL(N, lambda_, device)
+            case "PPO-EDA":
                 return MultiAgentUnivariateEDA(
                     N,
                     lambda_,
-                    beta,
-                    typeModel,
                     dim_variables,
                     M,
                     device=device,
                     updateMethod=updateMethod,
                     K_steps=K_steps,
-                    beta_adapt=beta_adapt,
                     delta_target=delta_target,
                     learning_rate=learning_rate,
                     learning_rate_svgd=learning_rate_svgd,
                     enable_visualization=enable_visualization,
                 )
-            else:
-                return PPO_EDA(N,  lambda_, beta, device, typeModel,numberHiddenLayersG, nh, isUnivariate, dropoutGen, dropoutTrain, withoutCausalMaskTraining, dim_variables, learnDAG, noise_rescale)
+            case _:
+                raise ValueError(f"Unknown strategy type: {typeStrategy}")

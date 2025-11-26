@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 
 from eda_strategies.Abstract_EDA import Abstract_EDA
-from eda_strategies.MultiAgentUnivariate.RL_agent import PPOAgent, REINFORCEAgent
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
 from eda_strategies.MultiAgentUnivariate.SVGD.rbf import RBF
 
@@ -12,147 +11,336 @@ from eda_strategies.MultiAgentUnivariate.SVGD.rbf import RBF
 class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     """
     Multi-agent collaboratif :
-    - M agents travaillent sur toutes les instances
     - Budget λ divisé entre agents (λ/M solutions par agent)
-    - Diversité via learning rates différents
+    - B => NOMBRE D'INSTANCES
+    - M => NOMBRE D'AGENTS
+    - N => NOMBRE DE VARIABLES
     """
 
-    def __init__(self, N, lambda_, beta, typeModel, dim_variables, M, device, updateMethod, K_steps, beta_adapt, delta_target, learning_rate, learning_rate_svgd=None, enable_visualization=False):
+    def __init__(
+        self,
+        N,
+        lambda_,
+        dim_variables,
+        M,
+        device,
+        updateMethod,
+        K_steps,
+        delta_target,
+        learning_rate,
+        learning_rate_svgd=None,
+        enable_visualization=False,
+    ):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
+
+        # Hypothèse vectorisée : λ est divisible par M
+        assert lambda_ % M == 0, "La version vectorisée suppose lambda_ % M == 0"
 
         self.M = M
         self.N = N
         self.lambda_ = lambda_
         self.device = device
+        self.learning_rate = learning_rate
         self.learning_rate_svgd = learning_rate_svgd
         self.enable_visualization = bool(enable_visualization)
+        self.dim_variables = dim_variables
 
+        # Paramètres PPO / RL
+        self.K_steps = K_steps
+        self.delta_target = delta_target
+        if isinstance(updateMethod, str):
+            self.updateMethod = updateMethod.upper()
+        else:
+            raise ValueError("updateMethod doit être une chaîne de caractères.")
+
+        # λ par agent
         self.lambda_per_agent = lambda_ // M
-        remainder_lambda = lambda_ % M
 
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
         self.theta_history = []
         self.last_final_snapshot = None
-        self.agents = nn.ModuleList()
-        self.agent_lambdas = []
-        bonus_indices = random.sample(range(M), remainder_lambda) if remainder_lambda > 0 else []
 
-        for i in range(M):
-            agent_lambda = self.lambda_per_agent + (1 if i in bonus_indices else 0)
-            self.agent_lambdas.append(agent_lambda)
+        # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
+        self.theta = None
+        self.nb_instances = 0
 
-            # instantiate the appropriate agent class depending on updateMethod
-            if isinstance(updateMethod, str) and updateMethod.upper() == "PPO":
-                agent = PPOAgent(
-                    N,
-                    agent_lambda,
-                    beta,
-                    typeModel,
-                    dim_variables,
-                    learning_rate,
-                    device,
-                    agent_number=i,
-                    K_steps=K_steps,
-                    beta_adapt=beta_adapt,
-                    delta_target=delta_target,
-                ).to(device)
-            else:
-                agent = REINFORCEAgent(
-                    N,
-                    agent_lambda,
-                    typeModel,
-                    dim_variables,
-                    learning_rate,
-                    device,
-                    agent_number=i,
-                ).to(device)
-            self.agents.append(agent)
+        # Buffers (B, M)
+        self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
+        self.register_buffer("beta_vector", torch.empty(0, dtype=torch.float32), persistent=False)
+
+        # États d'optimisation globaux
+        self.last_theta_grad = None
+        self.opt_ppo = None
+        self.opt_reinforce = None
+
+    def forward(self):
+        """
+        -theta (B, M, N) -> sigmoid -> probs (B, M, N) ] 0,1 [
+        """
+        if self.theta is None:
+            raise RuntimeError("reset_learned_parameters doit être appelé avant forward().")
+        return torch.sigmoid(self.theta)  # (B, M, N)
+
+    def kl_divergence(self, p, q):
+        eps = 1e-7
+        p = torch.clamp(torch.nan_to_num(p, nan=0.5), eps, 1 - eps)
+        q = torch.clamp(torch.nan_to_num(q, nan=0.5), eps, 1 - eps)
+        return p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
 
     def reset_learned_parameters(self, nb_instances):
         self.nb_instances = nb_instances
-        for agent in self.agents:
-            agent.reset_learned_parameters(nb_instances)
+
+        # theta : (B, M, N)
+        self.theta = nn.Parameter(
+            torch.zeros((nb_instances, self.M, self.N), device=self.device)
+        )
+
+        # Baseline et beta_vector en version (B, M)
+        self.baseline.resize_(nb_instances, self.M).zero_()
+        self.beta_vector.resize_(nb_instances, self.M).fill_(1.0)
+
+        # Optimizers selon la méthode
+        if self.updateMethod == "PPO":
+            self.opt_ppo = torch.optim.Adam([self.theta], lr=self.learning_rate)
+            self.opt_reinforce = None
+        else:
+            self.opt_reinforce = torch.optim.SGD([self.theta], lr=self.learning_rate)
+            self.opt_ppo = None
+
+        # Historique de visualisation
         self.theta_history = []
         self.last_final_snapshot = None
+        self.last_theta_grad = None
 
     def sample_solutions(self):
-        samples_list = []
-        for agent in self.agents:
-            samples = agent.sample_solutions()  # (nb_instances, λ_agent, N, 1)
-            samples_list.append(samples)
+        """
+        Génère (nb_instances, λ, N, 1) en une seule fois.
 
-        return torch.cat(samples_list, dim=1)  # (nb_instances, λ, N, 1)
+        Chaque agent a λ/M solutions, on échantillonne (B, M, λ_agent, N),
+        puis on aplati en (B, λ, N, 1) avec λ = M * λ_agent.
+        """
+        B, M, N = self.nb_instances, self.M, self.N
+        λa = self.lambda_per_agent
+
+        probs = self.forward()  # (B, M, N)
+        probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), 1e-10, 1 - 1e-10)
+
+        # u : (B, M, λa, N)
+        u = torch.rand((B, M, λa, N), device=self.device)
+        samples_agents = (u < probs.unsqueeze(2)).float()  # (B, M, λa, N)
+
+        # On concatène tous les agents sur la dimension λ : (B, λ, N, 1)
+        # on tire tout les lamdba en une fois pour eviter les boucles
+        samples = samples_agents.view(B, self.lambda_, N).unsqueeze(-1)
+        return samples
 
     def updateDistribution(self, solutionList, scoreList):
-        total_loss = 0.0
-        rl_directions = []
+        """
+        Applique la mise à jour RL (PPO ou REINFORCE) suivie de SVGD entre agents (si activé).
+        """
+        # RL update (vectorisé sur (B, M))
+        if self.updateMethod == "PPO":
+            total_loss = self._updateDistribution_PPO(solutionList, scoreList)
+        else:
+            total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
 
-        solution_chunks = torch.split(solutionList, self.agent_lambdas, dim=1)
-        score_chunks = torch.split(scoreList, self.agent_lambdas, dim=1)
-
-        for agent, agent_solutions, agent_scores in zip(self.agents, solution_chunks, score_chunks):
-            loss = agent.updateDistribution(agent_solutions, agent_scores)
-            total_loss += loss
-
-            if agent.last_theta_grad is None:
-                rl_step = torch.zeros_like(agent.theta)
-            else:
-                rl_step = -agent.last_theta_grad  # gradient descent direction
-            rl_directions.append(rl_step.detach())
+        # Visualisation des proba avant / après SVGD (optionnel)
         if self.enable_visualization:
             rl_snapshot = self._capture_prob_snapshot()
-            prev_snapshot = self.last_final_snapshot if self.last_final_snapshot is not None else rl_snapshot
+            prev_snapshot = (
+                self.last_final_snapshot if self.last_final_snapshot is not None else rl_snapshot
+            )
         else:
             rl_snapshot = None
             prev_snapshot = None
-        if self.M > 1:
-            self._apply_svgd(rl_directions)
+
+        # SVGD entre agents 
+        if self.M > 1 and self.learning_rate_svgd is not None:
+            self._apply_svgd()
+
         if self.enable_visualization:
             final_snapshot = self._capture_prob_snapshot()
             self._record_theta_snapshot(prev_snapshot, rl_snapshot, final_snapshot)
             self.last_final_snapshot = final_snapshot
 
-        return total_loss / self.M
+        return total_loss
 
-    def forward(self):
-        return torch.stack([agent.forward() for agent in self.agents], dim=0)
+    # =======================
+    #   PPO vectorisé
+    # =======================
+
+    def _updateDistribution_PPO(self, solutionList, scoreList):
+        B, M, N = self.nb_instances, self.M, self.N
+        λa = self.lambda_per_agent
+        BM = B * M
+        K_steps = self.K_steps
+        device = self.device
+        # Données batchées
+        Dk = solutionList.squeeze(-1).view(B, M, λa, N)  # (B, λ, N, 1) into (B, M, λa, N) => Trajectories
+        Dk = Dk.view(BM, λa, N)                          # (BM, λa, N)
+        fitnesses = scoreList.view(BM, λa)               # (BM, λa)
+        theta = self.theta.view(BM, N)                   # (BM, N)
+        baseline = self.baseline.view(BM)                # (BM,)
+        beta = self.beta_vector.view(BM)                 # (BM,)
+
+        if self.baseline.numel() == 0:
+            baseline = torch.zeros(BM, device=device)
+
+        total_loss = 0.0
+
+        with torch.no_grad():
+            # capture de πθk
+            p_old = torch.sigmoid(theta).clamp(1e-10, 1 - 1e-10)  # (BM, N)
+
+        # Avantages
+        adv = fitnesses - baseline.unsqueeze(1)  # (BM, λa)
+        adv = (adv - adv.mean(dim=1, keepdim=True)) / (
+            adv.std(dim=1, keepdim=True) + 1e-10
+        )
+
+        # log πθk(a|s) (ancien)
+        p_old_exp = p_old.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
+        log_pi_old = torch.where(
+            Dk == 1.0,
+            torch.log(p_old_exp + 1e-10),
+            torch.log(1.0 - p_old_exp + 1e-10),
+        ).sum(dim=2)  # (BM, λa)
+
+        # K steps PPO partagés par tous les agents
+        for _ in range(K_steps):
+            theta = self.theta.view(BM, N)
+            p_new = torch.sigmoid(theta).clamp(1e-10, 1 - 1e-10)  # (BM, N)
+            p_new_exp = p_new.unsqueeze(1).expand(-1, λa, -1)     # (BM, λa, N)
+
+            # log πθ(a|s) et ratio
+            log_pi_new = torch.where(
+                Dk == 1.0,
+                torch.log(p_new_exp + 1e-10),
+                torch.log(1.0 - p_new_exp + 1e-10),
+            ).sum(dim=2)  # (BM, λa)
+
+            ratio = torch.exp(log_pi_new - log_pi_old)  # (BM, λa)
+            L_per_i = (ratio * adv).mean(dim=1)         # (BM,)
+
+            KL_mean_i = self.kl_divergence(p_old, p_new).mean(dim=1)  # (BM,)
+
+            loss_i = -L_per_i + beta * KL_mean_i
+
+            loss = loss_i.sum()
+            self.opt_ppo.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_([self.theta], max_norm=1.0)
+            self.opt_ppo.step()
+            total_loss += loss.item()
+
+        # Gradient stocké pour SVGD
+        if self.theta.grad is None:
+            self.last_theta_grad = torch.zeros_like(self.theta)
+        else:
+            self.last_theta_grad = self.theta.grad.detach().clone() # (B, M, N)
+
+        # Mise à jour adaptative de beta_vector
+        with torch.no_grad():
+            theta = self.theta.view(BM, N)
+            p_new_final = torch.sigmoid(theta).clamp(1e-10, 1 - 1e-10)
+            KL_final_i = self.kl_divergence(p_old, p_new_final).mean(dim=1)  # (BM,)
+            mask_up = KL_final_i >= 1.5 * self.delta_target
+            mask_down = KL_final_i <= (self.delta_target / 1.5)
+            beta[mask_up] *= 2.0
+            beta[mask_down] *= 0.5
+            beta = torch.clamp(beta, 1e-4, 10)
+            self.beta_vector = beta.view(B, M)
+
+        # Mise à jour du baseline (moyenne des fitness)
+        with torch.no_grad():
+            baseline_new = fitnesses.mean(dim=1)  # (BM,)
+            self.baseline = baseline_new.view(B, M)
+
+        # Même normalisation que l'ancienne version:
+        # somme sur les K steps et sur tous les (B, M), puis moyenne
+        return total_loss / (self.nb_instances * self.M)
+
+    # =======================
+    #   REINFORCE vectorisé
+    # =======================
+
+    def _updateDistribution_REINFORCE(self, solutionList, scoreList):
+        B, M, N = self.nb_instances, self.M, self.N
+        λa = self.lambda_per_agent
+        BM = B * M
+        actions = solutionList.view(BM, λa, N)
+        fitness = scoreList.view(BM, λa)
+        theta = self.theta.view(BM, N)
+        baseline = self.baseline.view(BM)
+
+        if self.baseline.numel() == 0:
+            baseline = torch.zeros(BM, device=self.device)
+
+        all_Pi_Theta = torch.sigmoid(theta)  # (BM, N)
+        all_Pi_Theta = torch.clamp(all_Pi_Theta, 1e-6, 1 - 1e-6)
+        all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
+
+        Pi_selected = torch.where(
+            actions == 1.0,
+            all_Pi_Theta_expanded,
+            1.0 - all_Pi_Theta_expanded,
+        )  # (BM, λa, N)
+
+        log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
+        advantages = fitness - baseline.unsqueeze(1)  # (BM, λa)
+
+        loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
+        loss = -loss_per_instance.sum()
+
+        self.opt_reinforce.zero_grad(set_to_none=True)
+        loss.backward()
+        self.opt_reinforce.step()
+
+        if self.theta.grad is None:
+            self.last_theta_grad = torch.zeros_like(self.theta)
+        else:
+            self.last_theta_grad = self.theta.grad.detach().clone()
+
+        with torch.no_grad():
+            baseline_new = fitness.mean(dim=1)  # (BM,)
+            self.baseline = baseline_new.view(B, M)
+
+        # moyenne sur tous les (B, M) comme avant (Moyenne sur B, puis sur M)
+        return loss_per_instance.mean()
+
+    # =======================
+    #   SVGD 
+    # =======================
 
     def toString(self):
         return f"MultiAgent_Collaborative_M{self.M}_lambda{self.lambda_}"
 
-    def _apply_svgd(self, rl_directions):
+    def _apply_svgd(self):
         """
         Applique un pas SVGD instance par instance en se basant sur les directions RL observées.
-        rl_directions : liste de tenseurs (nb_instances, N)
+        Utilise self.last_theta_grad comme direction RL : (B, M, N)
         """
-        if not rl_directions:
+        if self.last_theta_grad is None:
             return
 
         with torch.no_grad():
-            theta_stack = torch.stack([agent.theta.detach() for agent in self.agents], dim=1)  # (B, M, N)
-        score_stack = torch.stack(rl_directions, dim=1)  # (B, M, N)
-        phi_buffer = self.svgd.phi(theta_stack, score_stack) # (B, M, N)
+            theta = self.theta.detach()                     # (B, M, N)
+            score = -self.last_theta_grad.detach()          # (B, M, N) un gradient par instance, agent et variable
+            φ = self.svgd.phi(theta, score)  # (B, M, N)
+            self.theta.data += (self.learning_rate_svgd * φ)
 
-        with torch.no_grad():
-            # Vectorized update: stack agent thetas -> add all updates at once -> copy back.
-            # theta_stack_param shape: (B, M, N)
-            theta_stack_param = torch.stack([agent.theta.data for agent in self.agents], dim=1)
-            # in-place vectorized add
-            theta_stack_param += (self.learning_rate_svgd * phi_buffer)
-            # copy updated slices back to agent parameters
-            for idx, agent in enumerate(self.agents):
-                agent.theta.data.copy_(theta_stack_param[:, idx, :])
+    # =======================
+    #   Visualisation
+    # =======================
 
     def _capture_prob_snapshot(self):
-        if not self.agents or self.nb_instances <= 0:
+        if self.theta is None or self.nb_instances <= 0:
             return []
-        snapshot = []
         with torch.no_grad():
-            for agent in self.agents:
-                snapshot.append(torch.sigmoid(agent.theta).detach().cpu())
-        return snapshot
+            probs = torch.sigmoid(self.theta).detach().cpu()  # (B, M, N)
+        return [probs[:, m, :] for m in range(self.M)] # liste de (B, N) par agent
 
     def _record_theta_snapshot(self, prev_snapshot, rl_snapshot, final_snapshot):
         if not rl_snapshot or not final_snapshot or not prev_snapshot:
