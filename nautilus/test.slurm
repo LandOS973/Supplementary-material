@@ -8,4 +8,5 @@
 #SBATCH --time=00:05:00             # Set the maximum job runtime to 5 minutes
 # Run my first script 
 echo "Run main_ppo_eda"
+module load python
 python ../source_code/main_ppo_eda.py -m visualization=false
