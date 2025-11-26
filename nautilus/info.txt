@@ -1,0 +1,11 @@
+Submit:
+sbatch test.slurm
+
+Check :
+squeue --me
+
+Infos complete :
+scontrol show job $Job_ID
+
+Cancel :
+scancel $Job_ID

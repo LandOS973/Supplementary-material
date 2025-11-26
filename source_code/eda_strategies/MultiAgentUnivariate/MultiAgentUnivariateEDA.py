@@ -35,7 +35,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         nn.Module.__init__(self)
 
         # Hypothèse vectorisée : λ est divisible par M
-        assert lambda_ % M == 0, "La version vectorisée suppose lambda_ % M == 0"
+        assert lambda_ % M == 0, "lambda_ % M != 0"
 
         self.M = M
         self.N = N
@@ -45,14 +45,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.learning_rate_svgd = learning_rate_svgd
         self.enable_visualization = bool(enable_visualization)
         self.dim_variables = dim_variables
+        self.updateMethod = updateMethod.upper()
 
         # Paramètres PPO / RL
         self.K_steps = K_steps
         self.delta_target = delta_target
-        if isinstance(updateMethod, str):
-            self.updateMethod = updateMethod.upper()
-        else:
-            raise ValueError("updateMethod doit être une chaîne de caractères.")
 
         # λ par agent
         self.lambda_per_agent = lambda_ // M
