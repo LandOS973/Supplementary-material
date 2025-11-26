@@ -1,12 +1,16 @@
 #!/bin/bash
-#SBATCH --job-name=ppo              # Job name
-#SBATCH --qos=short                 # qos
-#SBATCH -p gpu                      # partition
+#SBATCH --job-name=ppo
+#SBATCH --qos=short
+#SBATCH -p gpu
 #SBATCH --output=output/ppo_%j.out
-#SBATCH --ntasks=1                  # Number of tasks (1 task in this case)
-#SBATCH --gres=gpu:1                # Request 1 GPU for this job
-#SBATCH --time=00:05:00             # Set the maximum job runtime to 5 minutes
-# Run my first script 
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:1
+#SBATCH --time=00:05:00
+
 echo "Run main_ppo_eda"
-module load python
-python ../source_code/main_ppo_eda.py -m visualization=false
+
+# 1) Chemin direct vers le Python de ton env micromamba
+PYTHON=/micromamba/$USER/envs/ppo_env/bin/python
+
+# 2) Lancer ton script avec ce python-là
+srun $PYTHON ../source_code/main_ppo_eda.py -m visualization=false
