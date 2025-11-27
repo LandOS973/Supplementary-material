@@ -53,6 +53,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # λ par agent
         self.lambda_per_agent = lambda_ // M
+        # expose agent-level info for monitoring code (hamming/KL, leaderboard)
+        self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
+        self.agents = [_AgentView(self, idx) for idx in range(self.M)]
 
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
@@ -347,3 +350,16 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
     def get_theta_history(self):
         return {"values": self.theta_history}
+
+
+class _AgentView:
+    """Lightweight view to expose per-agent theta for existing monitoring utilities."""
+
+    def __init__(self, parent, agent_idx: int):
+        self._parent = parent
+        self._idx = agent_idx
+
+    @property
+    def theta(self):
+        # returns a view with shape (B, N)
+        return self._parent.theta[:, self._idx, :]
