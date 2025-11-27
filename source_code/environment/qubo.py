@@ -9,7 +9,20 @@ from environment.visualization import render_agent_dashboard, render_svgd_field_
 
 
 
-def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budget, size_pop, tensor_Q, device, verbose , name_file, enable_visualization=True):
+def get_Score_trajectoriesQUBO_cuda(
+    strategy,
+    N,
+    nb_instances,
+    nb_restarts,
+    budget,
+    size_pop,
+    tensor_Q,
+    device,
+    verbose,
+    name_file,
+    enable_visualization=True,
+    return_history=False,
+):
 
     size_pop = strategy.lambda_
 
@@ -32,12 +45,12 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
 
     avg_hamming_history = []
     avg_kl_history = []
+    best_fitness_history = []
+    runtime_steps = []
     agent_fitness_history = []
 
-    if(verbose):
-        pbar = tqdm(range(nb_iterations))
-    else:
-        pbar = range(nb_iterations)
+    use_tqdm = bool(verbose and enable_visualization)
+    pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
         
         
     list_tensor_solution = []
@@ -98,6 +111,8 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
 
         global_current = torch.mean(current_score).item()
         global_best = torch.mean(bestScore).item()
+        best_fitness_history.append(-global_best)
+        runtime_steps.append((epoch + 1) * size_pop)
 
         leader_idx = None
         # avg hamming = sum of pairwise hamming distances between agent best solutions
@@ -140,7 +155,7 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
             avg_kl_history.append(avg_kl if avg_kl is not None else 0.0)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
 
-        if(verbose):
+        if use_tqdm:
            postfix = {"bestScore": -global_best, "current_score": -global_current}
            if track_leader and leader_idx is not None:
                postfix["leader"] = leader_idx
@@ -210,6 +225,15 @@ def get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances, nb_restarts, budg
             snapshot = svgd_snapshot_fn()
             if snapshot:
                 render_svgd_field_plot(snapshot)
+
+    if return_history:
+        history = dict(
+            runtime=runtime_steps,
+            best_fitness=best_fitness_history,
+            avg_hamming=avg_hamming_history,
+            avg_kl=avg_kl_history,
+        )
+        return bestScore_np, history
 
     return bestScore_np
 

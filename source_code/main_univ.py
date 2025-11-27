@@ -15,6 +15,7 @@ import random
 import tempfile
 import argparse
 import sys
+import socket
 
 # --- imports projet (identiques à ton main) ---
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
@@ -153,6 +154,37 @@ def flat_or_matrix_to_instances(list_scores, nb_instances, nb_restarts):
     raise ValueError(f"Format list_scores non supporté (type={t}). Aperçu={head}")
 
 
+def _load_grid_settings(path: str):
+    """
+    Charge un fichier JSON ou YAML avec des listes pour agent_M / agent_lambda.
+    Retourne un dict; ignore silencieusement les clés absentes.
+    """
+    import json
+
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"grid settings file not found: {path}")
+
+    try:
+        if path.lower().endswith((".yml", ".yaml")):
+            try:
+                import yaml  # type: ignore
+            except Exception as exc:
+                raise RuntimeError("PyYAML required for YAML grid settings") from exc
+            data = yaml.safe_load(Path(path).read_text())
+        else:
+            data = json.loads(Path(path).read_text())
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse grid settings file: {path}") from exc
+
+    allowed = {}
+    for key in ("agent_M", "agent_lambda"):
+        if key in data:
+            if not isinstance(data[key], (list, tuple)):
+                raise ValueError(f"{key} in {path} must be a list/tuple")
+            allowed[key] = data[key]
+    return allowed
+
+
 def rank_vs_global_ranking(repo_root: str, dim: int, type_instance: int, my_score: float):
     path = os.path.join(
         repo_root, "additional_results", "global_ranking",
@@ -233,6 +265,12 @@ def main():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--visualization", type=str, default=None,
                         help="Enable/disable visualization: true|false")
+    parser.add_argument(
+        "--grid-settings",
+        type=str,
+        default=None,
+        help="Optional JSON/YAML file to override agent_M and agent_lambda in the sweep grid.",
+    )
     args, _ = parser.parse_known_args()
     if args.visualization is not None:
         v = args.visualization.strip().lower()
@@ -251,6 +289,20 @@ def main():
             elif v in ("1", "true", "yes", "t"):
                 DEFAULTS["visualization"] = True
             break
+
+    # Désactive la visu Tkinter par défaut hors de la machine archlinux
+    hostname = socket.gethostname().lower()
+    if "archlinux" not in hostname:
+        DEFAULTS["visualization"] = False
+        print(f"[INFO] hostname={hostname}: visualisation désactivée (Tkinter non utilisé).")
+
+    # Grid overrides
+    if args.grid_settings:
+        overrides = _load_grid_settings(args.grid_settings)
+        for key in ("agent_M", "agent_lambda"):
+            if key in overrides:
+                GRID[key] = list(overrides[key])
+                print(f"[INFO] GRID override from {args.grid_settings}: {key}={GRID[key]}")
     # Seeds
     torch.manual_seed(DEFAULTS["seed"])
     np.random.seed(DEFAULTS["seed"])
@@ -300,6 +352,7 @@ def main():
     per_instance_best = dict()              # (problem, dim, type_instance, idx) -> (best_score, algo_key)
     per_inst_algo_best = defaultdict(dict)  # (problem,dim,type,inst) -> {algo_key: best_on_restarts}
     per_inst_algo_avg  = defaultdict(dict)  # (problem,dim,type,inst) -> {algo_key: avg_on_restarts}
+    run_histories = {}  # (problem, dim, type_instance, algo_key) -> history
 
     # Boucle d’expérimentation
     for i, cfg in enumerate(combos, 1):
@@ -416,13 +469,16 @@ def main():
 
         # ---- Exécution avec chemin TEMPORAIRE (UNE barre), puis suppression immédiate ----
         t0 = time.time()
+        run_history = None
         with tempfile.NamedTemporaryFile(prefix="rl_eda_", suffix=".log", delete=False) as tmpf:
             temp_path = tmpf.name
         try:
             if type_problem == "QUBO":
-                list_scores = get_Score_trajectoriesQUBO_cuda(
+                list_scores, run_history = get_Score_trajectoriesQUBO_cuda(
                     strategy, dim, nb_instances_test, nb_restarts, budget, lambda_,
-                    tensor_Q_test, device, verbose, temp_path, enable_visualization=DEFAULTS.get("visualization", True)
+                    tensor_Q_test, device, verbose, temp_path,
+                    enable_visualization=DEFAULTS.get("visualization", True),
+                    return_history=True
                 )
             elif type_problem in ("NK", "NK3"):
                 list_scores = get_Score_trajectoriesNK_cuda(
@@ -444,6 +500,9 @@ def main():
             list_scores if isinstance(list_scores, (list, tuple))
             else (list_scores.detach().cpu().numpy() if torch.is_tensor(list_scores) else list_scores)
         ))
+        if run_history is not None and "best_fitness" in run_history and run_history["best_fitness"]:
+            # Aligne la dernière valeur de l'historique avec l'avg_score affiché (moyenne des scores renvoyés)
+            run_history["best_fitness"][-1] = avg_score
 
         print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
 
@@ -464,6 +523,8 @@ def main():
             f"delta{delta_target}:M{M}:"
             f"lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
         )
+        if run_history is not None:
+            run_histories[(type_problem, dim, type_instance, algo_key)] = run_history
 
         for inst_idx, rest_scores in enumerate(by_instance):
             # MINIMISATION
@@ -475,14 +536,14 @@ def main():
             prev = per_instance_best.get(inst_key, (float("+inf"), None))
             if best_on_restarts < prev[0]:
                 per_instance_best[inst_key] = (best_on_restarts, algo_key)
-
         # ===== Mise à jour temps réel des agrégats (avec rank/percent) =====
         _write_realtime_aggregation(
             repo_root,
             agg_outdir,
             per_instance_best,
             per_inst_algo_best,
-            per_inst_algo_avg
+            per_inst_algo_avg,
+            run_histories,
         )
 
     print("[DONE] Sweep terminé.")
@@ -493,7 +554,8 @@ def _write_realtime_aggregation(
     agg_outdir: str,
     per_instance_best: dict,
     per_inst_algo_best: dict,
-    per_inst_algo_avg: dict
+    per_inst_algo_avg: dict,
+    run_histories: dict | None = None,
 ):
     """
     Écrit/Met à jour en temps réel:
@@ -540,8 +602,7 @@ def _write_realtime_aggregation(
             continue
 
         # Winner = algo avec la plus faible moyenne (minimisation)
-        winner_algo = min(algo_mean.items(), key=lambda kv: kv[1])[0]
-        winner_avg_score = algo_mean[winner_algo]
+        winner_algo, winner_avg_score = min(algo_mean.items(), key=lambda kv: kv[1])
 
         # Rank & percent vs tableau global (sur winner_avg_score)
         _best_algo_csv, _best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(
@@ -557,6 +618,19 @@ def _write_realtime_aggregation(
             f"{problem} | dim={dim} | type_instance={type_instance} -> "
             f"winner={winner_algo} | rank={rank_disp} ({pct_disp}) | winner_avg_score={winner_avg_score:.6f}"
         )
+
+        # Historique du winner (groupe)
+        if run_histories:
+            history = run_histories.get((problem, dim, type_instance, winner_algo))
+            if history:
+                _write_group_history(
+                    agg_outdir,
+                    problem,
+                    dim,
+                    type_instance,
+                    winner_algo,
+                    history,
+                )
 
     overview_csv = os.path.join(agg_outdir, "best_algo_overview.csv")
     Path(overview_csv).write_text("\n".join(lines2), encoding="utf-8")
@@ -574,6 +648,49 @@ def _write_realtime_aggregation(
     Path(pretty_txt).write_text("\n".join(header), encoding="utf-8")
 
     print("=========================================================FIN==========================================================================\n")
+
+
+def _write_group_history(agg_outdir: str, problem: str, dim: int, type_instance: int, algo_key: str, history: dict):
+    """
+    Écrit l'historique (runtime, best_fitness, avg_hamming, avg_kl) pour le winner d'un groupe.
+    Nom du fichier: {problem}_{dim}_{type_instance}_{algo}.csv
+    Supprime les fichiers existants de ce groupe avant d'écrire le nouveau.
+    """
+    if not history:
+        return
+
+    runtimes = history.get("runtime") or []
+    best_fitness = history.get("best_fitness") or []
+    avg_hamming = history.get("avg_hamming") or []
+    avg_kl = history.get("avg_kl") or []
+
+    length = max(len(runtimes), len(best_fitness), len(avg_hamming), len(avg_kl))
+    if length == 0:
+        return
+
+    def _safe(arr, i):
+        return arr[i] if i < len(arr) else ""
+
+    # nettoie le nom d'algo pour un usage de fichier
+    safe_algo = algo_key.replace(":", "_").replace("/", "_")
+    out_dir = Path(agg_outdir) / "instance_history"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # supprime les anciens fichiers pour ce groupe
+    prefix = f"{problem}_{dim}_{type_instance}_"
+    for f in out_dir.glob(f"{prefix}*.csv"):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+    out_file = out_dir / f"{prefix}{safe_algo}.csv"
+    lines = ["runtime,best_fitness,avg_hamming,avg_kl"]
+    for i in range(length):
+        lines.append(
+            f"{_safe(runtimes, i)},{_safe(best_fitness, i)},{_safe(avg_hamming, i)},{_safe(avg_kl, i)}"
+        )
+    out_file.write_text("\n".join(lines), encoding="utf-8")
 
 
 if __name__ == "__main__":
