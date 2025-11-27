@@ -50,17 +50,6 @@ DEFAULTS = dict(
     nb_restarts=10,
     budget=10000,
     lambda_=10,
-    typeModel="NeuralNet",
-    isUnivariate=1,
-    numberHiddenLayersG=1,
-    nh=20,
-    knownIG=False,
-    fixSamplingOrder=False,
-    fixUpdateOrder=False,
-    learnOrder=False,
-    dropoutGen=0.0,
-    dropoutTrain=0.0,
-    withoutCausalMaskTraining=False,
     type_strategy="PPO-EDA",   # utilisé par la fabrique
     problem_name="QUBO",       # defaults: problem: qubo
     visualization=True,
@@ -71,38 +60,19 @@ DEFAULTS = dict(
 # 2) Grille d’hparams (comme hydra.sweeper.params)
 # =========================
 GRID = dict(
-    agent=["ppo", "reinforce"],
+    agent=["reinforce", "ppo"],
     agent_learning_rate=[0.008, 0.02, 0.012, 0.03],
-    agent_M=[1,2,4,5],
+    agent_M=[1, 2, 4, 5],
     agent_K_steps=[6, 8, 20, 14],
-    agent_Beta_adapt=[True],
-    agent_beta=[1.0],
     agent_delta_target=[0.0025, 0.006],
     agent_learning_rate_svgd=[0.1, 0.2, 0.5, 1.0],
     problem_dim=[64, 128, 256],
     problem_type_instance=[0, 1, 2, 3, 4, 5],
-    agent_lambda=[10,15,20,25],
+    agent_lambda=[10, 15, 20, 25],
 )
 
 # =========================
-# 3) Filtres identiques à hydra_filter_sweeper.Expression
-# =========================
-def passes_filters(cfg):
-    # 1) Si agent=reinforce ⇒ garder une seule combi (K_steps=2, Beta_adapt=False, delta_target=0.001)
-    if cfg["agent"] == "reinforce":
-        if not (cfg["agent_K_steps"] == 2 and cfg["agent_Beta_adapt"] is False and abs(cfg["agent_delta_target"] - 0.001) < 1e-12):
-            return False
-    # 2) Si Beta_adapt=True ⇒ beta doit être 1.0
-    if cfg["agent_Beta_adapt"] is True and abs(cfg["agent_beta"] - 1.0) > 1e-12:
-        return False
-    # 3) Si Beta_adapt=False ⇒ delta_target doit être 0.001
-    if cfg["agent_Beta_adapt"] is False and abs(cfg["agent_delta_target"] - 0.001) > 1e-12:
-        return False
-    return True
-
-
-# =========================
-# 4) Normalisation robuste des scores par instance
+# 3) Normalisation robuste des scores par instance
 # =========================
 def flat_or_matrix_to_instances(list_scores, nb_instances, nb_restarts):
     import numpy as _np
@@ -255,7 +225,7 @@ def rank_vs_global_ranking(repo_root: str, dim: int, type_instance: int, my_scor
 
 
 # =========================
-# 5) Programme principal
+# 4) Programme principal
 # =========================
 def main():
     # --- CLI overrides ---
@@ -296,7 +266,32 @@ def main():
     keys = list(GRID.keys())
     values = [GRID[k] for k in keys]
     combos = [dict(zip(keys, vals)) for vals in itertools.product(*values)]
-    combos = [c for c in combos if passes_filters(c)]
+
+    # Filtres additionnels pour éliminer les combinaisons redondantes:
+    #  - SVGD n'a pas d'effet quand M=1 ⇒ garder uniquement le pas par défaut
+    #  - Pour REINFORCE, K_steps et delta_target sont ignorés ⇒ fixer une seule
+    #    valeur représentative pour chaque paramètre.
+    default_svgd = DEFAULTS.get("learning_rate_svgd", None)
+    canonical_K = GRID.get("agent_K_steps", [0])[0]
+    canonical_delta = GRID.get("agent_delta_target", [0.0])[0]
+
+    filtered = []
+    for cfg in combos:
+        m_val = int(cfg.get("agent_M", 1))
+        lr_svgd = float(cfg.get("agent_learning_rate_svgd", default_svgd or 0.0))
+        if default_svgd is not None and m_val == 1 and abs(lr_svgd - default_svgd) > 1e-12:
+            continue
+
+        agent = str(cfg.get("agent", "ppo")).strip().lower()
+        if agent == "reinforce":
+            if int(cfg.get("agent_K_steps", canonical_K)) != canonical_K:
+                continue
+            if abs(float(cfg.get("agent_delta_target", canonical_delta)) - canonical_delta) > 1e-12:
+                continue
+
+        filtered.append(cfg)
+
+    combos = filtered
     total = len(combos)
 
     # Accumulateurs pour overview en temps réel
@@ -314,41 +309,33 @@ def main():
         nb_restarts = DEFAULTS["nb_restarts"]
         budget = DEFAULTS["budget"]
         lambda_ = int(cfg.get("agent_lambda", DEFAULTS["lambda_"]))
-        learnOrder = DEFAULTS["learnOrder"]
-        dropoutGen = DEFAULTS["dropoutGen"]
-        dropoutTrain = DEFAULTS["dropoutTrain"]
-        withoutCausalMaskTraining = DEFAULTS["withoutCausalMaskTraining"]
         typeStrategy = DEFAULTS["type_strategy"]
         type_problem = DEFAULTS["problem_name"]
 
         dim = int(cfg["problem_dim"])
         type_instance = int(cfg["problem_type_instance"])
 
-        # Agent params
-        agent = cfg["agent"]  # "ppo" ou "reinforce"
+        agent = str(cfg.get("agent", "ppo")).strip().lower()
+        is_ppo = agent == "ppo"
+
         learning_rate = float(cfg["agent_learning_rate"])
         learning_rate_svgd = float(cfg.get("agent_learning_rate_svgd", DEFAULTS.get("learning_rate_svgd", 0.1)))
         M = int(cfg["agent_M"])
-        K_steps = int(cfg["agent_K_steps"])
-        Beta_adapt = bool(cfg["agent_Beta_adapt"])
-        beta_param = float(cfg["agent_beta"])
+        K_steps = int(cfg["agent_K_steps"]) if is_ppo else 0
         delta_target = float(cfg["agent_delta_target"])
+        if not is_ppo:
+            delta_target = 0.0
         lambda_per_agent = (lambda_ / M) if M > 0 else float(lambda_)
         lambda_per_agent_str = f"{lambda_per_agent:.3f}".rstrip("0").rstrip(".")
 
-        # Conventions fabrique
-        if agent.lower() == "ppo":
-            updateMethod = "PPO"
-        else:
-            updateMethod = "REINFORCE"
-            K_steps = 0
-            Beta_adapt = False
-            delta_target = 0.0
+        updateMethod = "PPO" if is_ppo else "REINFORCE"
 
+        delta_disp = f"{cfg['agent_delta_target']:.4f}" if is_ppo else "n/a"
+        k_disp = str(K_steps) if is_ppo else "n/a"
         print(
             f"=========================================================DEBUT=======================================================================\n"
-            f"▶ Run {i}/{total} | agent={agent} lr={learning_rate} K={K_steps} "
-            f"BetaAdapt={Beta_adapt} beta={beta_param} delta={delta_target} M={M} "
+            f"▶ Run {i}/{total} | agent={updateMethod} lr={learning_rate} K={k_disp} "
+            f"delta={delta_disp} M={M} lr_svgd={learning_rate_svgd} "
             f"lambda/M={lambda_per_agent_str} | problem={type_problem} dim={dim} t={type_instance}"
         )
 
@@ -413,28 +400,19 @@ def main():
         # Fabrique de stratégie
         factory = FactoryStrategyEA()
         strategy = factory.createStrategyEA(
-            typeStrategy, dim, lambda_, beta_param, device,
-            DEFAULTS["typeModel"], DEFAULTS["numberHiddenLayersG"], DEFAULTS["nh"],
-            DEFAULTS["isUnivariate"], dropoutGen, dropoutTrain, withoutCausalMaskTraining,
-            dim_variables, learnOrder, 1, M,
-            updateMethod=updateMethod, K_steps=K_steps, beta_adapt=Beta_adapt,
-            delta_target=delta_target, learning_rate=learning_rate, learning_rate_svgd=learning_rate_svgd,
-            enable_visualization=DEFAULTS.get("visualization", True)
+            typeStrategy,
+            dim,
+            lambda_,
+            device,
+            dim_variables,
+            M,
+            updateMethod=updateMethod,
+            K_steps=K_steps,
+            delta_target=delta_target,
+            learning_rate=learning_rate,
+            learning_rate_svgd=learning_rate_svgd,
+            enable_visualization=DEFAULTS.get("visualization", True),
         ).to(device)
-
-        # IG / ordres
-        if DEFAULTS["knownIG"] and type_problem in ("QUBO", "NK", "NK3"):
-            DAG = tensor_Q_test.unsqueeze(1).repeat(1, lambda_, 1, 1).to(device)
-            DAG = torch.where(DAG != 0, 1, 0)
-            strategy.setKnownDAG(DAG)
-
-        if DEFAULTS["fixSamplingOrder"]:
-            order = torch.tensor(np.arange(dim)).to(device)
-            order = order.unsqueeze(0).unsqueeze(1).repeat(nb_instances_test * nb_restarts, lambda_, 1)
-            strategy.setKnownOrder(order)
-
-        if DEFAULTS["fixUpdateOrder"]:
-            strategy.setSameDagTraining()
 
         # ---- Exécution avec chemin TEMPORAIRE (UNE barre), puis suppression immédiate ----
         t0 = time.time()
@@ -483,8 +461,8 @@ def main():
         # Mise à jour "meilleur algo par instance" (minimisation) + stockage des moyennes
         algo_key = (
             f"{updateMethod}:{DEFAULTS['type_strategy']}:lr{learning_rate}:K{K_steps}:"
-            f"BetaAdapt{Beta_adapt}:beta{beta_param}:delta{delta_target}:M{M}:"
-            f"lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}"
+            f"delta{delta_target}:M{M}:"
+            f"lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
         )
 
         for inst_idx, rest_scores in enumerate(by_instance):
