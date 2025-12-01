@@ -2,6 +2,8 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
+from environment.visualization import render_agent_dashboard, render_svgd_field_plot
+
 
 
 def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, device):
@@ -110,7 +112,24 @@ def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, 
 
 
 
-def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, budget, size_pop, vectorIndex, tensor_matrix_locus, tensor_matrix_contrib, device, verbose, name_file):
+def get_Score_trajectoriesNK_cuda(
+    strategy,
+    N,
+    K,
+    D,
+    nb_instances,
+    nb_restarts,
+    budget,
+    size_pop,
+    vectorIndex,
+    tensor_matrix_locus,
+    tensor_matrix_contrib,
+    device,
+    verbose,
+    name_file,
+    enable_visualization=True,
+    return_history=False,
+):
 
 
 
@@ -131,10 +150,14 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
     nb_iterations = budget//size_pop
 
 
-    if(verbose):
-        pbar = tqdm(range(nb_iterations))
-    else:
-        pbar = range(nb_iterations)
+    avg_hamming_history = []
+    avg_kl_history = []
+    best_fitness_history = []
+    runtime_steps = []
+    agent_fitness_history = []
+
+    use_tqdm = bool(verbose and enable_visualization)
+    pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
 
 
 
@@ -222,6 +245,7 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
         global_best = torch.mean(bestScore).item()/N
 
         leader_idx = None
+        avg_kl = None
         avg_hamming = None
         if track_leader:
             agent_best_scores = []
@@ -243,22 +267,32 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
 
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
             leader_idx = torch.argmax(agent_mean_scores).item()
-            leader_solution = agent_best_solutions[leader_idx]
-            total_dist = 0.0
-            comparisons = 0
-            for idx, sol in enumerate(agent_best_solutions):
-                if idx == leader_idx:
-                    continue
-                dist = torch.abs(sol - leader_solution).sum(dim=1).float()
-                total_dist += torch.mean(dist).item()
-                comparisons += 1
-            avg_hamming = (total_dist / comparisons) if comparisons > 0 else 0.0
 
-        if(verbose):
+            pairwise_distances = []
+            for i in range(len(agent_best_solutions)):
+                for j in range(i + 1, len(agent_best_solutions)):
+                    dist = torch.abs(agent_best_solutions[i] - agent_best_solutions[j]).sum(dim=1).float()
+                    pairwise_distances.append(dist)
+            if pairwise_distances:
+                stacked = torch.stack(pairwise_distances, dim=0)
+                avg_hamming = torch.mean(stacked).item()
+            else:
+                avg_hamming = 0.0
+
+            avg_kl = _compute_average_kl(strategy.agents)
+            avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
+            avg_kl_history.append(avg_kl if avg_kl is not None else 0.0)
+            agent_fitness_history.append([score.item() for score in agent_mean_scores])
+
+        runtime_steps.append((epoch + 1) * size_pop)
+        best_fitness_history.append(-global_best)
+
+        if(use_tqdm):
             postfix = {"bestScore": -global_best, "current_score": -global_current}
             if track_leader and leader_idx is not None:
                 postfix["leader"] = leader_idx
                 postfix["avg_hamming"] = avg_hamming
+                postfix["avg_kl"] = avg_kl
             pbar.set_postfix(**postfix)
 
         if(name_file is not None):
@@ -305,6 +339,38 @@ def get_Score_trajectoriesNK_cuda(strategy, N, K, D, nb_instances, nb_restarts, 
             avg_best = -torch.mean(agent_best_overall[idx]).item()/N
             theta_mean = torch.mean(agent.theta).item()
             print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
+
+    if enable_visualization:
+        iterations = [(idx + 1) * size_pop for idx in range(len(avg_hamming_history))] if avg_hamming_history else []
+        num_agents = len(strategy.agents) if hasattr(strategy, "agents") else 0
+        theta_history = None
+        theta_history_fn = getattr(strategy, "get_theta_history", None)
+        if callable(theta_history_fn):
+            theta_history = theta_history_fn()
+        render_agent_dashboard(
+            iterations,
+            avg_hamming_history,
+            avg_kl_history,
+            agent_fitness_history,
+            num_agents,
+            theta_history,
+        )
+
+        svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)
+        if callable(svgd_snapshot_fn):
+            snapshot = svgd_snapshot_fn()
+            if snapshot:
+                render_svgd_field_plot(snapshot)
+
+    if return_history:
+        history = dict(
+            runtime=runtime_steps,
+            best_fitness=best_fitness_history,
+            avg_hamming=avg_hamming_history,
+            avg_kl=avg_kl_history,
+        )
+        return -bestScore_np, history
+
     return -bestScore_np
 
 
@@ -470,3 +536,30 @@ class problem_NKlandscape:
     def getScore(self):
 
         return self.currentScore
+
+
+def _compute_average_kl(agents):
+    if agents is None or len(agents) < 2:
+        return 0.0
+
+    eps = 1e-8
+    total_pairwise_kl = 0.0
+    comparisons = 0
+    with torch.no_grad():
+        agent_probs = [torch.sigmoid(agent.theta).detach() for agent in agents]
+
+    for i in range(len(agent_probs)):
+        for j in range(i + 1, len(agent_probs)):
+            p = torch.clamp(agent_probs[i], eps, 1 - eps)
+            q = torch.clamp(agent_probs[j], eps, 1 - eps)
+            kl_pq_inst = (
+                p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
+            ).mean(dim=1)
+            kl_qp_inst = (
+                q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p))
+            ).mean(dim=1)
+            kl_pair_inst = 0.5 * (kl_pq_inst + kl_qp_inst)
+            total_pairwise_kl += kl_pair_inst.mean().item()
+            comparisons += 1
+
+    return (total_pairwise_kl / comparisons) if comparisons > 0 else 0.0

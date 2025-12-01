@@ -297,9 +297,11 @@ def main():
                     return_history=True
                 )
             elif type_problem in ("NK", "NK3"):
-                list_scores = get_Score_trajectoriesNK_cuda(
+                list_scores, run_history = get_Score_trajectoriesNK_cuda(
                     strategy, dim, type_instance, D, nb_instances_test, nb_restarts, budget, lambda_,
-                    vectorIndex_th, tensor_matrix_locus, tensor_matrix_contrib, device, verbose, temp_path
+                    vectorIndex_th, tensor_matrix_locus, tensor_matrix_contrib, device, verbose, temp_path,
+                    enable_visualization=DEFAULTS.get("visualization", True),
+                    return_history=True
                 )
             else:
                 raise ValueError("Cas non prévu")
