@@ -43,8 +43,10 @@ Conventions:
 # =========================
 # 1) Defaults (comme ton config)
 # =========================
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
 DEFAULTS = dict(
-    device="cuda:0",
+    device=device,
     seed=0,
     verbose=True,
     nb_instances_test=10,
@@ -53,7 +55,7 @@ DEFAULTS = dict(
     lambda_=10,
     type_strategy="PPO-EDA",   # utilisé par la fabrique
     problem_name="QUBO",       # defaults: problem: qubo
-    visualization=True,
+    visualization=False,
     learning_rate_svgd=0.1,
 )
 
@@ -61,7 +63,7 @@ DEFAULTS = dict(
 # 2) Grille d’hparams (comme hydra.sweeper.params)
 # =========================
 GRID = dict(
-    agent=["reinforce", "ppo"],
+    agent=["ppo"],
     agent_learning_rate=[0.008, 0.02, 0.012, 0.03],
     agent_M=[1, 2, 4, 5],
     agent_K_steps=[6, 8, 20, 14],
@@ -549,6 +551,180 @@ def main():
     print("[DONE] Sweep terminé.")
 
 
+def _load_existing_overview(path: str):
+    """
+    Lit best_algo_overview.csv si présent et renvoie
+    {(problem, dim, type_instance): {...}}.
+    """
+    existing = {}
+    if not os.path.isfile(path):
+        return existing
+
+    try:
+        with open(path, newline="", encoding="utf-8") as fh:
+            reader = csv.reader(fh)
+            rows = [row for row in reader if row]
+    except Exception:
+        return existing
+
+    if len(rows) <= 1:
+        return existing
+
+    header = [col.strip().lower() for col in rows[0]]
+    try:
+        idx_problem = header.index("problem")
+        idx_dim = header.index("dim")
+        idx_type = header.index("type_instance")
+    except ValueError:
+        return existing
+
+    idx_algo = None
+    for kw in ("winner_algo_key", "winner_algo"):
+        if kw in header:
+            idx_algo = header.index(kw)
+            break
+    if idx_algo is None:
+        return existing
+
+    try:
+        idx_score = header.index("winner_avg_score")
+    except ValueError:
+        return existing
+
+    for row in rows[1:]:
+        if len(row) <= idx_score:
+            continue
+        problem = row[idx_problem].strip()
+        try:
+            dim = int(row[idx_dim])
+            type_instance = int(row[idx_type])
+            score = float(row[idx_score])
+        except Exception:
+            continue
+        winner_algo = row[idx_algo].strip()
+        existing[(problem, dim, type_instance)] = dict(
+            problem=problem,
+            dim=dim,
+            type_instance=type_instance,
+            winner_algo=winner_algo,
+            winner_avg_score=score,
+        )
+    return existing
+
+
+def _extract_best_fitness(values):
+    """
+    Retourne la meilleure (min) valeur numérique dans une séquence.
+    """
+    if not values:
+        return None
+
+    best_val = None
+    for val in values:
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(v):
+            continue
+        best_val = v if best_val is None else min(best_val, v)
+    return best_val
+
+
+def _existing_history_best(csv_path: Path):
+    """
+    Lit un fichier d'historique et renvoie la dernière valeur valide de
+    `best_fitness` (monotone décroissante => dernière entrée = best).
+    """
+    if not csv_path.exists():
+        return None
+    try:
+        with csv_path.open(newline="", encoding="utf-8") as fh:
+            reader = csv.reader(fh)
+            rows = [row for row in reader if row]
+    except Exception:
+        return None
+    if len(rows) <= 1:
+        return None
+
+    header = [col.strip().lower() for col in rows[0]]
+    try:
+        idx_best = header.index("best_fitness")
+    except ValueError:
+        return None
+
+    for row in reversed(rows[1:]):
+        if idx_best >= len(row):
+            continue
+        try:
+            val = float(row[idx_best])
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(val):
+            continue
+        return val
+    return None
+
+
+def _format_algo_display(algo_key: str) -> str:
+    """
+    Rend le nom d'algo lisible pour overview/summary.
+    Supprime Beta/BetaAdapt/lambdaPerAgent et affiche lr_svgd.
+    """
+    if not algo_key:
+        return "unknown"
+    parts = [p for p in algo_key.split(":") if p]
+    if not parts:
+        return "unknown"
+
+    update = parts[0]
+    strategy = parts[1] if len(parts) > 1 else ""
+    display_bits = []
+    if strategy:
+        display_bits.append(f"{update} @ {strategy}")
+    else:
+        display_bits.append(update)
+
+    def add(label: str, value: str):
+        display_bits.append(f"{label}={value}" if value != "" else label)
+
+    seen_lr_svgd = False
+    for token in parts[2:]:
+        clean = token.strip()
+        lower = clean.lower()
+        if not clean:
+            continue
+        if lower.startswith("betaadapt") or lower.startswith("beta"):
+            continue
+        if lower.startswith("lambdaperagent"):
+            continue
+        if lower.startswith("lambdatotal"):
+            add("lambda", clean[len("lambdaTotal"):])
+            continue
+        if lower.startswith("lambda"):
+            add("lambda", clean[len("lambda"):])
+            continue
+        if lower.startswith("lr_svgd"):
+            add("lr_svgd", clean[len("lr_svgd"):])
+            seen_lr_svgd = True
+            continue
+        if lower.startswith("lr"):
+            add("lr", clean[len("lr"):])
+            continue
+        if lower.startswith("delta"):
+            add("delta", clean[len("delta"):])
+            continue
+        if lower.startswith("k"):
+            add("K", clean[1:])
+            continue
+        if lower.startswith("m"):
+            add("M", clean[1:])
+            continue
+        add(clean, "")
+
+    return " | ".join(display_bits)
+
+
 def _write_realtime_aggregation(
     repo_root: str,
     agg_outdir: str,
@@ -572,13 +748,14 @@ def _write_realtime_aggregation(
             inst_idx + 1
         )
 
-    # 2) Pour chaque groupe, calculer la moyenne par algo, puis choisir l'algo au score moyen minimal
-    lines2 = ["problem,dim,type_instance,winner_algo,rank,percent,winner_avg_score"]
-    human_lines = []
-
     # Regrouper toutes (problem, dim, type_instance)
     groups = sorted({(p, d, t) for (p, d, t, _) in per_inst_algo_avg.keys()},
                     key=lambda x: (x[0], x[1], x[2]))
+
+    overview_csv = os.path.join(agg_outdir, "best_algo_overview.csv")
+    existing_entries = _load_existing_overview(overview_csv)
+    new_entries = {}
+    history_by_group = {}
 
     for (problem, dim, type_instance) in groups:
         n_inst = n_instances_seen.get((problem, dim, type_instance), 0)
@@ -603,36 +780,85 @@ def _write_realtime_aggregation(
 
         # Winner = algo avec la plus faible moyenne (minimisation)
         winner_algo, winner_avg_score = min(algo_mean.items(), key=lambda kv: kv[1])
-
-        # Rank & percent vs tableau global (sur winner_avg_score)
-        _best_algo_csv, _best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(
-            repo_root, int(dim), int(type_instance), winner_avg_score
+        group_key = (problem, int(dim), int(type_instance))
+        new_entries[group_key] = dict(
+            problem=problem,
+            dim=int(dim),
+            type_instance=int(type_instance),
+            winner_algo=winner_algo,
+            winner_avg_score=float(winner_avg_score),
         )
-        rank_val = my_rank if my_rank is not None else ""
-        percent_str = f"{my_pct:.1f}" if my_pct is not None else ""
-
-        lines2.append(f"{problem},{dim},{type_instance},{winner_algo},{rank_val},{percent_str},{winner_avg_score}")
-        pct_disp = f"{percent_str}%" if percent_str != "" else "n/a"
-        rank_disp = f"{rank_val}/{n_rank}" if (rank_val != "" and n_rank is not None) else "n/a"
-        human_lines.append(
-            f"{problem} | dim={dim} | type_instance={type_instance} -> "
-            f"winner={winner_algo} | rank={rank_disp} ({pct_disp}) | winner_avg_score={winner_avg_score:.6f}"
-        )
-
-        # Historique du winner (groupe)
         if run_histories:
             history = run_histories.get((problem, dim, type_instance, winner_algo))
             if history:
-                _write_group_history(
-                    agg_outdir,
-                    problem,
-                    dim,
-                    type_instance,
-                    winner_algo,
-                    history,
-                )
+                history_by_group[group_key] = history
 
-    overview_csv = os.path.join(agg_outdir, "best_algo_overview.csv")
+    final_entries = dict(existing_entries)
+    improved_groups = set()
+    for group_key, data in new_entries.items():
+        new_score = data["winner_avg_score"]
+        prev = existing_entries.get(group_key)
+        better = False
+        if prev is None:
+            better = True
+        else:
+            prev_score = prev.get("winner_avg_score")
+            if prev_score is None or np.isnan(prev_score):
+                better = True
+            elif np.isnan(new_score):
+                better = False
+            else:
+                better = (new_score + 1e-12) < prev_score
+        if better:
+            final_entries[group_key] = {
+                "problem": data["problem"],
+                "dim": data["dim"],
+                "type_instance": data["type_instance"],
+                "winner_algo": data["winner_algo"],
+                "winner_avg_score": new_score,
+            }
+            improved_groups.add(group_key)
+
+    if not final_entries:
+        print("=========================================================FIN==========================================================================")
+        print("[INFO] Aucun overview à écrire (aucun groupe évalué).")
+        return
+
+    if not improved_groups:
+        print("=========================================================FIN==========================================================================")
+        print("[INFO] best_algo_overview inchangé (aucune amélioration).")
+        return
+
+    lines2 = ["problem,dim,type_instance,winner_algo_key,winner_algo,rank,percent,winner_avg_score"]
+    human_lines = []
+    sorted_entries = sorted(
+        final_entries.values(),
+        key=lambda d: (d["problem"], d["dim"], d["type_instance"])
+    )
+    for entry in sorted_entries:
+        problem = entry["problem"]
+        dim = entry["dim"]
+        type_instance = entry["type_instance"]
+        winner_algo = entry["winner_algo"]
+        winner_display = _format_algo_display(winner_algo)
+        winner_avg_score = entry["winner_avg_score"]
+
+        _best_algo_csv, _best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(
+            repo_root, int(dim), int(type_instance), winner_avg_score
+        )
+        rank_val = str(my_rank) if my_rank is not None else ""
+        percent_str = f"{my_pct:.1f}" if my_pct is not None else ""
+
+        lines2.append(
+            f"{problem},{dim},{type_instance},{winner_algo},{winner_display},{rank_val},{percent_str},{winner_avg_score}"
+        )
+        pct_disp = f"{percent_str}%" if percent_str else "n/a"
+        rank_disp = f"{rank_val}/{n_rank}" if (rank_val and n_rank is not None) else "n/a"
+        human_lines.append(
+            f"{problem} | dim={dim} | type_instance={type_instance} -> "
+            f"{winner_display} | rank={rank_disp} ({pct_disp}) | winner_avg_score={winner_avg_score:.6f}"
+        )
+
     Path(overview_csv).write_text("\n".join(lines2), encoding="utf-8")
 
     pretty_txt = os.path.join(agg_outdir, "best_algo_summary.txt")
@@ -647,14 +873,28 @@ def _write_realtime_aggregation(
     ]
     Path(pretty_txt).write_text("\n".join(header), encoding="utf-8")
 
+    if improved_groups:
+        for group_key in improved_groups:
+            history = history_by_group.get(group_key)
+            if not history:
+                continue
+            entry = final_entries[group_key]
+            _write_group_history(
+                agg_outdir,
+                entry["problem"],
+                entry["dim"],
+                entry["type_instance"],
+                entry["winner_algo"],
+                history,
+            )
+
     print("=========================================================FIN==========================================================================\n")
 
 
 def _write_group_history(agg_outdir: str, problem: str, dim: int, type_instance: int, algo_key: str, history: dict):
     """
-    Écrit l'historique (runtime, best_fitness, avg_hamming, avg_kl) pour le winner d'un groupe.
-    Nom du fichier: {problem}_{dim}_{type_instance}_{algo}.csv
-    Supprime les fichiers existants de ce groupe avant d'écrire le nouveau.
+    Écrit l'historique (runtime, best_fitness, avg_hamming, avg_kl) pour le winner d'un groupe
+    **seulement** si la fitness est meilleure que le fichier existant (minimisation).
     """
     if not history:
         return
@@ -668,17 +908,30 @@ def _write_group_history(agg_outdir: str, problem: str, dim: int, type_instance:
     if length == 0:
         return
 
+    new_best = _extract_best_fitness(best_fitness)
+
     def _safe(arr, i):
         return arr[i] if i < len(arr) else ""
 
-    # nettoie le nom d'algo pour un usage de fichier
     safe_algo = algo_key.replace(":", "_").replace("/", "_")
     out_dir = Path(agg_outdir) / "instance_history"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # supprime les anciens fichiers pour ce groupe
     prefix = f"{problem}_{dim}_{type_instance}_"
-    for f in out_dir.glob(f"{prefix}*.csv"):
+    existing_files = list(out_dir.glob(f"{prefix}*.csv"))
+    existing_best = None
+    for f in existing_files:
+        existing_best = _existing_history_best(f)
+        if existing_best is not None:
+            break
+
+    if new_best is not None and existing_best is not None:
+        if not (new_best + 1e-12 < existing_best):
+            return
+    elif new_best is None and existing_best is not None:
+        return
+
+    for f in existing_files:
         try:
             f.unlink()
         except OSError:

@@ -4,7 +4,7 @@ defaults:
   - _self_
 
 # génériques
-device: cuda:0
+device: cpu
 seed: 0
 verbose: true
 output_dir: outputs
@@ -15,4 +15,4 @@ lambda: 20
 
 type_strategy: PPO-EDA
 visualization: true
-learning_rate_svgd: 0.2
+learning_rate_svgd: 1
