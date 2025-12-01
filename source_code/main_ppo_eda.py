@@ -28,7 +28,7 @@ np.set_printoptions(suppress=True, formatter={"float_kind": lambda x: f"{x:.6f}"
 def main(cfg: DictConfig):
 
     # Support keeping the original variable names used previously; read them from Hydra cfg
-    device = cfg.device
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     type_problem = cfg.problem.name if 'problem' in cfg and 'name' in cfg.problem else cfg.get('type_problem', 'QUBO')
     print(f"Running with problem type: {type_problem}")
     dim = cfg.problem.dim if 'problem' in cfg and 'dim' in cfg.problem else cfg.get('dim', 64)
