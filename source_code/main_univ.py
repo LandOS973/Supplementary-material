@@ -45,7 +45,7 @@ Conventions:
 """
 
 # =========================
-# 1) Defaults (comme ton config)
+# 1) Defaults 
 # =========================
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -60,19 +60,19 @@ DEFAULTS = dict(
     type_strategy="PPO-EDA",   # utilisé par la fabrique
     problem_name="QUBO",       # defaults: problem: qubo
     visualization=False,
-    learning_rate_svgd=0.1,
+    learning_rate_svgd=0.2,
 )
 
 # =========================
-# 2) Grille d’hparams (comme hydra.sweeper.params)
+# 2) Grille d’hparams 
 # =========================
 GRID = dict(
     agent=["ppo"],
-    agent_learning_rate=[0.008, 0.02, 0.012, 0.03],
+    agent_learning_rate=[0.007, 0.01, 0.02],
     agent_M=[1, 2, 4, 5],
-    agent_K_steps=[6, 8, 20, 14],
+    agent_K_steps=[8, 10, 15, 20],
     agent_delta_target=[0.0025, 0.006],
-    agent_learning_rate_svgd=[0.1, 0.2, 0.5, 1.0],
+    agent_learning_rate_svgd=[0.2, 0.5, 1.0],
     problem_dim=[64, 128, 256],
     problem_type_instance=[0, 1, 2, 3, 4, 5],
     agent_lambda=[10, 15, 20, 25],
