@@ -10,7 +10,7 @@ from eda_strategies.MultiAgentUnivariate.MultiAgentUnivariateEDA import MultiAge
 
 class FactoryStrategyEA:
 
-    def createStrategyEA(self, typeStrategy, N, lambda_, device, dim_variables, M, updateMethod, K_steps, delta_target, learning_rate, learning_rate_svgd, enable_visualization=False):
+    def createStrategyEA(self, typeStrategy, N, lambda_, device, dim_variables, M, learning_rate, learning_rate_svgd, enable_visualization=False):
         match typeStrategy:
             case "UMDA":
                 return UMDA(N, lambda_, device)
@@ -23,9 +23,6 @@ class FactoryStrategyEA:
                     dim_variables,
                     M,
                     device=device,
-                    updateMethod=updateMethod,
-                    K_steps=K_steps,
-                    delta_target=delta_target,
                     learning_rate=learning_rate,
                     learning_rate_svgd=learning_rate_svgd,
                     enable_visualization=enable_visualization,

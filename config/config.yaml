@@ -1,6 +1,6 @@
 defaults:
-  - problem: nk
-  - agent: ppo
+  - problem: qubo
+  - agent: reinforce
   - _self_
 
 # génériques
@@ -11,7 +11,5 @@ nb_instances_test: 10
 nb_restarts: 10
 budget: 10000
 lambda: 20
-
-type_strategy: PPO-EDA
 visualization: true
-learning_rate_svgd: 1
+learning_rate_svgd: 0.01

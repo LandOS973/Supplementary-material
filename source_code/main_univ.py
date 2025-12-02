@@ -67,11 +67,8 @@ DEFAULTS = dict(
 # 2) Grille d’hparams 
 # =========================
 GRID = dict(
-    agent=["ppo"],
     agent_learning_rate=[0.007, 0.01, 0.02],
     agent_M=[1, 2, 4, 5],
-    agent_K_steps=[8, 10, 15, 20],
-    agent_delta_target=[0.0025, 0.006],
     agent_learning_rate_svgd=[0.2, 0.5, 1.0],
     problem_dim=[64, 128, 256],
     problem_type_instance=[0, 1, 2, 3, 4, 5],
@@ -140,11 +137,7 @@ def main():
 
     # Filtres additionnels pour éliminer les combinaisons redondantes:
     #  - SVGD n'a pas d'effet quand M=1 ⇒ garder uniquement le pas par défaut
-    #  - Pour REINFORCE, K_steps et delta_target sont ignorés ⇒ fixer une seule
-    #    valeur représentative pour chaque paramètre.
     default_svgd = DEFAULTS.get("learning_rate_svgd", None)
-    canonical_K = GRID.get("agent_K_steps", [0])[0]
-    canonical_delta = GRID.get("agent_delta_target", [0.0])[0]
 
     filtered = []
     for cfg in combos:
@@ -152,13 +145,6 @@ def main():
         lr_svgd = float(cfg.get("agent_learning_rate_svgd", default_svgd or 0.0))
         if default_svgd is not None and m_val == 1 and abs(lr_svgd - default_svgd) > 1e-12:
             continue
-
-        agent = str(cfg.get("agent", "ppo")).strip().lower()
-        if agent == "reinforce":
-            if int(cfg.get("agent_K_steps", canonical_K)) != canonical_K:
-                continue
-            if abs(float(cfg.get("agent_delta_target", canonical_delta)) - canonical_delta) > 1e-12:
-                continue
 
         filtered.append(cfg)
 
@@ -184,27 +170,16 @@ def main():
         dim = int(cfg["problem_dim"])
         type_instance = int(cfg["problem_type_instance"])
 
-        agent = str(cfg.get("agent", "ppo")).strip().lower()
-        is_ppo = agent == "ppo"
-
         learning_rate = float(cfg["agent_learning_rate"])
         learning_rate_svgd = float(cfg.get("agent_learning_rate_svgd", DEFAULTS.get("learning_rate_svgd", 0.1)))
         M = int(cfg["agent_M"])
-        K_steps = int(cfg["agent_K_steps"]) if is_ppo else 0
-        delta_target = float(cfg["agent_delta_target"])
-        if not is_ppo:
-            delta_target = 0.0
         lambda_per_agent = (lambda_ / M) if M > 0 else float(lambda_)
         lambda_per_agent_str = f"{lambda_per_agent:.3f}".rstrip("0").rstrip(".")
 
-        updateMethod = "PPO" if is_ppo else "REINFORCE"
-
-        delta_disp = f"{cfg['agent_delta_target']:.4f}" if is_ppo else "n/a"
-        k_disp = str(K_steps) if is_ppo else "n/a"
         print(
             f"=========================================================DEBUT=======================================================================\n"
-            f"▶ Run {i}/{total} | agent={updateMethod} lr={learning_rate} K={k_disp} "
-            f"delta={delta_disp} M={M} lr_svgd={learning_rate_svgd} "
+            f"▶ Run {i}/{total} | agent=REINFORCE lr={learning_rate} "
+            f"M={M} lr_svgd={learning_rate_svgd} "
             f"lambda/M={lambda_per_agent_str} | problem={type_problem} dim={dim} t={type_instance}"
         )
 
@@ -275,9 +250,6 @@ def main():
             device,
             dim_variables,
             M,
-            updateMethod=updateMethod,
-            K_steps=K_steps,
-            delta_target=delta_target,
             learning_rate=learning_rate,
             learning_rate_svgd=learning_rate_svgd,
             enable_visualization=DEFAULTS.get("visualization", True),
@@ -337,9 +309,8 @@ def main():
 
         # Mise à jour "meilleur algo par instance" (minimisation) + stockage des moyennes
         algo_key = (
-            f"{updateMethod}:{DEFAULTS['type_strategy']}:lr{learning_rate}:K{K_steps}:"
-            f"delta{delta_target}:M{M}:"
-            f"lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
+            f"REINFORCE:{DEFAULTS['type_strategy']}:lr{learning_rate}:"
+            f"M{M}:lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
         )
         if run_history is not None:
             run_histories[(type_problem, dim, type_instance, algo_key)] = run_history

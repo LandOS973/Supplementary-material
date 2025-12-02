@@ -29,6 +29,7 @@ def main(cfg: DictConfig):
 
     # Support keeping the original variable names used previously; read them from Hydra cfg
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    print('running on device: ' + device)
     type_problem = cfg.problem.name if 'problem' in cfg and 'name' in cfg.problem else cfg.get('type_problem', 'QUBO')
     print(f"Running with problem type: {type_problem}")
     dim = cfg.problem.dim if 'problem' in cfg and 'dim' in cfg.problem else cfg.get('dim', 64)
@@ -51,20 +52,11 @@ def main(cfg: DictConfig):
             return default
 
     M = int(oget('agent.M', oget('M', 1)))
-    updateMethod = oget('agent.updateMethod', oget('updateMethod', 'REINFORCE'))
-    K_steps = int(oget('agent.K_steps', oget('K_steps', 6)))
-    delta_target = float(oget('agent.delta_target', oget('delta_target', 0.003)))
     learning_rate = float(oget('agent.learning_rate', oget('learning_rate', 0.02)))
     typeStrategy = "PPO-EDA"
 
-    print(f"Using update method: {updateMethod} Number of agents: {M} with learning_rate: {learning_rate} delta_target: {delta_target} , K_steps: {K_steps}, learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}")
-    if updateMethod == "PPO":
-        # keep values already read from config via oget; nothing to do
-        pass
-    else:
-        # ignorés pour REINFORCE
-        K_steps = 0
-        delta_target = 0.0
+    print(f"Using REINFORCE update. Number of agents: {M} with learning_rate: {learning_rate}, "
+          f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}")
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -138,9 +130,6 @@ def main(cfg: DictConfig):
         device,
         dim_variables,
         M,
-        updateMethod=updateMethod,
-        K_steps=K_steps,
-        delta_target=delta_target,
         learning_rate=learning_rate,
         learning_rate_svgd=learning_rate_svgd,
         enable_visualization=visualization_enabled,
@@ -163,6 +152,5 @@ def main(cfg: DictConfig):
 if __name__ == '__main__':
     # Run hydra main
     main()
-
 
 
