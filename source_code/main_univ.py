@@ -61,6 +61,7 @@ DEFAULTS = dict(
     problem_name="QUBO",       # defaults: problem: qubo
     visualization=False,
     agent_learning_rate_svgd=0.2,
+    svgd_rho=10.0,
 )
 
 # =========================
@@ -174,6 +175,9 @@ def main():
         learning_rate_svgd = float(
             cfg.get("agent_learning_rate_svgd", DEFAULTS.get("agent_learning_rate_svgd", 0.1))
         )
+        svgd_rho = float(
+            cfg.get("svgd_rho", DEFAULTS.get("svgd_rho", 10.0))
+        )
         M = int(cfg["agent_M"])
         lambda_per_agent = (lambda_ / M) if M > 0 else float(lambda_)
         lambda_per_agent_str = f"{lambda_per_agent:.3f}".rstrip("0").rstrip(".")
@@ -255,6 +259,7 @@ def main():
             learning_rate=learning_rate,
             learning_rate_svgd=learning_rate_svgd,
             enable_visualization=DEFAULTS.get("visualization", True),
+            svgd_rho=svgd_rho,
         ).to(device)
 
         # ---- Exécution avec chemin TEMPORAIRE (UNE barre), puis suppression immédiate ----
@@ -313,6 +318,7 @@ def main():
         algo_key = (
             f"REINFORCE:{DEFAULTS['type_strategy']}:lr{learning_rate}:"
             f"M{M}:lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
+            f":scoreDiv{svgd_rho}"
         )
         if run_history is not None:
             run_histories[(type_problem, dim, type_instance, algo_key)] = run_history

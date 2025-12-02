@@ -26,6 +26,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         learning_rate_svgd=None,
         enable_visualization=False,
         sigma=None,
+        svgd_rho=10.0,
     ):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
@@ -41,6 +42,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.learning_rate_svgd = learning_rate_svgd
         self.enable_visualization = bool(enable_visualization)
         self.dim_variables = dim_variables
+        self.svgd_rho = float(svgd_rho)
 
         # λ par agent
         self.lambda_per_agent = lambda_ // M
@@ -49,7 +51,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.agents = []
 
         # interaction SVGD (simple constant pour l'instant)
-        self.svgd = SVGD(RBF())
+        self.svgd = SVGD(RBF(), rho=self.svgd_rho)
         self.theta_history = []
 
         # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset

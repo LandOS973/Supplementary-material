@@ -52,6 +52,8 @@ def main(cfg: DictConfig):
     visualization_enabled = bool(cfg.get('visualization', True))
     lr_svgd_cfg = oget('agent.learning_rate_svgd', cfg.get('learning_rate_svgd', None))
     learning_rate_svgd = float(lr_svgd_cfg) if lr_svgd_cfg is not None else 0.5
+    rho_cfg = oget('agent.rho', cfg.get('rho', None))
+    svgd_rho = float(rho_cfg) if rho_cfg is not None else 10.0
 
     M = int(oget('agent.M', oget('M', 1)))
     lr_cfg = oget('agent.learning_rate', oget('learning_rate', None))
@@ -59,7 +61,7 @@ def main(cfg: DictConfig):
     typeStrategy = "PPO-EDA"
 
     print(f"Using REINFORCE update. Number of agents: {M} with learning_rate: {learning_rate}, "
-          f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}")
+          f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}, svgd_rho: {svgd_rho}")
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -136,6 +138,7 @@ def main(cfg: DictConfig):
         learning_rate=learning_rate,
         learning_rate_svgd=learning_rate_svgd,
         enable_visualization=visualization_enabled,
+        svgd_rho=svgd_rho,
     ).to(device)
     name_file_result = None
     if (type_problem == "QUBO"):
