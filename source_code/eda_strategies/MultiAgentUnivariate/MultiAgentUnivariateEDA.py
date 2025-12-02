@@ -25,6 +25,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         learning_rate,
         learning_rate_svgd=None,
         enable_visualization=False,
+        sigma=None,
     ):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
@@ -45,12 +46,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.lambda_per_agent = lambda_ // M
         # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
-        self.agents = [_AgentView(self, idx) for idx in range(self.M)]
+        self.agents = []
 
         # interaction SVGD (simple constant pour l'instant)
         self.svgd = SVGD(RBF())
         self.theta_history = []
-        self.last_final_snapshot = None
 
         # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
         self.theta = None
@@ -84,6 +84,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         init_sigma = 1e-2
         init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
         self.theta = nn.Parameter(init_theta)
+        self._refresh_agent_views()
 
         # Baseline en version (B, M)
         self.baseline.resize_(nb_instances, self.M).zero_()
@@ -93,8 +94,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # Historique de visualisation
         self.theta_history = []
-        self.last_final_snapshot = None
         self.last_theta_grad = None
+        if self.enable_visualization:
+            self._record_theta()
 
     def sample_solutions(self):
         """
@@ -124,25 +126,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         """
         # RL update (vectorisé sur (B, M))
         total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
-
-        # Visualisation des proba avant / après SVGD (optionnel)
-        if self.enable_visualization:
-            rl_snapshot = self._capture_prob_snapshot()
-            prev_snapshot = (
-                self.last_final_snapshot if self.last_final_snapshot is not None else rl_snapshot
-            )
-        else:
-            rl_snapshot = None
-            prev_snapshot = None
-
         # SVGD entre agents 
         self._apply_svgd()
-
         if self.enable_visualization:
-            final_snapshot = self._capture_prob_snapshot()
-            self._record_theta_snapshot(prev_snapshot, rl_snapshot, final_snapshot)
-            self.last_final_snapshot = final_snapshot
-
+            self._record_theta()
         return total_loss
 
     # =======================
@@ -218,31 +205,21 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     #   Visualisation
     # =======================
 
-    def _capture_prob_snapshot(self):
+    def _record_theta(self):
         if self.theta is None or self.nb_instances <= 0:
             return []
         with torch.no_grad():
-            probs = torch.sigmoid(self.theta).detach().cpu()  # (B, M, N)
-        return [probs[:, m, :] for m in range(self.M)] # liste de (B, N) par agent
-
-    def _record_theta_snapshot(self, prev_snapshot, rl_snapshot, final_snapshot):
-        if not rl_snapshot or not final_snapshot or not prev_snapshot:
+            probs = torch.sigmoid(self.theta).detach() # (B, M, N)
+        probs_final = [probs[:, m, :] for m in range(self.M)] # liste de (B, N) par agent
+        if not probs_final:
             return
-        entry = {"prev": prev_snapshot, "rl": rl_snapshot, "final": final_snapshot}
-        self.theta_history.append(entry)
-
+        self.theta_history.append(probs_final)
+    
     def get_theta_history(self):
         return {"values": self.theta_history}
 
-
-class _AgentView:
-    """Lightweight view to expose per-agent theta for existing monitoring utilities."""
-
-    def __init__(self, parent, agent_idx: int):
-        self._parent = parent
-        self._idx = agent_idx
-
-    @property
-    def theta(self):
-        # returns a view with shape (B, N)
-        return self._parent.theta[:, self._idx, :]
+    def _refresh_agent_views(self):
+        if self.theta is None:
+            self.agents = []
+            return
+        self.agents = [self.theta[:, idx, :] for idx in range(self.M)]

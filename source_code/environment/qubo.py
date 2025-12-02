@@ -208,7 +208,7 @@ def get_Score_trajectoriesQUBO_cuda(
         print("Per-agent summary:")
         for idx, agent in enumerate(strategy.agents):
             avg_best = -torch.mean(agent_best_overall[idx]).item()
-            theta_mean = torch.mean(agent.theta).item()
+            theta_mean = torch.mean(_agent_theta_tensor(agent)).item()
             print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
 
     if enable_visualization:
@@ -290,6 +290,10 @@ def getTensorInstances_QUBO(path, nb_instances, nb_restarts,  N, t, device, phas
     return tensor_Q
 
 
+def _agent_theta_tensor(agent):
+    return agent.theta if hasattr(agent, "theta") else agent
+
+
 def _compute_average_kl(agents):
     if agents is None or len(agents) < 2:
         return 0.0
@@ -298,7 +302,7 @@ def _compute_average_kl(agents):
     total_pairwise_kl = 0.0
     comparisons = 0
     with torch.no_grad():
-        agent_probs = [torch.sigmoid(agent.theta).detach() for agent in agents]
+        agent_probs = [torch.sigmoid(_agent_theta_tensor(agent)).detach() for agent in agents]
 
     for i in range(len(agent_probs)):
         for j in range(i + 1, len(agent_probs)):

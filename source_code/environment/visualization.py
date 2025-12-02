@@ -158,11 +158,11 @@ def _build_theta_panel(container, root_window, history):
         return
 
     first_entry = values[0]
-    num_agents = len(first_entry.get("final", []))
+    num_agents = len(first_entry)
     if num_agents == 0:
         return
 
-    sample = first_entry["final"][0]
+    sample = first_entry[0]
     num_instances = sample.shape[0]
     num_dims = sample.shape[1]
 
@@ -235,7 +235,7 @@ def _build_theta_panel(container, root_window, history):
 
         for axis_idx, (scatter, agent_idx) in enumerate(zip(scatters, agent_indices)):
             entry = values[epoch_idx]
-            final_probs = entry["final"][agent_idx]
+            final_probs = entry[agent_idx]
 
             x = float(final_probs[inst_idx, dx].item())
             y = float(final_probs[inst_idx, dy].item())
@@ -243,8 +243,9 @@ def _build_theta_panel(container, root_window, history):
             scatter.set_label(f"Agent {agent_idx}")
         status_var.set(f"Epoch {epoch_idx + 1}/{len(values)}")
         if agent_indices[0] != agent_indices[1]:
-            p = values[epoch_idx]["final"][agent_indices[0]][inst_idx]
-            q = values[epoch_idx]["final"][agent_indices[1]][inst_idx]
+            entry = values[epoch_idx]
+            p = entry[agent_indices[0]][inst_idx]
+            q = entry[agent_indices[1]][inst_idx]
             kl_val = _sym_kl(p, q).item()
             kl_var.set(f"Instance KL (Agent {agent_indices[0]} vs {agent_indices[1]}): {kl_val:.4f}")
         else:
