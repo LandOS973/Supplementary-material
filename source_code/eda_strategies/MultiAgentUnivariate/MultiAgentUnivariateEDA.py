@@ -4,6 +4,7 @@ import torch.nn as nn
 from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
 from eda_strategies.MultiAgentUnivariate.SVGD.rbf import RBF
+from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
 
 class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
@@ -27,6 +28,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         enable_visualization=False,
         sigma=None,
         svgd_rho=10.0,
+        advantage_cfg=None,
     ):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
@@ -43,6 +45,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.enable_visualization = bool(enable_visualization)
         self.dim_variables = dim_variables
         self.svgd_rho = float(svgd_rho)
+        self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
 
         # λ par agent
         self.lambda_per_agent = lambda_ // M
@@ -161,7 +164,13 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         )  # (BM, λa, N)
 
         log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
-        advantages = fitness - baseline.unsqueeze(1)  # (BM, λa)
+        advantages = self.advantage_strategy.compute(
+            fitness=fitness,
+            baseline=baseline,
+            theta=theta,
+            actions=actions,
+            probs=all_Pi_Theta_expanded,
+        )  # (BM, λa)
 
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
         loss = -loss_per_instance.sum()

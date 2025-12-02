@@ -38,26 +38,23 @@ def main(cfg: DictConfig):
     nb_restarts = int(cfg.nb_restarts)
     nb_instances_test = int(cfg.nb_instances_test)
     seed = int(cfg.seed)
-    # safe getter for possibly nested agent configs (cfg.agent can be a string when only the group name is set)
-    def oget(path, default=None):
+    def agent_val(key):
         try:
-            val = OmegaConf.select(cfg, path)
-            return val if val is not None else default
+            return OmegaConf.select(cfg, f"agent.{key}")
         except Exception:
-            return default
-    lambda_cfg = oget('agent.lambda', cfg.get('lambda', cfg.get('lambda_', None)))
-    lambda_ = int(lambda_cfg) if lambda_cfg is not None else 10
-    verbose = bool(cfg.verbose)
-    budget = int(cfg.budget)
+            return None
+
+    lambda_ = int(agent_val("lambda") or cfg.get('lambda') or cfg.get('lambda_') or 10)
+    verbose = bool(cfg.get('verbose', True))
+    budget = int(cfg.get('budget', 10000))
     visualization_enabled = bool(cfg.get('visualization', True))
-    lr_svgd_cfg = oget('agent.learning_rate_svgd', cfg.get('learning_rate_svgd', None))
-    learning_rate_svgd = float(lr_svgd_cfg) if lr_svgd_cfg is not None else 0.5
-    rho_cfg = oget('agent.rho', cfg.get('rho', None))
-    svgd_rho = float(rho_cfg) if rho_cfg is not None else 10.0
-    advantage_cfg = oget('agent.advantage', cfg.get('advantage', None))
-    M = int(oget('agent.M', oget('M', 1)))
-    lr_cfg = oget('agent.learning_rate', oget('learning_rate', None))
-    learning_rate = float(lr_cfg) if lr_cfg is not None else 0.0
+    learning_rate_svgd = float(agent_val("learning_rate_svgd") or cfg.get('learning_rate_svgd') or 0.5)
+    svgd_rho = float(agent_val("rho") or cfg.get('rho') or 10.0)
+    advantage_cfg = agent_val("advantage") or cfg.get('advantage') or "baseline"
+    if isinstance(advantage_cfg, DictConfig):
+        advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
+    M = int(agent_val("M") or cfg.get('M') or 1)
+    learning_rate = float(agent_val("learning_rate") or cfg.get('learning_rate') or 0.0)
     typeStrategy = "PPO-EDA"
     print(f"Using REINFORCE update. Number of agents: {M} with learning_rate: {learning_rate}, "
           f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}, svgd_rho: {svgd_rho}, "

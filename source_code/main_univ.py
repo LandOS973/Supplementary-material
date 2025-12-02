@@ -62,6 +62,7 @@ DEFAULTS = dict(
     visualization=False,
     agent_learning_rate_svgd=0.2,
     svgd_rho=10.0,
+    advantage="baseline",
 )
 
 # =========================
@@ -178,6 +179,7 @@ def main():
         svgd_rho = float(
             cfg.get("svgd_rho", DEFAULTS.get("svgd_rho", 10.0))
         )
+        advantage_cfg = cfg.get("advantage", DEFAULTS.get("advantage", "baseline"))
         M = int(cfg["agent_M"])
         lambda_per_agent = (lambda_ / M) if M > 0 else float(lambda_)
         lambda_per_agent_str = f"{lambda_per_agent:.3f}".rstrip("0").rstrip(".")
@@ -260,6 +262,7 @@ def main():
             learning_rate_svgd=learning_rate_svgd,
             enable_visualization=DEFAULTS.get("visualization", True),
             svgd_rho=svgd_rho,
+            advantage_cfg=advantage_cfg,
         ).to(device)
 
         # ---- Exécution avec chemin TEMPORAIRE (UNE barre), puis suppression immédiate ----
@@ -315,10 +318,16 @@ def main():
         by_instance = flat_or_matrix_to_instances(list_scores, nb_instances_test, nb_restarts)
 
         # Mise à jour "meilleur algo par instance" (minimisation) + stockage des moyennes
+        if isinstance(advantage_cfg, str):
+            advantage_type = advantage_cfg
+        elif isinstance(advantage_cfg, dict):
+            advantage_type = advantage_cfg.get("type", "baseline")
+        else:
+            advantage_type = "baseline"
         algo_key = (
             f"REINFORCE:{DEFAULTS['type_strategy']}:lr{learning_rate}:"
             f"M{M}:lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
-            f":scoreDiv{svgd_rho}"
+            f":scoreDiv{svgd_rho}:advantage{advantage_type}"
         )
         if run_history is not None:
             run_histories[(type_problem, dim, type_instance, algo_key)] = run_history
