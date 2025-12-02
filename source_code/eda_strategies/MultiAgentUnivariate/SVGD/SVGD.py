@@ -63,5 +63,5 @@ class SVGD:
         )
 
         # Average over M particles
-        phi = (score_term + grad_term) / M  # (B, M, N)
+        phi = (score_term/10 + grad_term) / M  # (B, M, N)
         return phi

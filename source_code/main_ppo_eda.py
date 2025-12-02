@@ -38,11 +38,6 @@ def main(cfg: DictConfig):
     nb_restarts = int(cfg.nb_restarts)
     nb_instances_test = int(cfg.nb_instances_test)
     seed = int(cfg.seed)
-    lambda_ = int(cfg.get('lambda', cfg.get('lambda_', 10)))
-    verbose = bool(cfg.verbose)
-    budget = int(cfg.budget)
-    visualization_enabled = bool(cfg.get('visualization', True))
-    learning_rate_svgd = float(cfg.get('learning_rate_svgd', 0.5))
     # safe getter for possibly nested agent configs (cfg.agent can be a string when only the group name is set)
     def oget(path, default=None):
         try:
@@ -50,9 +45,17 @@ def main(cfg: DictConfig):
             return val if val is not None else default
         except Exception:
             return default
+    lambda_cfg = oget('agent.lambda', cfg.get('lambda', cfg.get('lambda_', None)))
+    lambda_ = int(lambda_cfg) if lambda_cfg is not None else 10
+    verbose = bool(cfg.verbose)
+    budget = int(cfg.budget)
+    visualization_enabled = bool(cfg.get('visualization', True))
+    lr_svgd_cfg = oget('agent.learning_rate_svgd', cfg.get('learning_rate_svgd', None))
+    learning_rate_svgd = float(lr_svgd_cfg) if lr_svgd_cfg is not None else 0.5
 
     M = int(oget('agent.M', oget('M', 1)))
-    learning_rate = float(oget('agent.learning_rate', oget('learning_rate', 0.02)))
+    lr_cfg = oget('agent.learning_rate', oget('learning_rate', None))
+    learning_rate = float(lr_cfg) if lr_cfg is not None else 0.0
     typeStrategy = "PPO-EDA"
 
     print(f"Using REINFORCE update. Number of agents: {M} with learning_rate: {learning_rate}, "
@@ -152,5 +155,3 @@ def main(cfg: DictConfig):
 if __name__ == '__main__':
     # Run hydra main
     main()
-
-

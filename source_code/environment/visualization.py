@@ -180,29 +180,6 @@ def _build_theta_panel(container, root_window, history):
         ax.scatter([], [], color="tab:blue", label="Agent A"),
         ax.scatter([], [], color="tab:orange", label="Agent B"),
     ]
-    rl_arrows = [None, None]
-    svgd_arrows = [None, None]
-
-    def _set_arrow(store, idx, start, end, color):
-        if store[idx] is not None:
-            store[idx].remove()
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
-            store[idx] = None
-            return
-        arrow = ax.arrow(
-            start[0],
-            start[1],
-            dx,
-            dy,
-            color=color,
-            head_width=0.02,
-            head_length=0.02,
-            length_includes_head=True,
-            alpha=0.9,
-        )
-        store[idx] = arrow
 
     fig.tight_layout()
     canvas = FigureCanvasTkAgg(fig, master=panel)
@@ -213,25 +190,28 @@ def _build_theta_panel(container, root_window, history):
     controls.pack(fill="x", padx=10, pady=6)
 
     epoch_var = tk.IntVar(value=0)
-    agent_a_var = tk.IntVar(value=0)
-    agent_b_var = tk.IntVar(value=min(1, num_agents - 1))
+    agent_a_var = tk.StringVar(value="0")
+    agent_b_var = tk.StringVar(value=str(min(1, num_agents - 1)))
     instance_var = tk.IntVar(value=0)
     dim_x_var = tk.IntVar(value=0)
     dim_y_var = tk.IntVar(value=1 if num_dims > 1 else 0)
 
     def clamp(var, upper):
-        val = max(0, min(upper, var.get()))
-        var.set(val)
+        try:
+            val = int(var.get())
+        except (tk.TclError, ValueError):
+            val = 0
+        val = max(0, min(upper, val))
+        if isinstance(var, tk.StringVar):
+            var.set(str(val))
+        else:
+            var.set(val)
         return val
 
     status_var = tk.StringVar()
     tk.Label(panel, textvariable=status_var).pack(pady=2)
     kl_var = tk.StringVar()
     tk.Label(panel, textvariable=kl_var).pack(pady=2)
-    legend = tk.Frame(panel)
-    legend.pack(pady=2)
-    tk.Label(legend, text="RL step", fg="red").pack(side="left", padx=6)
-    tk.Label(legend, text="SVGD step", fg="green").pack(side="left", padx=6)
 
     def _sym_kl(p, q):
         eps = 1e-8
@@ -256,26 +236,11 @@ def _build_theta_panel(container, root_window, history):
         for axis_idx, (scatter, agent_idx) in enumerate(zip(scatters, agent_indices)):
             entry = values[epoch_idx]
             final_probs = entry["final"][agent_idx]
-            rl_probs = entry["rl"][agent_idx]
-            prev_final = entry["prev"][agent_idx]
 
             x = float(final_probs[inst_idx, dx].item())
             y = float(final_probs[inst_idx, dy].item())
             scatter.set_offsets([[x, y]])
             scatter.set_label(f"Agent {agent_idx}")
-
-            start_rl = (
-                float(prev_final[inst_idx, dx].item()),
-                float(prev_final[inst_idx, dy].item()),
-            )
-            end_rl = (
-                float(rl_probs[inst_idx, dx].item()),
-                float(rl_probs[inst_idx, dy].item()),
-            )
-            start_svgd = end_rl
-            end_svgd = (x, y)
-            _set_arrow(rl_arrows, axis_idx, start_rl, end_rl, "red")
-            _set_arrow(svgd_arrows, axis_idx, start_svgd, end_svgd, "green")
         status_var.set(f"Epoch {epoch_idx + 1}/{len(values)}")
         if agent_indices[0] != agent_indices[1]:
             p = values[epoch_idx]["final"][agent_indices[0]][inst_idx]

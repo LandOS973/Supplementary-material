@@ -56,11 +56,11 @@ DEFAULTS = dict(
     nb_instances_test=10,
     nb_restarts=10,
     budget=10000,
-    lambda_=10,
+    agent_lambda=10,
     type_strategy="PPO-EDA",   # utilisé par la fabrique
     problem_name="QUBO",       # defaults: problem: qubo
     visualization=False,
-    learning_rate_svgd=0.2,
+    agent_learning_rate_svgd=0.2,
 )
 
 # =========================
@@ -137,7 +137,7 @@ def main():
 
     # Filtres additionnels pour éliminer les combinaisons redondantes:
     #  - SVGD n'a pas d'effet quand M=1 ⇒ garder uniquement le pas par défaut
-    default_svgd = DEFAULTS.get("learning_rate_svgd", None)
+    default_svgd = DEFAULTS.get("agent_learning_rate_svgd", None)
 
     filtered = []
     for cfg in combos:
@@ -163,7 +163,7 @@ def main():
         nb_instances_test = DEFAULTS["nb_instances_test"]
         nb_restarts = DEFAULTS["nb_restarts"]
         budget = DEFAULTS["budget"]
-        lambda_ = int(cfg.get("agent_lambda", DEFAULTS["lambda_"]))
+        lambda_ = int(cfg.get("agent_lambda", DEFAULTS["agent_lambda"]))
         typeStrategy = DEFAULTS["type_strategy"]
         type_problem = DEFAULTS["problem_name"]
 
@@ -171,7 +171,9 @@ def main():
         type_instance = int(cfg["problem_type_instance"])
 
         learning_rate = float(cfg["agent_learning_rate"])
-        learning_rate_svgd = float(cfg.get("agent_learning_rate_svgd", DEFAULTS.get("learning_rate_svgd", 0.1)))
+        learning_rate_svgd = float(
+            cfg.get("agent_learning_rate_svgd", DEFAULTS.get("agent_learning_rate_svgd", 0.1))
+        )
         M = int(cfg["agent_M"])
         lambda_per_agent = (lambda_ / M) if M > 0 else float(lambda_)
         lambda_per_agent_str = f"{lambda_per_agent:.3f}".rstrip("0").rstrip(".")

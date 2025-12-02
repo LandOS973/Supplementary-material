@@ -81,9 +81,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.nb_instances = nb_instances
 
         # theta : (B, M, N)
-        self.theta = nn.Parameter(
-            torch.zeros((nb_instances, self.M, self.N), device=self.device)
-        )
+        init_sigma = 1e-2
+        init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
+        self.theta = nn.Parameter(init_theta)
 
         # Baseline en version (B, M)
         self.baseline.resize_(nb_instances, self.M).zero_()

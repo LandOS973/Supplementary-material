@@ -1,10 +1,5 @@
 name: REINFORCE-EDA
 updateMethod: REINFORCE
 M: 4
-learning_rate: 0.02
-beta: 1.0
-
-K_steps: 0
-Beta_adapt: false
-
-delta_target: 0.003
+lambda: 20
+learning_rate_svgd: 1.0
