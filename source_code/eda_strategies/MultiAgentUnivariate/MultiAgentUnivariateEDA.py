@@ -27,7 +27,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         learning_rate_svgd=None,
         enable_visualization=False,
         sigma=None,
-        svgd_rho=10.0,
+        svgd_alpha=10.0,
         advantage_cfg=None,
     ):
         Abstract_EDA.__init__(self, N, lambda_, device)
@@ -44,7 +44,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.learning_rate_svgd = learning_rate_svgd
         self.enable_visualization = bool(enable_visualization)
         self.dim_variables = dim_variables
-        self.svgd_rho = float(svgd_rho)
+        self.svgd_alpha = float(svgd_alpha)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
 
         # λ par agent
@@ -54,7 +54,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.agents = []
 
         # interaction SVGD (simple constant pour l'instant)
-        self.svgd = SVGD(RBF(), rho=self.svgd_rho)
+        self.svgd = SVGD(RBF(), alpha=self.svgd_alpha)
         self.theta_history = []
 
         # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
@@ -170,6 +170,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             theta=theta,
             actions=actions,
             probs=all_Pi_Theta_expanded,
+            nb_instances=B,
+            num_agents=M,
         )  # (BM, λa)
 
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
@@ -177,13 +179,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        #self.optimizer.step()
 
         if self.theta.grad is None:
             self.last_theta_grad = torch.zeros_like(self.theta)
         else:
             self.last_theta_grad = self.theta.grad.detach().clone()
-
         with torch.no_grad():
             baseline_new = fitness.mean(dim=1)  # (BM,)
             self.baseline = baseline_new.view(B, M)
