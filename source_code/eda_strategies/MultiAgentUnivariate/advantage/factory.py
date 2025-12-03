@@ -2,13 +2,14 @@ from typing import Any, Dict, Type
 
 from .base import AdvantageStrategy
 from .baseline import BaselineAdvantage
-from .rank_weighted import RankBaseWeightedAdvantage
+from .rank_weighted import GlobalRankWeightedAdvantage
 
 
 class AdvantageFactory:
     _REGISTRY: Dict[str, Type[AdvantageStrategy]] = {
         "baseline": BaselineAdvantage,
-        "rankbaseweighted": RankBaseWeightedAdvantage,
+        "globalrankweighted": GlobalRankWeightedAdvantage,
+        "rankbaseweighted": GlobalRankWeightedAdvantage,  # rétrocompatibilité
     }
 
     @classmethod

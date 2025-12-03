@@ -176,9 +176,10 @@ def _build_theta_panel(container, root_window, history):
     ax.set_xlabel("sigmoid(theta[dim X])")
     ax.set_ylabel("sigmoid(theta[dim Y])")
 
+    cmap = plt.cm.get_cmap("tab20", max(num_agents, 1))
     scatters = [
-        ax.scatter([], [], color="tab:blue", label="Agent A"),
-        ax.scatter([], [], color="tab:orange", label="Agent B"),
+        ax.scatter([], [], color=cmap(agent_idx), label=f"Agent {agent_idx}")
+        for agent_idx in range(num_agents)
     ]
 
     fig.tight_layout()
@@ -190,8 +191,6 @@ def _build_theta_panel(container, root_window, history):
     controls.pack(fill="x", padx=10, pady=6)
 
     epoch_var = tk.IntVar(value=0)
-    agent_a_var = tk.StringVar(value="0")
-    agent_b_var = tk.StringVar(value=str(min(1, num_agents - 1)))
     instance_var = tk.IntVar(value=0)
     dim_x_var = tk.IntVar(value=0)
     dim_y_var = tk.IntVar(value=1 if num_dims > 1 else 0)
@@ -210,47 +209,23 @@ def _build_theta_panel(container, root_window, history):
 
     status_var = tk.StringVar()
     tk.Label(panel, textvariable=status_var).pack(pady=2)
-    kl_var = tk.StringVar()
-    tk.Label(panel, textvariable=kl_var).pack(pady=2)
-
-    def _sym_kl(p, q):
-        eps = 1e-8
-        p = torch.clamp(p, eps, 1 - eps)
-        q = torch.clamp(q, eps, 1 - eps)
-        kl_pq = p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
-        kl_qp = q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p))
-        return 0.5 * (kl_pq.mean() + kl_qp.mean())
 
     def update_plot(*_):
         epoch_idx = clamp(epoch_var, len(values) - 1)
         inst_idx = clamp(instance_var, num_instances - 1)
         dx = clamp(dim_x_var, num_dims - 1)
         dy = clamp(dim_y_var, num_dims - 1)
-        agent_indices = [
-            clamp(agent_a_var, num_agents - 1),
-            clamp(agent_b_var, num_agents - 1),
-        ]
 
         ax.set_title(f"Instance {inst_idx} – dims ({dx},{dy})")
 
-        for axis_idx, (scatter, agent_idx) in enumerate(zip(scatters, agent_indices)):
-            entry = values[epoch_idx]
+        entry = values[epoch_idx]
+        for agent_idx, scatter in enumerate(scatters):
             final_probs = entry[agent_idx]
-
             x = float(final_probs[inst_idx, dx].item())
             y = float(final_probs[inst_idx, dy].item())
             scatter.set_offsets([[x, y]])
-            scatter.set_label(f"Agent {agent_idx}")
-        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)}")
-        if agent_indices[0] != agent_indices[1]:
-            entry = values[epoch_idx]
-            p = entry[agent_indices[0]][inst_idx]
-            q = entry[agent_indices[1]][inst_idx]
-            kl_val = _sym_kl(p, q).item()
-            kl_var.set(f"Instance KL (Agent {agent_indices[0]} vs {agent_indices[1]}): {kl_val:.4f}")
-        else:
-            kl_var.set("Instance KL: n/a (same agent)")
-        ax.legend(loc="upper right")
+        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)} – Instance {inst_idx}")
+        ax.legend(loc="upper right", ncol=2 if num_agents > 6 else 1, fontsize="small")
         canvas.draw_idle()
 
     def labeled_spinbox(parent, text, var, upper, width=5):
@@ -268,15 +243,6 @@ def _build_theta_panel(container, root_window, history):
         spin.pack()
         var.trace_add("write", lambda *args: update_plot())
         return spin
-
-    tk.Label(controls, text="Agent A").pack(side="left", padx=4)
-    agent_options = [str(i) for i in range(num_agents)]
-    agent_menu_a = tk.OptionMenu(controls, agent_a_var, *agent_options, command=lambda *_: update_plot())
-    agent_menu_a.pack(side="left", padx=4)
-
-    tk.Label(controls, text="Agent B").pack(side="left", padx=4)
-    agent_menu_b = tk.OptionMenu(controls, agent_b_var, *agent_options, command=lambda *_: update_plot())
-    agent_menu_b.pack(side="left", padx=4)
 
     labeled_spinbox(controls, "Instance", instance_var, num_instances - 1)
     labeled_spinbox(controls, "Dim X", dim_x_var, num_dims - 1)

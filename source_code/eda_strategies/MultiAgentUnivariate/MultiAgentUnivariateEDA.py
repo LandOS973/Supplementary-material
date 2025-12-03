@@ -95,7 +95,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.baseline.resize_(nb_instances, self.M).zero_()
 
         # Optimizer REINFORCE
-        self.optimizer = torch.optim.SGD([self.theta], lr=self.learning_rate)
+        self.optimizer = torch.optim.SGD([self.theta], lr=0.02)
 
         # Historique de visualisation
         self.theta_history = []

@@ -1,7 +1,7 @@
 name: REINFORCE-EDA
 updateMethod: REINFORCE
-M: 4
+M: 2
 lambda: 20
-learning_rate_svgd: 0.2
-rho: 5
-advantage: baseline
+learning_rate_svgd: 0.8
+alpha: 10
+advantage: globalrankweighted

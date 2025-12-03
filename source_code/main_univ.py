@@ -61,7 +61,7 @@ DEFAULTS = dict(
     problem_name="QUBO",       # defaults: problem: qubo
     visualization=False,
     agent_learning_rate_svgd=0.2,
-    svgd_rho=10.0,
+    svgd_alpha=10.0,
     advantage="baseline",
 )
 
@@ -176,8 +176,8 @@ def main():
         learning_rate_svgd = float(
             cfg.get("agent_learning_rate_svgd", DEFAULTS.get("agent_learning_rate_svgd", 0.1))
         )
-        svgd_rho = float(
-            cfg.get("svgd_rho", DEFAULTS.get("svgd_rho", 10.0))
+        svgd_alpha = float(
+            cfg.get("svgd_alpha", DEFAULTS.get("svgd_alpha", 10.0))
         )
         advantage_cfg = cfg.get("advantage", DEFAULTS.get("advantage", "baseline"))
         M = int(cfg["agent_M"])
@@ -261,7 +261,7 @@ def main():
             learning_rate=learning_rate,
             learning_rate_svgd=learning_rate_svgd,
             enable_visualization=DEFAULTS.get("visualization", True),
-            svgd_rho=svgd_rho,
+            svgd_alpha=svgd_alpha,
             advantage_cfg=advantage_cfg,
         ).to(device)
 
@@ -327,7 +327,7 @@ def main():
         algo_key = (
             f"REINFORCE:{DEFAULTS['type_strategy']}:lr{learning_rate}:"
             f"M{M}:lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
-            f":scoreDiv{svgd_rho}:advantage{advantage_type}"
+            f":scoreDiv{svgd_alpha}:advantage{advantage_type}"
         )
         if run_history is not None:
             run_histories[(type_problem, dim, type_instance, algo_key)] = run_history

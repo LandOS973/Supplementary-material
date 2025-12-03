@@ -268,14 +268,24 @@ def get_Score_trajectoriesNK_cuda(
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
             leader_idx = torch.argmax(agent_mean_scores).item()
 
-            pairwise_distances = []
-            for i in range(len(agent_best_solutions)):
-                for j in range(i + 1, len(agent_best_solutions)):
+            pairwise_distances = {}
+            num_agents_active = len(agent_best_solutions)
+            for i in range(num_agents_active):
+                for j in range(i + 1, num_agents_active):
                     dist = torch.abs(agent_best_solutions[i] - agent_best_solutions[j]).sum(dim=1).float()
-                    pairwise_distances.append(dist)
+                    pairwise_distances[(i, j)] = dist
+
             if pairwise_distances:
-                stacked = torch.stack(pairwise_distances, dim=0)
-                avg_hamming = torch.mean(stacked).item()
+                pairwise_means = {pair: d.mean().item() for pair, d in pairwise_distances.items()}
+                per_agent_means = []
+                for agent_idx in range(num_agents_active):
+                    related = [val for pair, val in pairwise_means.items() if agent_idx in pair]
+                    if related:
+                        per_agent_means.append(sum(related) / len(related))
+                if per_agent_means:
+                    avg_hamming = sum(per_agent_means) / len(per_agent_means)
+                else:
+                    avg_hamming = 0.0
             else:
                 avg_hamming = 0.0
 

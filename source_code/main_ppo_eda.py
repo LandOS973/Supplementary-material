@@ -1,18 +1,10 @@
 import numpy as np
-import argparse
 import hydra
 from omegaconf import DictConfig, OmegaConf
-import datetime
 import torch
 import os
 import random
-from random import sample
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
-from eda_strategies.PBIL import PBIL
-from eda_strategies.UMDA import UMDA
-from time import time
-from utils.walsh_expansion import WalshExpansion
-from tqdm import tqdm
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 
@@ -49,7 +41,7 @@ def main(cfg: DictConfig):
     budget = int(cfg.get('budget', 10000))
     visualization_enabled = bool(cfg.get('visualization', True))
     learning_rate_svgd = float(agent_val("learning_rate_svgd") or cfg.get('learning_rate_svgd') or 0.5)
-    svgd_rho = float(agent_val("rho") or cfg.get('rho') or 10.0)
+    svgd_alpha = float(agent_val("alpha") or cfg.get('alpha') or 10.0)
     advantage_cfg = agent_val("advantage") or cfg.get('advantage') or "baseline"
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
@@ -57,7 +49,7 @@ def main(cfg: DictConfig):
     learning_rate = float(agent_val("learning_rate") or cfg.get('learning_rate') or 0.0)
     typeStrategy = "PPO-EDA"
     print(f"Using REINFORCE update. Number of agents: {M} with learning_rate: {learning_rate}, "
-          f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}, svgd_rho: {svgd_rho}, "
+          f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}, svgd_alpha: {svgd_alpha}, "
           f"advantage={advantage_cfg}")
 
     torch.manual_seed(seed)
@@ -135,7 +127,7 @@ def main(cfg: DictConfig):
         learning_rate=learning_rate,
         learning_rate_svgd=learning_rate_svgd,
         enable_visualization=visualization_enabled,
-        svgd_rho=svgd_rho,
+        svgd_alpha=svgd_alpha,
         advantage_cfg=advantage_cfg,
     ).to(device)
     name_file_result = None

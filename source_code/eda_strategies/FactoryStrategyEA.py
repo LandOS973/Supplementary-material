@@ -21,7 +21,7 @@ class FactoryStrategyEA:
         learning_rate,
         learning_rate_svgd,
         enable_visualization=False,
-        svgd_rho=10.0,
+        svgd_alpha=10.0,
         advantage_cfg=None,
     ):
         match typeStrategy:
@@ -39,7 +39,7 @@ class FactoryStrategyEA:
                     learning_rate=learning_rate,
                     learning_rate_svgd=learning_rate_svgd,
                     enable_visualization=enable_visualization,
-                    svgd_rho=svgd_rho,
+                    svgd_alpha=svgd_alpha,
                     advantage_cfg=advantage_cfg,
                 )
             case _:

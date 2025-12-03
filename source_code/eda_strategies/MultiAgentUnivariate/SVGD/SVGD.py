@@ -2,11 +2,11 @@ import torch
 
 
 class SVGD:
-    def __init__(self, kernel, rho=10.0):
+    def __init__(self, kernel, alpha=10.0):
         self.kernel = kernel  # ex: RBF()
-        if rho == 0:
-            raise ValueError("rho must be non-zero.")
-        self.rho = float(rho)
+        if alpha == 0:
+            raise ValueError("alpha must be non-zero.")
+        self.alpha = float(alpha)
 
     def phi(self, theta, score):
         """
@@ -66,5 +66,5 @@ class SVGD:
         )
 
         # Average over M particles
-        phi = (score_term / self.rho + grad_term) / M  # (B, M, N)
+        phi = (score_term / self.alpha + grad_term) / M  # (B, M, N)
         return phi
