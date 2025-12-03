@@ -29,3 +29,32 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
         sorted_indices = torch.argsort(per_instance, dim=1, descending=True)
         ranked = torch.empty_like(per_instance).scatter_(1, sorted_indices, weights)
         return ranked.view(BM, lambda_per_agent)
+
+
+class PerAgentRankWeightedAdvantage(AdvantageStrategy):
+    """Classement pondéré indépendant par agent."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.start_weight = float(100)
+        self.end_weight = float(-100)
+
+    def compute(self, fitness, nb_instances=None, num_agents=None, **context):
+        nb_instances = nb_instances or context.get("nb_instances")
+        num_agents = num_agents or context.get("num_agents")
+        nb_instances = int(nb_instances)
+        num_agents = int(num_agents)
+        BM, lambda_per_agent = fitness.shape
+
+        reshaped = fitness.view(nb_instances, num_agents, lambda_per_agent)
+        weight_vector = torch.linspace(
+            self.start_weight,
+            self.end_weight,
+            steps=lambda_per_agent,
+            device=fitness.device,
+            dtype=fitness.dtype,
+        ).view(1, 1, -1)
+        weights = weight_vector.expand_as(reshaped)
+        sorted_indices = torch.argsort(reshaped, dim=2, descending=True)
+        ranked = torch.empty_like(reshaped).scatter_(2, sorted_indices, weights)
+        return ranked.view(BM, lambda_per_agent)

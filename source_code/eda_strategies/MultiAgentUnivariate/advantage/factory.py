@@ -2,7 +2,7 @@ from typing import Any, Dict, Type
 
 from .base import AdvantageStrategy
 from .baseline import BaselineAdvantage
-from .rank_weighted import GlobalRankWeightedAdvantage
+from .rank_weighted import GlobalRankWeightedAdvantage, PerAgentRankWeightedAdvantage
 
 
 class AdvantageFactory:
@@ -10,6 +10,7 @@ class AdvantageFactory:
         "baseline": BaselineAdvantage,
         "globalrankweighted": GlobalRankWeightedAdvantage,
         "rankbaseweighted": GlobalRankWeightedAdvantage,  # rétrocompatibilité
+        "peragentrankweighted": PerAgentRankWeightedAdvantage,
     }
 
     @classmethod

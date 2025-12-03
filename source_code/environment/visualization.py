@@ -107,7 +107,7 @@ def render_svgd_field_plot(snapshot):
         root.title("SVGD Field Snapshot")
         fig, axes = plt.subplots(1, num_instances, figsize=(5 * num_instances, 5), squeeze=False)
         axes = axes.flatten()
-        colors = plt.cm.get_cmap("tab10", num_agents)
+        colors = plt.cm.get_cmap("tab11", num_agents)
 
         for inst_idx in range(num_instances):
             ax = axes[inst_idx]

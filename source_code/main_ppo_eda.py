@@ -48,7 +48,7 @@ def main(cfg: DictConfig):
     M = int(agent_val("M") or cfg.get('M') or 1)
     learning_rate = float(agent_val("learning_rate") or cfg.get('learning_rate') or 0.0)
     typeStrategy = "PPO-EDA"
-    print(f"Using REINFORCE update. Number of agents: {M} with learning_rate: {learning_rate}, "
+    print(f"Using REINFORCE update. Number of agents: {M} with "
           f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}, svgd_alpha: {svgd_alpha}, "
           f"advantage={advantage_cfg}")
 
