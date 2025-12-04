@@ -2,6 +2,7 @@ from utils.walsh_expansion import WalshExpansion
 from tqdm import tqdm
 import os
 import torch
+from torch.distributions import Bernoulli, kl_divergence
 from random import sample
 import numpy as np
 
@@ -120,17 +121,20 @@ def get_Score_trajectoriesQUBO_cuda(
         avg_kl = None
         if track_leader:
             agent_best_scores = []
-            agent_best_solutions = []
+            agent_ranked_solutions = []
             start_idx = 0
             for idx, agent_lambda in enumerate(agent_lambdas):
                 end_idx = start_idx + agent_lambda
                 agent_scores = tensor_score[:, start_idx:end_idx]
                 agent_solutions = tensor_solution[:, start_idx:end_idx, :, :]
-                agent_best_values, agent_best_idx = torch.max(agent_scores, dim=1)
-                gather_idx = agent_best_idx.view(-1, 1, 1, 1).repeat(1, 1, N, 1)
-                best_sol = torch.gather(agent_solutions, 1, gather_idx).squeeze(1).squeeze(-1)
+                agent_best_values, _ = torch.max(agent_scores, dim=1)
                 agent_best_scores.append(agent_best_values)
-                agent_best_solutions.append(best_sol)
+                # sort each agent population by fitness so rank-to-rank comparisons are possible
+                flat_solutions = agent_solutions.squeeze(-1)
+                sorted_idx = torch.argsort(agent_scores, dim=1, descending=True)
+                sorted_idx = sorted_idx.unsqueeze(-1).repeat(1, 1, N)
+                ranked_solutions = torch.gather(flat_solutions, 1, sorted_idx)
+                agent_ranked_solutions.append(ranked_solutions.float())
                 agent_best_overall[idx] = torch.where(agent_best_values > agent_best_overall[idx],
                                                       agent_best_values,
                                                       agent_best_overall[idx])
@@ -140,10 +144,17 @@ def get_Score_trajectoriesQUBO_cuda(
             leader_idx = torch.argmax(agent_mean_scores).item()
 
             pairwise_distances = {}
-            num_agents_active = len(agent_best_solutions)
+            num_agents_active = len(agent_ranked_solutions)
             for i in range(num_agents_active):
                 for j in range(i + 1, num_agents_active):
-                    dist = torch.abs(agent_best_solutions[i] - agent_best_solutions[j]).sum(dim=1).float()
+                    sols_i = agent_ranked_solutions[i]
+                    sols_j = agent_ranked_solutions[j]
+                    max_compare = min(sols_i.size(1), sols_j.size(1))
+                    if max_compare == 0:
+                        continue
+                    # compare individuals rank-by-rank (top1 vs top1, etc.) then average
+                    diff = torch.abs(sols_i[:, :max_compare, :] - sols_j[:, :max_compare, :]).sum(dim=2)
+                    dist = diff.mean(dim=1)
                     pairwise_distances[(i, j)] = dist
 
             if pairwise_distances:
@@ -318,12 +329,10 @@ def _compute_average_kl(agents):
         for j in range(i + 1, len(agent_probs)):
             p = torch.clamp(agent_probs[i], eps, 1 - eps)
             q = torch.clamp(agent_probs[j], eps, 1 - eps)
-            kl_pq_inst = (
-                p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
-            ).mean(dim=1)  # moyenne par instance
-            kl_qp_inst = (
-                q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p))
-            ).mean(dim=1)
+            dist_p = Bernoulli(probs=p)
+            dist_q = Bernoulli(probs=q)
+            kl_pq_inst = kl_divergence(dist_p, dist_q).mean(dim=1)  # moyenne par instance
+            kl_qp_inst = kl_divergence(dist_q, dist_p).mean(dim=1)
             kl_pair_inst = 0.5 * (kl_pq_inst + kl_qp_inst)
             total_pairwise_kl += kl_pair_inst.mean().item()
             comparisons += 1

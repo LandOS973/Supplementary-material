@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from torch.distributions import Bernoulli, kl_divergence
 from tqdm import tqdm
 
 from environment.visualization import render_agent_dashboard, render_svgd_field_plot
@@ -566,12 +567,10 @@ def _compute_average_kl(agents):
         for j in range(i + 1, len(agent_probs)):
             p = torch.clamp(agent_probs[i], eps, 1 - eps)
             q = torch.clamp(agent_probs[j], eps, 1 - eps)
-            kl_pq_inst = (
-                p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
-            ).mean(dim=1)
-            kl_qp_inst = (
-                q * (torch.log(q) - torch.log(p)) + (1 - q) * (torch.log(1 - q) - torch.log(1 - p))
-            ).mean(dim=1)
+            dist_p = Bernoulli(probs=p)
+            dist_q = Bernoulli(probs=q)
+            kl_pq_inst = kl_divergence(dist_p, dist_q).mean(dim=1)
+            kl_qp_inst = kl_divergence(dist_q, dist_p).mean(dim=1)
             kl_pair_inst = 0.5 * (kl_pq_inst + kl_qp_inst)
             total_pairwise_kl += kl_pair_inst.mean().item()
             comparisons += 1
