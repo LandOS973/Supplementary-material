@@ -2,11 +2,10 @@ from utils.walsh_expansion import WalshExpansion
 from tqdm import tqdm
 import os
 import torch
-from torch.distributions import Bernoulli, kl_divergence
-from random import sample
 import numpy as np
 
 from environment.visualization import render_agent_dashboard, render_svgd_field_plot
+from environment.metrics import MetricsCalculator
 
 
 
@@ -49,6 +48,7 @@ def get_Score_trajectoriesQUBO_cuda(
     best_fitness_history = []
     runtime_steps = []
     agent_fitness_history = []
+    metrics = MetricsCalculator()
 
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
@@ -110,31 +110,22 @@ def get_Score_trajectoriesQUBO_cuda(
         bestScore = torch.where(current_score > bestScore, current_score,  bestScore)
         strategy.updateDistribution( tensor_solution, tensor_score)
 
-        global_current = torch.mean(current_score).item()
-        global_best = torch.mean(bestScore).item()
+        global_current = metrics.compute_fitness(current_score)
+        global_best = metrics.compute_fitness(bestScore)
         best_fitness_history.append(-global_best)
         runtime_steps.append((epoch + 1) * size_pop)
 
         leader_idx = None
-        # avg hamming = sum of pairwise hamming distances between agent best solutions
         avg_hamming = None
         avg_kl = None
         if track_leader:
             agent_best_scores = []
-            agent_ranked_solutions = []
             start_idx = 0
             for idx, agent_lambda in enumerate(agent_lambdas):
                 end_idx = start_idx + agent_lambda
                 agent_scores = tensor_score[:, start_idx:end_idx]
-                agent_solutions = tensor_solution[:, start_idx:end_idx, :, :]
                 agent_best_values, _ = torch.max(agent_scores, dim=1)
                 agent_best_scores.append(agent_best_values)
-                # sort each agent population by fitness so rank-to-rank comparisons are possible
-                flat_solutions = agent_solutions.squeeze(-1)
-                sorted_idx = torch.argsort(agent_scores, dim=1, descending=True)
-                sorted_idx = sorted_idx.unsqueeze(-1).repeat(1, 1, N)
-                ranked_solutions = torch.gather(flat_solutions, 1, sorted_idx)
-                agent_ranked_solutions.append(ranked_solutions.float())
                 agent_best_overall[idx] = torch.where(agent_best_values > agent_best_overall[idx],
                                                       agent_best_values,
                                                       agent_best_overall[idx])
@@ -143,35 +134,8 @@ def get_Score_trajectoriesQUBO_cuda(
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
             leader_idx = torch.argmax(agent_mean_scores).item()
 
-            pairwise_distances = {}
-            num_agents_active = len(agent_ranked_solutions)
-            for i in range(num_agents_active):
-                for j in range(i + 1, num_agents_active):
-                    sols_i = agent_ranked_solutions[i]
-                    sols_j = agent_ranked_solutions[j]
-                    max_compare = min(sols_i.size(1), sols_j.size(1))
-                    if max_compare == 0:
-                        continue
-                    # compare individuals rank-by-rank (top1 vs top1, etc.) then average
-                    diff = torch.abs(sols_i[:, :max_compare, :] - sols_j[:, :max_compare, :]).sum(dim=2)
-                    dist = diff.mean(dim=1)
-                    pairwise_distances[(i, j)] = dist
-
-            if pairwise_distances:
-                pairwise_means = {pair: d.mean().item() for pair, d in pairwise_distances.items()}
-                per_agent_means = []
-                for agent_idx in range(num_agents_active):
-                    related = [val for pair, val in pairwise_means.items() if agent_idx in pair]
-                    if related:
-                        per_agent_means.append(sum(related) / len(related))
-                if per_agent_means:
-                    avg_hamming = sum(per_agent_means) / len(per_agent_means)
-                else:
-                    avg_hamming = 0.0
-            else:
-                avg_hamming = 0.0
-
-            avg_kl = _compute_average_kl(strategy.agents)
+            avg_hamming = metrics.compute_average_hamming(strategy.agents)
+            avg_kl = metrics.compute_average_kl(strategy.agents)
             avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
             avg_kl_history.append(avg_kl if avg_kl is not None else 0.0)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
@@ -229,7 +193,7 @@ def get_Score_trajectoriesQUBO_cuda(
         print("Per-agent summary:")
         for idx, agent in enumerate(strategy.agents):
             avg_best = -torch.mean(agent_best_overall[idx]).item()
-            theta_mean = torch.mean(_agent_theta_tensor(agent)).item()
+            theta_mean = torch.mean(metrics.agent_theta_tensor(agent)).item()
             print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
 
     if enable_visualization:
@@ -309,32 +273,3 @@ def getTensorInstances_QUBO(path, nb_instances, nb_restarts,  N, t, device, phas
 
 
     return tensor_Q
-
-
-def _agent_theta_tensor(agent):
-    return agent.theta if hasattr(agent, "theta") else agent
-
-
-def _compute_average_kl(agents):
-    if agents is None or len(agents) < 2:
-        return 0.0
-
-    eps = 1e-8
-    total_pairwise_kl = 0.0
-    comparisons = 0
-    with torch.no_grad():
-        agent_probs = [torch.sigmoid(_agent_theta_tensor(agent)).detach() for agent in agents]
-
-    for i in range(len(agent_probs)):
-        for j in range(i + 1, len(agent_probs)):
-            p = torch.clamp(agent_probs[i], eps, 1 - eps)
-            q = torch.clamp(agent_probs[j], eps, 1 - eps)
-            dist_p = Bernoulli(probs=p)
-            dist_q = Bernoulli(probs=q)
-            kl_pq_inst = kl_divergence(dist_p, dist_q).mean(dim=1)  # moyenne par instance
-            kl_qp_inst = kl_divergence(dist_q, dist_p).mean(dim=1)
-            kl_pair_inst = 0.5 * (kl_pq_inst + kl_qp_inst)
-            total_pairwise_kl += kl_pair_inst.mean().item()
-            comparisons += 1
-
-    return (total_pairwise_kl / comparisons) if comparisons > 0 else 0.0
