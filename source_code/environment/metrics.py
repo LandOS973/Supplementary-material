@@ -52,7 +52,8 @@ class MetricsCalculator:
 
         off_diag_sum = distances.sum() - torch.diagonal(distances).sum()
         num_pairs = M * (M - 1)
-        return (off_diag_sum / num_pairs).item() if num_pairs > 0 else 0.0
+        avg = (off_diag_sum / num_pairs).item() if num_pairs > 0 else 0.0
+        return avg, distances.detach().cpu().numpy()
 
     def compute_fitness(self, scores: torch.Tensor):
         value = torch.mean(scores).item()

@@ -48,6 +48,7 @@ def get_Score_trajectoriesQUBO_cuda(
     best_fitness_history = []
     runtime_steps = []
     agent_fitness_history = []
+    hamming_pairwise_history = []
     metrics = MetricsCalculator()
 
     use_tqdm = bool(verbose)
@@ -134,10 +135,11 @@ def get_Score_trajectoriesQUBO_cuda(
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
             leader_idx = torch.argmax(agent_mean_scores).item()
 
-            avg_hamming = metrics.compute_average_hamming(strategy.agents)
+            avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
             avg_kl = metrics.compute_average_kl(strategy.agents)
             avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
             avg_kl_history.append(avg_kl if avg_kl is not None else 0.0)
+            hamming_pairwise_history.append(pairwise_matrix.tolist())
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
 
         if use_tqdm:
@@ -203,7 +205,15 @@ def get_Score_trajectoriesQUBO_cuda(
         theta_history_fn = getattr(strategy, "get_theta_history", None)
         if callable(theta_history_fn):
             theta_history = theta_history_fn()
-        render_agent_dashboard(iterations, avg_hamming_history, avg_kl_history, agent_fitness_history, num_agents, theta_history)
+        render_agent_dashboard(
+            iterations,
+            avg_hamming_history,
+            avg_kl_history,
+            agent_fitness_history,
+            num_agents,
+            theta_history,
+            hamming_pairwise_history,
+        )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)
         if callable(svgd_snapshot_fn):
