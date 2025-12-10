@@ -61,6 +61,26 @@ class MetricsCalculator:
         avg = (off_diag_sum / num_pairs).item() if num_pairs > 0 else 0.0
         return avg, distances.detach().cpu().numpy()
 
+    def compute_entropy(self, agents):
+        if agents is None or len(agents) == 0:
+            return 0.0, None
+
+        eps = 1e-8
+        entropies = []
+        with torch.no_grad():
+            for agent in agents:
+                theta = self.agent_theta_tensor(agent)
+                probs = torch.sigmoid(theta)
+                p = torch.clamp(probs, eps, 1 - eps)
+                ent = -(p * torch.log(p) + (1 - p) * torch.log(1 - p))
+                ent = ent.sum(dim=1).mean().item()
+                entropies.append(ent)
+
+        if not entropies:
+            return 0.0, None
+        avg_entropy = sum(entropies) / len(entropies)
+        return avg_entropy, entropies
+
     def compute_fitness(self, scores: torch.Tensor):
         value = torch.mean(scores).item()
         return value / self.normalization_factor

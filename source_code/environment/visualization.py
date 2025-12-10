@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import torch
+from collections import OrderedDict
 
 _HEADLESS = not (
     os.environ.get("DISPLAY")
@@ -30,6 +31,8 @@ def render_agent_dashboard(
     theta_history,
     hamming_pairwise_history=None,
     kl_pairwise_history=None,
+    entropy_history=None,
+    entropy_agent_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -48,11 +51,54 @@ def render_agent_dashboard(
             return None
         return arr
 
+    def _prepare_agent_series(history):
+        if not history:
+            return None
+        cleaned = []
+        for step in history:
+            if step is None:
+                return None
+            cleaned.append(np.asarray(step, dtype=np.float32))
+        arr = np.asarray(cleaned, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] != num_agents:
+            return None
+        return arr
+
     pairwise_hamming = _prepare_pairwise(hamming_pairwise_history)
     pairwise_kl = _prepare_pairwise(kl_pairwise_history)
-    has_pairwise_hamming = pairwise_hamming is not None
-    has_pairwise_kl = pairwise_kl is not None
-    has_pairwise_controls = has_pairwise_hamming or has_pairwise_kl
+    entropy_agent_series = _prepare_agent_series(entropy_agent_history)
+
+    metrics_data = OrderedDict()
+    if iterations and hamming_history:
+        metrics_data["Hamming"] = dict(
+            average=hamming_history,
+            ylabel="Hamming",
+            title="Average / Pairwise Hamming Distance",
+            color="tab:blue",
+            overlay_type="pairwise",
+            overlay_data=pairwise_hamming,
+        )
+    if iterations and kl_history:
+        metrics_data["KL"] = dict(
+            average=kl_history,
+            ylabel="KL",
+            title="Average KL Distance",
+            color="tab:orange",
+            overlay_type="pairwise",
+            overlay_data=pairwise_kl,
+        )
+    if entropy_history and entropy_agent_series is not None:
+        metrics_data["Entropy"] = dict(
+            average=entropy_history,
+            ylabel="Entropy",
+            title="Average Entropy",
+            color="tab:green",
+            overlay_type="per_agent",
+            overlay_data=entropy_agent_series,
+        )
+
+    metric_names = list(metrics_data.keys())
+    max_metrics_displayed = 3
 
     try:
         root = tk.Tk()
@@ -65,133 +111,272 @@ def render_agent_dashboard(
         main_frame = tk.Frame(root)
         main_frame.pack(fill="both", expand=True)
 
-        metrics_frame = tk.Frame(main_frame)
-        metrics_frame.pack(side="left", fill="both", expand=True)
+        pane = tk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        pane.pack(fill="both", expand=True)
 
-        rows = 3 if agent_fitness_history and num_agents > 0 else 2
-        fig, axes = plt.subplots(rows, 1, figsize=(10, 6), sharex=True)
-        axes = [axes] if not isinstance(axes, (list, np.ndarray)) else axes
+        metrics_frame = tk.Frame(pane)
+        pane.add(metrics_frame, stretch="always")
 
-        pairwise_lines = {"hamming": [], "kl": []}
-        avg_line_hamming = None
-        avg_line_kl = None
-        if iterations and hamming_history:
-            (avg_line_hamming,) = axes[0].plot(iterations, hamming_history, color="tab:blue", label="Average")
-        axes[0].set_title("Average / Pairwise Hamming Distance")
-        axes[0].set_ylabel("Hamming")
-        axes[0].grid(True, linestyle="--", alpha=0.4)
+        fitness_available = bool(agent_fitness_history and num_agents > 0)
+        show_fitness_var = tk.IntVar(value=1 if fitness_available else 0)
 
-        if iterations and kl_history:
-            (avg_line_kl,) = axes[1].plot(iterations, kl_history, color="tab:orange", label="Average")
-        axes[1].set_title("Average KL Distance")
-        axes[1].set_ylabel("KL")
-        axes[1].grid(True, linestyle="--", alpha=0.4)
+        theta_available = bool(theta_history and theta_history.get("values"))
+        theta_var = tk.IntVar(value=1 if theta_available else 0)
+        theta_panel = None
+        theta_pack_info = None
+        theta_container = None
+        pane_theta_width = max(400, root.winfo_screenwidth() // 5)
+        if theta_available:
+            theta_container = tk.Frame(pane, width=pane_theta_width)
+            pane.add(theta_container)
+            pane.paneconfigure(theta_container, minsize=pane_theta_width // 2)
+            theta_panel = _build_theta_panel(theta_container, root, theta_history)
+            if theta_panel:
+                theta_pack_info = theta_panel.pack_info()
+                if theta_var.get() == 0:
+                    pane.forget(theta_container)
 
-        if len(axes) == 3:
-            axes[2].set_title("Agent Fitness Evolution")
-            axes[2].set_ylabel("Fitness")
-            if iterations:
-                for agent_idx in range(num_agents):
-                    series = [epoch[agent_idx] for epoch in agent_fitness_history]
-                    axes[2].plot(iterations, series, label=f"Agent {agent_idx}")
-            axes[2].grid(True, linestyle="--", alpha=0.4)
-            axes[2].legend()
-
-        axes[-1].set_xlabel("Evaluations")
-        fig.tight_layout()
         button_container = tk.Frame(metrics_frame)
         button_container.pack(fill="x", anchor="n")
         graph_container = tk.Frame(metrics_frame)
         graph_container.pack(fill="both", expand=True)
 
+        fig = plt.Figure(figsize=(10, 6))
         canvas = FigureCanvasTkAgg(fig, master=graph_container)
-        canvas.draw()
         canvas_widget = canvas.get_tk_widget()
         canvas_widget.pack(fill="both", expand=True)
         toolbar = NavigationToolbar2Tk(canvas, graph_container)
         toolbar.update()
-        toolbar.pack(side="right", anchor="se")
+        toolbar.pack(side="bottom", anchor="se")
 
-        if has_pairwise_controls and num_agents > 1:
-            agent_labels = [f"Agent {idx}" for idx in range(num_agents)]
-            options = ["Moyenne"] + agent_labels
-            selected_agent = tk.StringVar(value="Moyenne")
-            color_map = plt.cm.get_cmap("tab10", max(num_agents, 1))
+        metric_vars = {}
+        selected_metrics = []
+        metrics_order = list(metrics_data.keys())
 
-            def _update_pairwise_lines(*_):
-                nonlocal pairwise_lines
+        agent_labels = [f"Agent {idx}" for idx in range(num_agents)]
+        agent_options = ["Moyenne"] + agent_labels if agent_labels else ["Moyenne"]
+        selected_agent = tk.StringVar(value=agent_options[0])
 
-                def _clear_lines(key):
-                    for line in pairwise_lines[key]:
-                        try:
-                            line.remove()
-                        except ValueError:
-                            pass
-                    pairwise_lines[key] = []
+        plot_handles = {}
+        overlay_lines = {}
+        color_map = plt.cm.get_cmap("tab10", max(num_agents, 1))
 
-                _clear_lines("hamming")
-                _clear_lines("kl")
+        def is_fitness_enabled():
+            return fitness_available and show_fitness_var.get() == 1
 
-                if not iterations:
-                    canvas.draw_idle()
-                    return
+        def draw_fitness_axis(total_rows):
+            if not is_fitness_enabled():
+                return None
+            ax = fig.add_subplot(total_rows, 1, total_rows)
+            ax.set_title("Agent Fitness Evolution")
+            ax.set_ylabel("Fitness")
+            if iterations:
+                for agent_idx in range(num_agents):
+                    series = [epoch[agent_idx] for epoch in agent_fitness_history]
+                    ax.plot(iterations, series, label=f"Agent {agent_idx}")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            ax.legend()
+            return ax
 
-                show_average = selected_agent.get() == "Moyenne"
-                if avg_line_hamming:
-                    avg_line_hamming.set_visible(show_average or not has_pairwise_hamming)
-                if avg_line_kl:
-                    avg_line_kl.set_visible(show_average or not has_pairwise_kl)
-
-                if not show_average:
-                    try:
-                        anchor_idx = agent_labels.index(selected_agent.get())
-                    except ValueError:
-                        anchor_idx = 0
-
-                    if has_pairwise_hamming:
-                        steps_h = min(len(iterations), pairwise_hamming.shape[0])
-                        x_axis_h = iterations[:steps_h]
-                        for other_idx in range(num_agents):
-                            if other_idx == anchor_idx:
-                                continue
-                            series = pairwise_hamming[:steps_h, anchor_idx, other_idx]
-                            (line,) = axes[0].plot(
-                                x_axis_h,
-                                series,
-                                linestyle="--",
-                                color=color_map(other_idx % color_map.N),
-                                label=f"Ham: Agent {anchor_idx} ↔ {other_idx}",
-                            )
-                            pairwise_lines["hamming"].append(line)
-
-                    if has_pairwise_kl:
-                        steps_kl = min(len(iterations), pairwise_kl.shape[0])
-                        x_axis_kl = iterations[:steps_kl]
-                        for other_idx in range(num_agents):
-                            if other_idx == anchor_idx:
-                                continue
-                            series = pairwise_kl[:steps_kl, anchor_idx, other_idx]
-                            (line,) = axes[1].plot(
-                                x_axis_kl,
-                                series,
-                                linestyle="--",
-                                color=color_map(other_idx % color_map.N),
-                                label=f"KL: Agent {anchor_idx} ↔ {other_idx}",
-                            )
-                            pairwise_lines["kl"].append(line)
-
-                if avg_line_hamming or pairwise_lines["hamming"]:
-                    axes[0].legend(loc="upper right")
-                if avg_line_kl or pairwise_lines["kl"]:
-                    axes[1].legend(loc="upper right")
+        def draw_metrics():
+            fig.clear()
+            plot_handles.clear()
+            overlay_lines.clear()
+            total_metric_rows = len(selected_metrics)
+            total_rows = total_metric_rows + (1 if is_fitness_enabled() else 0)
+            if total_rows == 0:
+                fig.text(0.5, 0.5, "No metrics to display", ha="center", va="center")
                 canvas.draw_idle()
+                return
+            row = 1
+            for metric_name in selected_metrics:
+                data = metrics_data[metric_name]
+                ax = fig.add_subplot(total_rows, 1, row)
+                row += 1
+                avg_line = None
+                avg_values = data.get("average")
+                if iterations and avg_values:
+                    (avg_line,) = ax.plot(iterations, avg_values, color=data["color"], label="Average")
+                ax.set_title(data["title"])
+                ax.set_ylabel(data["ylabel"])
+                ax.grid(True, linestyle="--", alpha=0.4)
+                plot_handles[metric_name] = dict(axis=ax, avg_line=avg_line)
+                overlay_lines[metric_name] = []
 
-            agent_menu = tk.OptionMenu(button_container, selected_agent, *options, command=lambda *_: _update_pairwise_lines())
-            agent_menu.pack(side="left", anchor="nw", padx=4, pady=4)
-            _update_pairwise_lines()
+            fitness_ax = draw_fitness_axis(total_rows)
+            last_axis = fitness_ax if fitness_ax is not None else (
+                plot_handles[selected_metrics[-1]]["axis"] if selected_metrics else None
+            )
+            if last_axis is not None:
+                last_axis.set_xlabel("Evaluations")
+            fig.tight_layout()
+            canvas.draw_idle()
+            update_overlays()
 
-        if theta_history and theta_history.get("values"):
-            _build_theta_panel(main_frame, root, theta_history)
+        def enforce_selection_limits(changed_metric=None):
+            enabled = [name for name in metrics_order if metric_vars.get(name, tk.IntVar()).get()]
+            if not enabled:
+                fallback = changed_metric or (metrics_order[0] if metrics_order else None)
+                if fallback:
+                    metric_vars[fallback].set(1)
+                    enabled = [fallback]
+            if len(enabled) > max_metrics_displayed:
+                if changed_metric and changed_metric in enabled:
+                    metric_vars[changed_metric].set(0)
+                    enabled = [name for name in metrics_order if metric_vars[name].get()]
+                else:
+                    while len(enabled) > max_metrics_displayed:
+                        last = enabled.pop()
+                        metric_vars[last].set(0)
+                    enabled = [name for name in metrics_order if metric_vars[name].get()]
+            return enabled
+
+        def _toggle_metric(metric_name):
+            nonlocal selected_metrics
+            selected = enforce_selection_limits(metric_name)
+            selected_metrics = selected
+            draw_metrics()
+
+        def update_overlays(*_):
+            agent_choice = selected_agent.get()
+            show_average = agent_choice == "Moyenne"
+            for metric_name in selected_metrics:
+                handles = plot_handles.get(metric_name)
+                if handles is None:
+                    continue
+                axis = handles["axis"]
+                avg_line = handles.get("avg_line")
+                for line in overlay_lines.get(metric_name, []):
+                    try:
+                        line.remove()
+                    except ValueError:
+                        pass
+                overlay_lines[metric_name] = []
+                data = metrics_data[metric_name]
+                overlay_type = data.get("overlay_type")
+                overlay_data = data.get("overlay_data")
+                supports_overlay = overlay_data is not None and overlay_type is not None and agent_choice != "Moyenne"
+                if avg_line:
+                    avg_line.set_visible(True if not supports_overlay else show_average)
+                if supports_overlay:
+                    try:
+                        anchor_idx = agent_options.index(agent_choice) - 1
+                    except ValueError:
+                        anchor_idx = -1
+                    if anchor_idx < 0:
+                        anchor_idx = 0
+                    if overlay_type == "pairwise" and overlay_data is not None:
+                        steps = min(len(iterations), overlay_data.shape[0])
+                        if steps > 0:
+                            x_axis = iterations[:steps]
+                            for other_idx in range(num_agents):
+                                if other_idx == anchor_idx:
+                                    continue
+                                series = overlay_data[:steps, anchor_idx, other_idx]
+                                (line,) = axis.plot(
+                                    x_axis,
+                                    series,
+                                    linestyle="--",
+                                    color=color_map(other_idx % color_map.N),
+                                    label=f"{metric_name}: Agent {anchor_idx} ↔ {other_idx}",
+                                )
+                                overlay_lines[metric_name].append(line)
+                    elif overlay_type == "per_agent" and overlay_data is not None:
+                        steps = min(len(iterations), overlay_data.shape[0])
+                        if steps > 0:
+                            x_axis = iterations[:steps]
+                            series = overlay_data[:steps, anchor_idx]
+                            (line,) = axis.plot(
+                                x_axis,
+                                series,
+                                linestyle="--",
+                                color=color_map(anchor_idx % color_map.N),
+                                label=f"{metric_name}: Agent {anchor_idx}",
+                            )
+                            overlay_lines[metric_name].append(line)
+
+                legend_handles = []
+                legend_labels = []
+                if avg_line and avg_line.get_visible():
+                    legend_handles.append(avg_line)
+                    legend_labels.append("Average")
+                for line in overlay_lines.get(metric_name, []):
+                    legend_handles.append(line)
+                    legend_labels.append(line.get_label())
+                if legend_handles:
+                    axis.legend(legend_handles, legend_labels, loc="upper right")
+                else:
+                    leg = axis.get_legend()
+                    if leg:
+                        leg.remove()
+            canvas.draw_idle()
+
+        def _toggle_theta_panel():
+            if not theta_container or not theta_panel:
+                return
+            if theta_var.get():
+                pane_children = pane.panes()
+                if str(theta_container) not in pane_children:
+                    pane.add(theta_container)
+                    pane.paneconfigure(theta_container, minsize=pane_theta_width // 2)
+            else:
+                try:
+                    pane.forget(theta_container)
+                except tk.TclError:
+                    pass
+
+        agent_labels = [f"Agent {idx}" for idx in range(num_agents)]
+        agent_options = ["Moyenne"] + agent_labels if agent_labels else ["Moyenne"]
+        selected_agent = tk.StringVar(value=agent_options[0])
+        agent_frame = tk.Frame(button_container)
+        agent_frame.pack(side="left", padx=4, pady=4)
+        tk.Label(agent_frame, text="Agent:").pack(side="left", padx=(0, 2))
+        agent_menu = tk.OptionMenu(agent_frame, selected_agent, *agent_options, command=lambda *_: update_overlays())
+        agent_menu.pack(side="left")
+
+        if metrics_order:
+            default_selection = metrics_order[:max_metrics_displayed]
+            metric_frame = tk.Frame(button_container)
+            metric_frame.pack(side="left", padx=4, pady=4)
+            tk.Label(metric_frame, text="Metrics:").pack(side="left")
+            for name in metrics_order:
+                var = tk.IntVar(value=1 if name in default_selection else 0)
+                metric_vars[name] = var
+                chk = tk.Checkbutton(
+                    metric_frame,
+                    text=name,
+                    variable=var,
+                    command=lambda metric=name: _toggle_metric(metric),
+                )
+                chk.pack(side="left", padx=(2, 2))
+        else:
+            selected_metrics = []
+
+        options_frame = tk.Frame(button_container)
+        options_frame.pack(side="left", padx=4, pady=4)
+        if fitness_available:
+            tk.Checkbutton(
+                options_frame,
+                text="Show Fitness",
+                variable=show_fitness_var,
+                command=draw_metrics,
+            ).pack(side="left", padx=4)
+        if theta_panel is not None:
+            tk.Checkbutton(
+                options_frame,
+                text="Theta Explorer",
+                variable=theta_var,
+                command=_toggle_theta_panel,
+            ).pack(side="left", padx=4)
+
+        selected_metrics = [name for name in metrics_order if metric_vars.get(name, tk.IntVar()).get()]
+        if not selected_metrics and metrics_order:
+            selected_metrics = metrics_order[:max_metrics_displayed]
+            for name in metrics_order:
+                metric_vars[name].set(1 if name in selected_metrics else 0)
+
+        draw_metrics()
+        _toggle_theta_panel()
 
         def _close():
             root.quit()
@@ -286,6 +471,7 @@ def _build_theta_panel(container, root_window, history):
 
     panel = tk.LabelFrame(container, text="Theta Evolution Explorer")
     panel.pack(side="right", fill="both", expand=True, padx=10, pady=6)
+    panel.pack_propagate(False)
 
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.set_xlim(0, 1)
@@ -385,3 +571,5 @@ def _build_theta_panel(container, root_window, history):
     root_window.bind("<Right>", lambda event: step_epoch(1))
 
     update_plot()
+
+    return panel
