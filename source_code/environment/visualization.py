@@ -25,12 +25,14 @@ except Exception:  # pragma: no cover - plotting optional
 def render_agent_dashboard(
     iterations,
     hamming_history,
-    kl_history,
+    js_history,
     agent_fitness_history,
     num_agents,
     theta_history,
     hamming_pairwise_history=None,
-    kl_pairwise_history=None,
+    js_pairwise_history=None,
+    l2_history=None,
+    l2_pairwise_history=None,
     entropy_history=None,
     entropy_agent_history=None,
 ):
@@ -65,7 +67,8 @@ def render_agent_dashboard(
         return arr
 
     pairwise_hamming = _prepare_pairwise(hamming_pairwise_history)
-    pairwise_kl = _prepare_pairwise(kl_pairwise_history)
+    pairwise_js = _prepare_pairwise(js_pairwise_history)
+    pairwise_l2 = _prepare_pairwise(l2_pairwise_history)
     entropy_agent_series = _prepare_agent_series(entropy_agent_history)
 
     metrics_data = OrderedDict()
@@ -78,14 +81,23 @@ def render_agent_dashboard(
             overlay_type="pairwise",
             overlay_data=pairwise_hamming,
         )
-    if iterations and kl_history:
-        metrics_data["KL"] = dict(
-            average=kl_history,
-            ylabel="KL",
-            title="Average KL Distance",
+    if iterations and js_history:
+        metrics_data["JS"] = dict(
+            average=js_history,
+            ylabel="JS",
+            title="Average Jensen-Shannon Distance",
             color="tab:orange",
             overlay_type="pairwise",
-            overlay_data=pairwise_kl,
+            overlay_data=pairwise_js,
+        )
+    if iterations and l2_history:
+        metrics_data["L2"] = dict(
+            average=l2_history,
+            ylabel="L2",
+            title="Average L2 Distance",
+            color="tab:red",
+            overlay_type="pairwise",
+            overlay_data=pairwise_l2,
         )
     if entropy_history and entropy_agent_series is not None:
         metrics_data["Entropy"] = dict(
@@ -164,21 +176,31 @@ def render_agent_dashboard(
         def is_fitness_enabled():
             return fitness_available and show_fitness_var.get() == 1
 
+        fitness_lines = []
+
+        fitness_ax = None
+        fitness_lines = []
+
         def draw_fitness_axis(total_rows):
             if not is_fitness_enabled():
-                return None
+                return None, []
             ax = fig.add_subplot(total_rows, 1, total_rows)
             ax.set_title("Agent Fitness Evolution")
             ax.set_ylabel("Fitness")
             if iterations:
+                lines = []
                 for agent_idx in range(num_agents):
                     series = [epoch[agent_idx] for epoch in agent_fitness_history]
-                    ax.plot(iterations, series, label=f"Agent {agent_idx}")
+                    (line,) = ax.plot(iterations, series, label=f"Agent {agent_idx}")
+                    lines.append((agent_idx, line))
+            else:
+                lines = []
             ax.grid(True, linestyle="--", alpha=0.4)
             ax.legend()
-            return ax
+            return ax, lines
 
         def draw_metrics():
+            nonlocal fitness_ax, fitness_lines
             fig.clear()
             plot_handles.clear()
             overlay_lines.clear()
@@ -203,7 +225,8 @@ def render_agent_dashboard(
                 plot_handles[metric_name] = dict(axis=ax, avg_line=avg_line)
                 overlay_lines[metric_name] = []
 
-            fitness_ax = draw_fitness_axis(total_rows)
+            nonlocal fitness_ax, fitness_lines
+            fitness_ax, fitness_lines = draw_fitness_axis(total_rows)
             last_axis = fitness_ax if fitness_ax is not None else (
                 plot_handles[selected_metrics[-1]]["axis"] if selected_metrics else None
             )
@@ -240,6 +263,14 @@ def render_agent_dashboard(
         def update_overlays(*_):
             agent_choice = selected_agent.get()
             show_average = agent_choice == "Moyenne"
+            anchor_idx = None
+            if not show_average:
+                try:
+                    anchor_idx = agent_options.index(agent_choice) - 1
+                except ValueError:
+                    anchor_idx = -1
+                if anchor_idx < 0:
+                    anchor_idx = 0
             for metric_name in selected_metrics:
                 handles = plot_handles.get(metric_name)
                 if handles is None:
@@ -255,17 +286,13 @@ def render_agent_dashboard(
                 data = metrics_data[metric_name]
                 overlay_type = data.get("overlay_type")
                 overlay_data = data.get("overlay_data")
-                supports_overlay = overlay_data is not None and overlay_type is not None and agent_choice != "Moyenne"
+                overlay_enabled = (
+                    overlay_data is not None and overlay_type is not None and anchor_idx is not None and not show_average
+                )
                 if avg_line:
-                    avg_line.set_visible(True if not supports_overlay else show_average)
-                if supports_overlay:
-                    try:
-                        anchor_idx = agent_options.index(agent_choice) - 1
-                    except ValueError:
-                        anchor_idx = -1
-                    if anchor_idx < 0:
-                        anchor_idx = 0
-                    if overlay_type == "pairwise" and overlay_data is not None:
+                    avg_line.set_visible(not overlay_enabled or show_average)
+                if overlay_enabled and anchor_idx is not None:
+                    if overlay_type == "pairwise":
                         steps = min(len(iterations), overlay_data.shape[0])
                         if steps > 0:
                             x_axis = iterations[:steps]
@@ -281,7 +308,7 @@ def render_agent_dashboard(
                                     label=f"{metric_name}: Agent {anchor_idx} ↔ {other_idx}",
                                 )
                                 overlay_lines[metric_name].append(line)
-                    elif overlay_type == "per_agent" and overlay_data is not None:
+                    elif overlay_type == "per_agent":
                         steps = min(len(iterations), overlay_data.shape[0])
                         if steps > 0:
                             x_axis = iterations[:steps]
@@ -309,6 +336,22 @@ def render_agent_dashboard(
                     leg = axis.get_legend()
                     if leg:
                         leg.remove()
+            if fitness_lines and fitness_ax:
+                if show_average or anchor_idx is None or not is_fitness_enabled():
+                    for _, line in fitness_lines:
+                        line.set_visible(True)
+                else:
+                    for idx, line in fitness_lines:
+                        line.set_visible(idx == anchor_idx)
+                visible = [(line, line.get_label()) for _, line in fitness_lines if line.get_visible()]
+                if visible:
+                    handles_vis, labels_vis = zip(*visible)
+                    fitness_ax.legend(handles_vis, labels_vis, loc="upper right")
+                else:
+                    leg = fitness_ax.get_legend()
+                    if leg:
+                        leg.remove()
+
             canvas.draw_idle()
 
         def _toggle_theta_panel():

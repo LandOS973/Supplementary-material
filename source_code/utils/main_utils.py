@@ -521,9 +521,10 @@ def _write_group_history(agg_outdir: str, problem: str, dim: int, type_instance:
     runtimes = history.get("runtime") or []
     best_fitness = history.get("best_fitness") or []
     avg_hamming = history.get("avg_hamming") or []
-    avg_kl = history.get("avg_kl") or []
+    avg_js = history.get("avg_js") or []
+    avg_l2 = history.get("avg_l2") or []
 
-    length = max(len(runtimes), len(best_fitness), len(avg_hamming), len(avg_kl))
+    length = max(len(runtimes), len(best_fitness), len(avg_hamming), len(avg_js), len(avg_l2))
     if length == 0:
         return
 
@@ -557,9 +558,9 @@ def _write_group_history(agg_outdir: str, problem: str, dim: int, type_instance:
             pass
 
     out_file = out_dir / f"{prefix}{safe_algo}.csv"
-    lines = ["runtime,best_fitness,avg_hamming,avg_kl"]
+    lines = ["runtime,best_fitness,avg_hamming,avg_js,avg_l2"]
     for i in range(length):
         lines.append(
-            f"{_safe(runtimes, i)},{_safe(best_fitness, i)},{_safe(avg_hamming, i)},{_safe(avg_kl, i)}"
+            f"{_safe(runtimes, i)},{_safe(best_fitness, i)},{_safe(avg_hamming, i)},{_safe(avg_js, i)},{_safe(avg_l2, i)}"
         )
     out_file.write_text("\n".join(lines), encoding="utf-8")

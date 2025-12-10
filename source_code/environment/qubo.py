@@ -44,13 +44,15 @@ def get_Score_trajectoriesQUBO_cuda(
     nb_iterations = budget // size_pop
 
     avg_hamming_history = []
-    avg_kl_history = []
+    avg_js_history = []
+    avg_l2_history = []
     avg_entropy_history = []
     best_fitness_history = []
     runtime_steps = []
     agent_fitness_history = []
     hamming_pairwise_history = []
-    kl_pairwise_history = []
+    js_pairwise_history = []
+    l2_pairwise_history = []
     entropy_agent_history = []
     kl_pairwise_history = []
     metrics = MetricsCalculator()
@@ -122,7 +124,7 @@ def get_Score_trajectoriesQUBO_cuda(
 
         leader_idx = None
         avg_hamming = None
-        avg_kl = None
+        avg_js = None
         if track_leader:
             agent_best_scores = []
             start_idx = 0
@@ -140,13 +142,16 @@ def get_Score_trajectoriesQUBO_cuda(
             leader_idx = torch.argmax(agent_mean_scores).item()
 
             avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
-            avg_kl, pairwise_kl = metrics.compute_average_kl(strategy.agents)
+            avg_js, pairwise_js = metrics.compute_average_js(strategy.agents)
+            avg_l2, pairwise_l2 = metrics.compute_l2_distance(strategy.agents)
             avg_entropy, per_agent_entropy = metrics.compute_entropy(strategy.agents)
             avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
-            avg_kl_history.append(avg_kl if avg_kl is not None else 0.0)
+            avg_js_history.append(avg_js if avg_js is not None else 0.0)
+            avg_l2_history.append(avg_l2 if avg_l2 is not None else 0.0)
             avg_entropy_history.append(avg_entropy if avg_entropy is not None else 0.0)
             hamming_pairwise_history.append(pairwise_matrix.tolist() if pairwise_matrix is not None else None)
-            kl_pairwise_history.append(pairwise_kl.tolist() if pairwise_kl is not None else None)
+            js_pairwise_history.append(pairwise_js.tolist() if pairwise_js is not None else None)
+            l2_pairwise_history.append(pairwise_l2.tolist() if pairwise_l2 is not None else None)
             if per_agent_entropy is not None:
                 entropy_agent_history.append(per_agent_entropy)
             else:
@@ -158,7 +163,7 @@ def get_Score_trajectoriesQUBO_cuda(
            if track_leader and leader_idx is not None:
                postfix["leader"] = leader_idx
                postfix["avg_hamming"] = avg_hamming
-               postfix["avg_kl"] = avg_kl
+               postfix["avg_js"] = avg_js
            pbar.set_postfix(**postfix)
 
 
@@ -219,12 +224,14 @@ def get_Score_trajectoriesQUBO_cuda(
         render_agent_dashboard(
             iterations,
             avg_hamming_history,
-            avg_kl_history,
+            avg_js_history,
             agent_fitness_history,
             num_agents,
             theta_history,
             hamming_pairwise_history,
-            kl_pairwise_history,
+            js_pairwise_history,
+            avg_l2_history,
+            l2_pairwise_history,
             avg_entropy_history,
             entropy_agent_history,
         )
@@ -240,7 +247,8 @@ def get_Score_trajectoriesQUBO_cuda(
             runtime=runtime_steps,
             best_fitness=best_fitness_history,
             avg_hamming=avg_hamming_history,
-            avg_kl=avg_kl_history,
+            avg_js=avg_js_history,
+            avg_l2=avg_l2_history,
             avg_entropy=avg_entropy_history,
         )
         return bestScore_np, history

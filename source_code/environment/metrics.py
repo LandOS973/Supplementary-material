@@ -1,5 +1,4 @@
 import torch
-from torch.distributions import Bernoulli, kl_divergence
 
 
 class MetricsCalculator:
@@ -12,35 +11,32 @@ class MetricsCalculator:
     def agent_theta_tensor(agent):
         return agent.theta if hasattr(agent, "theta") else agent
 
-    def compute_average_kl(self, agents):
+    def compute_average_js(self, agents):
         if agents is None or len(agents) < 2:
             return 0.0, None
 
         eps = 1e-8
-        total_pairwise_kl = 0.0
-        comparisons = 0
-        num_agents = len(agents)
-        pairwise_matrix = torch.zeros((num_agents, num_agents), dtype=torch.float32)
         with torch.no_grad():
-            agent_probs = [torch.sigmoid(self.agent_theta_tensor(agent)).detach() for agent in agents]
+            probs = torch.stack([torch.sigmoid(self.agent_theta_tensor(agent)).detach() for agent in agents], dim=0)
 
-        for i in range(num_agents):
-            for j in range(i + 1, num_agents):
-                p = torch.clamp(agent_probs[i], eps, 1 - eps)
-                q = torch.clamp(agent_probs[j], eps, 1 - eps)
-                dist_p = Bernoulli(probs=p)
-                dist_q = Bernoulli(probs=q)
-                kl_pq_inst = kl_divergence(dist_p, dist_q).mean(dim=1)
-                kl_qp_inst = kl_divergence(dist_q, dist_p).mean(dim=1)
-                kl_pair_inst = 0.5 * (kl_pq_inst + kl_qp_inst)
-                val = kl_pair_inst.mean().item()
-                pairwise_matrix[i, j] = val
-                pairwise_matrix[j, i] = val
-                total_pairwise_kl += val
-                comparisons += 1
+        def _clamp(x):
+            return torch.clamp(x, eps, 1 - eps)
 
-        avg = (total_pairwise_kl / comparisons) if comparisons > 0 else 0.0
-        return avg, pairwise_matrix.cpu().numpy()
+        p = (probs).unsqueeze(1)  # (M,1,B,N)
+        q = (probs).unsqueeze(0)  # (1,M,B,N)
+        m = _clamp(0.5 * (p + q))
+
+        def _kl(a, b):
+            return (a * (torch.log(a) - torch.log(b)) + (1 - a) * (torch.log1p(-a) - torch.log1p(-b))).sum(dim=-1)
+
+        js = 0.5 * (_kl(p, m) + _kl(q, m))  # (M,M,B)
+        pairwise_mean = js.mean(dim=-1)  # (M,M)
+
+        num_agents = probs.shape[0]
+        total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum()
+        num_pairs = num_agents * (num_agents - 1)
+        avg = (total / num_pairs).item() if num_pairs > 0 else 0.0
+        return avg, pairwise_mean.cpu().numpy()
 
     def compute_average_hamming(self, agents):
         """Compute pairwise theoretical Hamming diversity from Bernoulli policies."""
@@ -66,21 +62,35 @@ class MetricsCalculator:
             return 0.0, None
 
         eps = 1e-8
-        entropies = []
         with torch.no_grad():
-            for agent in agents:
-                theta = self.agent_theta_tensor(agent)
-                probs = torch.sigmoid(theta)
-                p = torch.clamp(probs, eps, 1 - eps)
-                ent = -(p * torch.log(p) + (1 - p) * torch.log(1 - p))
-                ent = ent.sum(dim=1).mean().item()
-                entropies.append(ent)
+            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)  # (M,B,N)
+            p = torch.clamp(torch.sigmoid(theta), eps, 1 - eps)
+            ent = -(p * torch.log(p) + (1 - p) * torch.log1p(-p))  # (M,B,N)
+            ent = ent.sum(dim=-1).mean(dim=-1)  # (M,)
 
-        if not entropies:
-            return 0.0, None
-        avg_entropy = sum(entropies) / len(entropies)
+        entropies = ent.cpu().tolist()
+        avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
         return avg_entropy, entropies
 
     def compute_fitness(self, scores: torch.Tensor):
         value = torch.mean(scores).item()
         return value / self.normalization_factor
+
+    def compute_l2_distance(self, agents):
+        if agents is None or len(agents) < 2:
+            return 0.0, None
+
+        with torch.no_grad():
+            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)  # (M, B, N)
+
+        theta_i = theta.unsqueeze(1)  # (M,1,B,N)
+        theta_j = theta.unsqueeze(0)  # (1,M,B,N)
+        diff = theta_i - theta_j  # (M,M,B,N)
+        pairwise = torch.sqrt(torch.sum(diff * diff, dim=-1))  # (M,M,B)
+        pairwise_mean = pairwise.mean(dim=-1)  # (M,M)
+
+        num_agents = theta.shape[0]
+        total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum()
+        num_pairs = num_agents * (num_agents - 1)
+        avg = (total / num_pairs).item() if num_pairs > 0 else 0.0
+        return avg, pairwise_mean.cpu().numpy()
