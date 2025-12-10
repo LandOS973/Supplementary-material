@@ -14,16 +14,18 @@ class MetricsCalculator:
 
     def compute_average_kl(self, agents):
         if agents is None or len(agents) < 2:
-            return 0.0
+            return 0.0, None
 
         eps = 1e-8
         total_pairwise_kl = 0.0
         comparisons = 0
+        num_agents = len(agents)
+        pairwise_matrix = torch.zeros((num_agents, num_agents), dtype=torch.float32)
         with torch.no_grad():
             agent_probs = [torch.sigmoid(self.agent_theta_tensor(agent)).detach() for agent in agents]
 
-        for i in range(len(agent_probs)):
-            for j in range(i + 1, len(agent_probs)):
+        for i in range(num_agents):
+            for j in range(i + 1, num_agents):
                 p = torch.clamp(agent_probs[i], eps, 1 - eps)
                 q = torch.clamp(agent_probs[j], eps, 1 - eps)
                 dist_p = Bernoulli(probs=p)
@@ -31,15 +33,19 @@ class MetricsCalculator:
                 kl_pq_inst = kl_divergence(dist_p, dist_q).mean(dim=1)
                 kl_qp_inst = kl_divergence(dist_q, dist_p).mean(dim=1)
                 kl_pair_inst = 0.5 * (kl_pq_inst + kl_qp_inst)
-                total_pairwise_kl += kl_pair_inst.mean().item()
+                val = kl_pair_inst.mean().item()
+                pairwise_matrix[i, j] = val
+                pairwise_matrix[j, i] = val
+                total_pairwise_kl += val
                 comparisons += 1
 
-        return (total_pairwise_kl / comparisons) if comparisons > 0 else 0.0
+        avg = (total_pairwise_kl / comparisons) if comparisons > 0 else 0.0
+        return avg, pairwise_matrix.cpu().numpy()
 
     def compute_average_hamming(self, agents):
         """Compute pairwise theoretical Hamming diversity from Bernoulli policies."""
         if agents is None or len(agents) < 2:
-            return 0.0
+            return 0.0, None
 
         M = len(agents)
         with torch.no_grad():

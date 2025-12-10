@@ -157,6 +157,7 @@ def get_Score_trajectoriesNK_cuda(
     runtime_steps = []
     agent_fitness_history = []
     hamming_pairwise_history = []
+    kl_pairwise_history = []
     metrics = MetricsCalculator(normalization_factor=N)
 
     use_tqdm = bool(verbose and enable_visualization)
@@ -267,10 +268,11 @@ def get_Score_trajectoriesNK_cuda(
             leader_idx = torch.argmax(agent_mean_scores).item()
 
             avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
-            avg_kl = metrics.compute_average_kl(strategy.agents)
+            avg_kl, pairwise_kl = metrics.compute_average_kl(strategy.agents)
             avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
             avg_kl_history.append(avg_kl if avg_kl is not None else 0.0)
-            hamming_pairwise_history.append(pairwise_matrix.tolist())
+            hamming_pairwise_history.append(pairwise_matrix.tolist() if pairwise_matrix is not None else None)
+            kl_pairwise_history.append(pairwise_kl.tolist() if pairwise_kl is not None else None)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
 
         runtime_steps.append((epoch + 1) * size_pop)
@@ -344,6 +346,7 @@ def get_Score_trajectoriesNK_cuda(
             num_agents,
             theta_history,
             hamming_pairwise_history,
+            kl_pairwise_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

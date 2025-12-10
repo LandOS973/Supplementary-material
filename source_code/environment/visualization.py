@@ -29,25 +29,30 @@ def render_agent_dashboard(
     num_agents,
     theta_history,
     hamming_pairwise_history=None,
+    kl_pairwise_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
         return
 
-    pairwise_history = None
-    if hamming_pairwise_history:
-        try:
-            pairwise_history = np.asarray(hamming_pairwise_history, dtype=np.float32)
-        except Exception:
-            pairwise_history = np.array(
-                [np.asarray(step, dtype=np.float32) for step in hamming_pairwise_history],
-                dtype=np.float32,
-            )
-    has_pairwise = (
-        pairwise_history is not None
-        and pairwise_history.ndim == 3
-        and pairwise_history.shape[1] == num_agents
-    )
+    def _prepare_pairwise(history):
+        if not history:
+            return None
+        cleaned = []
+        for step in history:
+            if step is None:
+                return None
+            cleaned.append(np.asarray(step, dtype=np.float32))
+        arr = np.asarray(cleaned, dtype=np.float32)
+        if arr.ndim != 3 or arr.shape[1] != num_agents:
+            return None
+        return arr
+
+    pairwise_hamming = _prepare_pairwise(hamming_pairwise_history)
+    pairwise_kl = _prepare_pairwise(kl_pairwise_history)
+    has_pairwise_hamming = pairwise_hamming is not None
+    has_pairwise_kl = pairwise_kl is not None
+    has_pairwise_controls = has_pairwise_hamming or has_pairwise_kl
 
     try:
         root = tk.Tk()
@@ -67,16 +72,17 @@ def render_agent_dashboard(
         fig, axes = plt.subplots(rows, 1, figsize=(10, 6), sharex=True)
         axes = [axes] if not isinstance(axes, (list, np.ndarray)) else axes
 
-        pairwise_lines = []
-        avg_line = None
+        pairwise_lines = {"hamming": [], "kl": []}
+        avg_line_hamming = None
+        avg_line_kl = None
         if iterations and hamming_history:
-            (avg_line,) = axes[0].plot(iterations, hamming_history, color="tab:blue", label="Average")
+            (avg_line_hamming,) = axes[0].plot(iterations, hamming_history, color="tab:blue", label="Average")
         axes[0].set_title("Average / Pairwise Hamming Distance")
         axes[0].set_ylabel("Hamming")
         axes[0].grid(True, linestyle="--", alpha=0.4)
 
         if iterations and kl_history:
-            axes[1].plot(iterations, kl_history, color="tab:orange")
+            (avg_line_kl,) = axes[1].plot(iterations, kl_history, color="tab:orange", label="Average")
         axes[1].set_title("Average KL Distance")
         axes[1].set_ylabel("KL")
         axes[1].grid(True, linestyle="--", alpha=0.4)
@@ -106,7 +112,7 @@ def render_agent_dashboard(
         toolbar.update()
         toolbar.pack(side="right", anchor="se")
 
-        if has_pairwise and num_agents > 1:
+        if has_pairwise_controls and num_agents > 1:
             agent_labels = [f"Agent {idx}" for idx in range(num_agents)]
             options = ["Moyenne"] + agent_labels
             selected_agent = tk.StringVar(value="Moyenne")
@@ -114,38 +120,70 @@ def render_agent_dashboard(
 
             def _update_pairwise_lines(*_):
                 nonlocal pairwise_lines
-                for line in pairwise_lines:
-                    try:
-                        line.remove()
-                    except ValueError:
-                        pass
-                pairwise_lines = []
-                steps = min(len(iterations), pairwise_history.shape[0])
-                if steps == 0:
+
+                def _clear_lines(key):
+                    for line in pairwise_lines[key]:
+                        try:
+                            line.remove()
+                        except ValueError:
+                            pass
+                    pairwise_lines[key] = []
+
+                _clear_lines("hamming")
+                _clear_lines("kl")
+
+                if not iterations:
                     canvas.draw_idle()
                     return
+
                 show_average = selected_agent.get() == "Moyenne"
-                if avg_line:
-                    avg_line.set_visible(show_average)
+                if avg_line_hamming:
+                    avg_line_hamming.set_visible(show_average or not has_pairwise_hamming)
+                if avg_line_kl:
+                    avg_line_kl.set_visible(show_average or not has_pairwise_kl)
+
                 if not show_average:
                     try:
                         anchor_idx = agent_labels.index(selected_agent.get())
                     except ValueError:
                         anchor_idx = 0
-                    x_axis = iterations[:steps]
-                    for other_idx in range(num_agents):
-                        if other_idx == anchor_idx:
-                            continue
-                        series = pairwise_history[:steps, anchor_idx, other_idx]
-                        (line,) = axes[0].plot(
-                            x_axis,
-                            series,
-                            linestyle="--",
-                            color=color_map(other_idx % color_map.N),
-                            label=f"Agent {anchor_idx} ↔ {other_idx}",
-                        )
-                        pairwise_lines.append(line)
-                axes[0].legend(loc="upper right")
+
+                    if has_pairwise_hamming:
+                        steps_h = min(len(iterations), pairwise_hamming.shape[0])
+                        x_axis_h = iterations[:steps_h]
+                        for other_idx in range(num_agents):
+                            if other_idx == anchor_idx:
+                                continue
+                            series = pairwise_hamming[:steps_h, anchor_idx, other_idx]
+                            (line,) = axes[0].plot(
+                                x_axis_h,
+                                series,
+                                linestyle="--",
+                                color=color_map(other_idx % color_map.N),
+                                label=f"Ham: Agent {anchor_idx} ↔ {other_idx}",
+                            )
+                            pairwise_lines["hamming"].append(line)
+
+                    if has_pairwise_kl:
+                        steps_kl = min(len(iterations), pairwise_kl.shape[0])
+                        x_axis_kl = iterations[:steps_kl]
+                        for other_idx in range(num_agents):
+                            if other_idx == anchor_idx:
+                                continue
+                            series = pairwise_kl[:steps_kl, anchor_idx, other_idx]
+                            (line,) = axes[1].plot(
+                                x_axis_kl,
+                                series,
+                                linestyle="--",
+                                color=color_map(other_idx % color_map.N),
+                                label=f"KL: Agent {anchor_idx} ↔ {other_idx}",
+                            )
+                            pairwise_lines["kl"].append(line)
+
+                if avg_line_hamming or pairwise_lines["hamming"]:
+                    axes[0].legend(loc="upper right")
+                if avg_line_kl or pairwise_lines["kl"]:
+                    axes[1].legend(loc="upper right")
                 canvas.draw_idle()
 
             agent_menu = tk.OptionMenu(button_container, selected_agent, *options, command=lambda *_: _update_pairwise_lines())
