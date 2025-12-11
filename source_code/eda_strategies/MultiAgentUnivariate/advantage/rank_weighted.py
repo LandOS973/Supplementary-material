@@ -13,8 +13,8 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.start_weight = float(100.0)   # w_max
-        self.end_weight = float(-100.0)    # w_min
+        self.start_weight = float(1.0)   # w_max
+        self.end_weight = float(-1.0)    # w_min
 
     def compute(self, fitness, nb_instances=None, num_agents=None, **context):
         nb_instances = nb_instances or context.get("nb_instances")
@@ -65,8 +65,8 @@ class PerAgentRankWeightedAdvantage(AdvantageStrategy):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.start_weight = float(100.0)   # w_max
-        self.end_weight = float(-100.0)    # w_min
+        self.start_weight = float(1.0)   # w_max
+        self.end_weight = float(-1.0)    # w_min
 
     def compute(self, fitness, nb_instances=None, num_agents=None, **context):
         nb_instances = nb_instances or context.get("nb_instances")

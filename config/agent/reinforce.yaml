@@ -3,5 +3,5 @@ updateMethod: REINFORCE
 M: 6
 lambda: 36
 learning_rate_svgd: 0.5
-alpha: 12
-advantage: peragentrankweighted
+alpha: 0.12
+advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline
