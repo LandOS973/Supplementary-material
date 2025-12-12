@@ -23,10 +23,6 @@ class RBF(nn.Module):
         #   - si None : sigma sera estimé automatiquement (median heuristic)
         #   - sinon   : on utilise cette valeur fixe (float ou tensor)
         self.sigma = sigma
-        # last_gamma :
-        #   - scalaire tensor contenant le gamma utilisé à la dernière forward
-        #   - utilisé ensuite par SVGD pour calculer ∇_θ k analytiquement
-        self.last_gamma = None
 
     def forward(self, X, Y):
         """
@@ -66,7 +62,9 @@ class RBF(nn.Module):
         # gamma est un scalaire tensor -> broadcast sur (B, M, M)
         K = torch.exp(-gamma * dnorm2)
 
-        return K
+
+        grad = self._rbf_gradients(X, Y, K, gamma)
+        return K, grad
 
     def _compute_gamma(self, dnorm2, m):
         """
@@ -110,7 +108,17 @@ class RBF(nn.Module):
         if not torch.is_tensor(gamma):
             gamma = torch.tensor(gamma, device=dnorm2.device, dtype=dnorm2.dtype)
 
-        # On mémorise gamma pour que SVGD puisse le récupérer (self.kernel.last_gamma)
-        self.last_gamma = gamma
-
         return gamma
+
+    def _rbf_gradients(self, X, Y, K, gamma):
+        """
+        Calcule ∇_{X_i} k(X_i, Y_j) pour toutes les paires (i, j).
+
+        Résultat :
+            grad[b, i, j, :] = -2 gamma * (X_{b,i} - Y_{b,j}) * k(X_{b,i}, Y_{b,j})
+        """
+        # (B, M, 1, N) - (B, 1, P, N) = (B, M, P, N)
+        diff = X[:, :, None, :] - Y[:, None, :, :]
+        gamma_term = (-2.0 * gamma).view(1, 1, 1, 1)
+        grad = gamma_term * diff * K.unsqueeze(-1)
+        return grad

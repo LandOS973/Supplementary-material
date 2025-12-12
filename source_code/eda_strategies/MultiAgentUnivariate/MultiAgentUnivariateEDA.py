@@ -4,6 +4,7 @@ import torch.nn as nn
 from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
 from eda_strategies.MultiAgentUnivariate.SVGD.rbf import RBF
+from eda_strategies.MultiAgentUnivariate.SVGD.ppk import PPK
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
 
@@ -54,7 +55,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.agents = []
 
         # interaction SVGD (simple constant pour l'instant)
-        self.svgd = SVGD(RBF(), alpha=self.svgd_alpha)
+        self.svgd = SVGD(PPK(), alpha=self.svgd_alpha)
         self.theta_history = []
 
         # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
