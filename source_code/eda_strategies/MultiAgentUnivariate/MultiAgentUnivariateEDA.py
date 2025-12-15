@@ -207,11 +207,14 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.last_theta_grad is None:
             return
 
+        theta = self.theta  # (B, M, N)
+        score = -self.last_theta_grad.detach()  # pas de rétroprop vers les agents
+
+        with torch.enable_grad():
+            phi = self.svgd.phi(theta, score)  # (B, M, N)
+
         with torch.no_grad():
-            theta = self.theta.detach()                     # (B, M, N)
-            score = -self.last_theta_grad.detach()          # (B, M, N) un gradient par instance, agent et variable
-            φ = self.svgd.phi(theta, score)  # (B, M, N)
-            self.theta.data += (self.learning_rate_svgd * φ)
+            self.theta += self.learning_rate_svgd * phi
 
     # =======================
     #   Visualisation

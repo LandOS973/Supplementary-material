@@ -32,6 +32,8 @@ class RBF(nn.Module):
         Retourne :
             K : (B, M, P) avec K[b, i, j] = exp( - gamma * || X_{b,i} - Y_{b,j} ||^2 )
         """
+        X = X.requires_grad_(True)
+        Yd = Y.detach()
         # Produit scalaire par batch :
         # XX[b, i, j] = <X_{b,i}, X_{b,j}>
         XX = torch.matmul(X, X.transpose(-1, -2))        # (B, M, M)
@@ -51,20 +53,16 @@ class RBF(nn.Module):
         #                 = ||X_{b,i}||^2 + ||Y_{b,j}||^2 - 2 <X_{b,i}, Y_{b,j}>
         dnorm2 = -2.0 * XY + diag_x + diag_y             # (B, M, M)
 
-        # Nombre de points M (pour la median heuristic)
-        m = X.size(-2)
-
         # Calcule gamma à partir de dnorm2 (et éventuellement sigma)
-        gamma = self._compute_gamma(dnorm2, m)
+        gamma = self._compute_gamma(dnorm2, m=X.size(-2))
 
         # Kernel RBF :
         # K[b, i, j] = exp( - gamma * dnorm2[b, i, j] )
         # gamma est un scalaire tensor -> broadcast sur (B, M, M)
         K = torch.exp(-gamma * dnorm2)
-
-
-        grad = self._rbf_gradients(X, Y, K, gamma)
-        return K, grad
+        gradX, = torch.autograd.grad(K.sum(), X, create_graph=True)
+        grad_term = -gradX
+        return K, grad_term 
 
     def _compute_gamma(self, dnorm2, m):
         """
@@ -109,16 +107,3 @@ class RBF(nn.Module):
             gamma = torch.tensor(gamma, device=dnorm2.device, dtype=dnorm2.dtype)
 
         return gamma
-
-    def _rbf_gradients(self, X, Y, K, gamma):
-        """
-        Calcule ∇_{X_i} k(X_i, Y_j) pour toutes les paires (i, j).
-
-        Résultat :
-            grad[b, i, j, :] = -2 gamma * (X_{b,i} - Y_{b,j}) * k(X_{b,i}, Y_{b,j})
-        """
-        # (B, M, 1, N) - (B, 1, P, N) = (B, M, P, N)
-        diff = X[:, :, None, :] - Y[:, None, :, :]
-        gamma_term = (-2.0 * gamma).view(1, 1, 1, 1)
-        grad = gamma_term * diff * K.unsqueeze(-1)
-        return grad
