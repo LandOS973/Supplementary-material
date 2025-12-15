@@ -54,7 +54,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
         self.agents = []
 
-        # interaction SVGD (simple constant pour l'instant)
+        # interaction SVGD 
         self.svgd = SVGD(PPK(), alpha=self.svgd_alpha)
         self.theta_history = []
 

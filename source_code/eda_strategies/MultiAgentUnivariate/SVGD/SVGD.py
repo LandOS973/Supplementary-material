@@ -25,6 +25,10 @@ class SVGD:
         # K[b, i, j] = k(θ_i, θ_j)
         # grad_first[b, i, j, :] = ∇_{θ_i} k(θ_i, θ_j)
         K, grad_first = self.kernel(theta, theta)  # (B, M, M), (B, M, M, N)
+        if torch.isnan(K).any() or torch.isinf(K).any():
+            K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
+        if torch.isnan(grad_first).any() or torch.isinf(grad_first).any():
+            grad_first = torch.nan_to_num(grad_first, nan=0.0, posinf=0.0, neginf=0.0)
 
         # K_transpose[b, i, j] = k(θ_j, θ_i)
         K_transpose = K.transpose(-2, -1)  # (B, M, M)
@@ -40,4 +44,6 @@ class SVGD:
 
         # Average over M particles
         phi = (score_term / self.alpha + grad_term) / M  # (B, M, N)
+        if torch.isnan(phi).any() or torch.isinf(phi).any():
+            phi = torch.nan_to_num(phi, nan=0.0, posinf=0.0, neginf=0.0)
         return phi

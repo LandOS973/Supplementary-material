@@ -15,21 +15,32 @@ class MetricsCalculator:
         if agents is None or len(agents) < 2:
             return 0.0, None
 
-        eps = 1e-8
+        eps = 1e-6
         with torch.no_grad():
-            probs = torch.stack([torch.sigmoid(self.agent_theta_tensor(agent)).detach() for agent in agents], dim=0)
+            probs = torch.stack(
+                [torch.sigmoid(self.agent_theta_tensor(agent)).detach() for agent in agents],
+                dim=0
+            )
+            probs = torch.clamp(probs, eps, 1 - eps)
 
         def _clamp(x):
             return torch.clamp(x, eps, 1 - eps)
 
-        p = (probs).unsqueeze(1)  # (M,1,B,N)
-        q = (probs).unsqueeze(0)  # (1,M,B,N)
+        p = _clamp(probs.unsqueeze(1))  # (M,1,B,N)
+        q = _clamp(probs.unsqueeze(0))  # (1,M,B,N)
         m = _clamp(0.5 * (p + q))
 
         def _kl(a, b):
-            return (a * (torch.log(a) - torch.log(b)) + (1 - a) * (torch.log1p(-a) - torch.log1p(-b))).sum(dim=-1)
+            a = _clamp(a)
+            b = _clamp(b)
+            val = (a * (torch.log(a) - torch.log(b)) + (1 - a) * (torch.log1p(-a) - torch.log1p(-b))).sum(dim=-1)
+            if torch.isnan(val).any() or torch.isinf(val).any():
+                val = torch.nan_to_num(val, nan=0.0, posinf=0.0, neginf=0.0)
+            return val
 
         js = 0.5 * (_kl(p, m) + _kl(q, m))  # (M,M,B)
+        if torch.isnan(js).any() or torch.isinf(js).any():
+            js = torch.nan_to_num(js, nan=0.0, posinf=0.0, neginf=0.0)
         pairwise_mean = js.mean(dim=-1)  # (M,M)
 
         num_agents = probs.shape[0]
