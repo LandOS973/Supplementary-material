@@ -19,8 +19,7 @@ class HammingKernel(nn.Module):
 
     def forward(self, Thetas):
         """
-        X : (B, M, N)
-        Y : (B, P, N)
+        Thetas : (B, M, N)
         """
         Thetas = Thetas.requires_grad_(True)
 
