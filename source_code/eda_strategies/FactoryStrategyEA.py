@@ -23,6 +23,7 @@ class FactoryStrategyEA:
         enable_visualization=False,
         svgd_alpha=10.0,
         advantage_cfg=None,
+        kernel_config=None,
     ):
         match typeStrategy:
             case "UMDA":
@@ -41,6 +42,7 @@ class FactoryStrategyEA:
                     enable_visualization=enable_visualization,
                     svgd_alpha=svgd_alpha,
                     advantage_cfg=advantage_cfg,
+                    kernel_config=kernel_config,
                 )
             case _:
                 raise ValueError(f"Unknown strategy type: {typeStrategy}")

@@ -4,6 +4,7 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import os
 import random
+from pathlib import Path
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
@@ -14,6 +15,18 @@ warnings.filterwarnings("ignore")
 np.set_printoptions(suppress=True, formatter={"float_kind": lambda x: f"{x:.6f}"})
 
 # Replication code for the article "Black-Box Combinatorial Optimization with Order-Invariant Reinforcement Learning"
+
+
+def _load_kernel_config(kernel_name: str, repo_root: str):
+    kernel_dir = Path(repo_root) / "config" / "kernel"
+    kernel_path = kernel_dir / f"{kernel_name}.yaml"
+    if not kernel_path.exists():
+        available = ", ".join(sorted(p.stem for p in kernel_dir.glob("*.yaml"))) if kernel_dir.exists() else "none"
+        raise FileNotFoundError(
+            f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. Kernels disponibles: {available}"
+        )
+    cfg = OmegaConf.load(str(kernel_path))
+    return OmegaConf.to_container(cfg, resolve=True)
 
 
 @hydra.main(config_path="../config", config_name="config")
@@ -40,17 +53,34 @@ def main(cfg: DictConfig):
     verbose = bool(cfg.get('verbose', True))
     budget = int(cfg.get('budget', 10000))
     visualization_enabled = bool(cfg.get('visualization', True))
-    learning_rate_svgd = float(agent_val("learning_rate_svgd") or cfg.get('learning_rate_svgd') or 0.5)
-    svgd_alpha = float(agent_val("alpha") or cfg.get('alpha') or 10.0)
     advantage_cfg = agent_val("advantage") or cfg.get('advantage') or "baseline"
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
     M = int(agent_val("M") or cfg.get('M') or 1)
     learning_rate = float(agent_val("learning_rate") or cfg.get('learning_rate') or 0.0)
     typeStrategy = "PPO-EDA"
-    print(f"Using REINFORCE update. Number of agents: {M} with "
-          f"learning_rate_svgd: {learning_rate_svgd}, λ: {lambda_}, svgd_alpha: {svgd_alpha}, "
-          f"advantage={advantage_cfg}")
+    script_dir = os.path.abspath(os.path.dirname(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
+    kernel_cfg = _load_kernel_config(kernel_name, repo_root)
+    kernel_lr = kernel_cfg.get("learning_rate_svgd")
+    kernel_alpha = kernel_cfg.get("alpha")
+    learning_rate_svgd = float(
+        agent_val("learning_rate_svgd")
+        or cfg.get('learning_rate_svgd')
+        or kernel_lr
+        or 0.5
+    )
+    svgd_alpha = float(
+        agent_val("alpha")
+        or cfg.get('alpha')
+        or kernel_alpha
+        or 10.0
+    )
+    print(
+        f"Using REINFORCE update. Number of agents: {M} with learning_rate_svgd: {learning_rate_svgd}, "
+        f"λ: {lambda_}, svgd_alpha: {svgd_alpha}, advantage={advantage_cfg}, kernel={kernel_name}"
+    )
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -58,9 +88,6 @@ def main(cfg: DictConfig):
 
     N = dim
 
-    # Build results path relative to this script file (so it works regardless of current working dir)
-    script_dir = os.path.abspath(os.path.dirname(__file__))
-    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
     write_logs = bool(cfg.get('write_logs', False))
     pathResult = None
 
@@ -129,6 +156,7 @@ def main(cfg: DictConfig):
         enable_visualization=visualization_enabled,
         svgd_alpha=svgd_alpha,
         advantage_cfg=advantage_cfg,
+        kernel_config=kernel_cfg,
     ).to(device)
     name_file_result = None
     if (type_problem == "QUBO"):

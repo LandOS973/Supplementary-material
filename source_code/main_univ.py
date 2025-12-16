@@ -263,6 +263,7 @@ def main():
             enable_visualization=DEFAULTS.get("visualization", True),
             svgd_alpha=svgd_alpha,
             advantage_cfg=advantage_cfg,
+            kernel_config=None,
         ).to(device)
 
         # ---- Exécution avec chemin TEMPORAIRE (UNE barre), puis suppression immédiate ----

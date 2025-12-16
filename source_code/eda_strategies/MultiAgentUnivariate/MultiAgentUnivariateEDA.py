@@ -31,6 +31,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         sigma=None,
         svgd_alpha=10.0,
         advantage_cfg=None,
+        kernel_config=None,
     ):
         Abstract_EDA.__init__(self, N, lambda_, device)
         nn.Module.__init__(self)
@@ -48,6 +49,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.dim_variables = dim_variables
         self.svgd_alpha = float(svgd_alpha)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
+        self.kernel_config = kernel_config or {}
+        self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
+        self.kernel_params = self.kernel_config.get("params") or {}
 
         # λ par agent
         self.lambda_per_agent = lambda_ // M
@@ -56,7 +60,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.agents = []
 
         # interaction SVGD 
-        self.svgd = SVGD(HammingKernel(), alpha=self.svgd_alpha)
+        kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
+        self.svgd = SVGD(kernel_impl, alpha=self.svgd_alpha)
         self.theta_history = []
 
         # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
@@ -239,3 +244,14 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             self.agents = []
             return
         self.agents = [self.theta[:, idx, :] for idx in range(self.M)]
+
+    def _build_svgd_kernel(self, kernel_name, kernel_params):
+        kernel = kernel_name.lower()
+        if kernel in ("hk", "hamming", "hammingkernel"):
+            return HammingKernel()
+        if kernel == "ppk":
+            return PPK()
+        if kernel == "rbf":
+            sigma = kernel_params.get("sigma") if isinstance(kernel_params, dict) else None
+            return RBF(sigma=sigma)
+        raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf.")

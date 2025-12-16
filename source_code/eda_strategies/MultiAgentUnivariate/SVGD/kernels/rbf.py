@@ -60,10 +60,6 @@ class RBF(nn.Module):
         K = torch.exp(-gamma * dnorm2)
         grad_Thetas, = torch.autograd.grad(K.sum(), Thetas, create_graph=True)
         grad_term = -grad_Thetas
-
-        # ratio de k et du grad
-        print("grad mean :", grad_term.abs().mean().item())
-        print("k mean :", K.abs().mean().item())
         return K, grad_term 
 
     def _compute_gamma(self, dnorm2, m):

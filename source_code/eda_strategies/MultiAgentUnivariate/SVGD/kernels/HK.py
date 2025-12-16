@@ -30,7 +30,7 @@ class HammingKernel(nn.Module):
         D = hamming.sum(dim=-1)  # (B, M, P)
 
         N = Thetas.size(-1) 
-        K = N - D  # (B, M, P)
+        K =((N - D) / N)# (B, M, P)
 
         grad_Thetas, = torch.autograd.grad(K.sum(), Thetas, create_graph=True)
         grad_term = -grad_Thetas
