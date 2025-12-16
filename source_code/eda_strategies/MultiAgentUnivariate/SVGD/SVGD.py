@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 
 class SVGD:
     def __init__(self, kernel, alpha=10.0):
@@ -8,7 +8,7 @@ class SVGD:
             raise ValueError("alpha must be non-zero.")
         self.alpha = float(alpha)
 
-    def phi(self, theta, score):
+    def phi(self, thetas, score):
         """
         B => Nombre d'instances
         N => Nombre de variables
@@ -19,19 +19,18 @@ class SVGD:
         Standard SVGD update:
             φ_i = (1/M) * [ Σ_j k(θ_j, θ_i) * score_j  +  Σ_j ∇_θ_j k(θ_j, θ_i) ]
         """
-        B, M, N = theta.shape
+        B, M, N = thetas.shape
 
         # Gram matrix & gradients produced by the kernel itself
         # K[b, i, j] = k(θ_i, θ_j)
         # grad_first[b, i, j, :] = ∇_{θ_i} k(θ_i, θ_j)
-        K, grad_term = self.kernel(theta, theta)  # (B, M, M), (B, M, M, N)
+        K, grad_term = self.kernel(thetas)  # (B, M, M), (B, M, N)
         if torch.isnan(K).any() or torch.isinf(K).any():
             K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
         if torch.isnan(grad_term).any() or torch.isinf(grad_term).any():
             grad_term = torch.nan_to_num(grad_term, nan=0.0, posinf=0.0, neginf=0.0)
         # K_transpose[b, i, j] = k(θ_j, θ_i)
         K_transpose = K.transpose(-2, -1)  # (B, M, M)
-
         # First SVGD term: Σ_j k(θ_j, θ_i) * score_j
         # matmul: (B, M, M) @ (B, M, N) -> (B, M, N)
         score_term = torch.matmul(K_transpose, score)

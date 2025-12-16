@@ -24,7 +24,7 @@ class RBF(nn.Module):
         #   - sinon   : on utilise cette valeur fixe (float ou tensor)
         self.sigma = sigma
 
-    def forward(self, X, Y):
+    def forward(self, Thetas):
         """
         X : (B, M, N)
         Y : (B, P, N)
@@ -32,16 +32,14 @@ class RBF(nn.Module):
         Retourne :
             K : (B, M, P) avec K[b, i, j] = exp( - gamma * || X_{b,i} - Y_{b,j} ||^2 )
         """
-        X = X.requires_grad_(True)
-        Yd = Y.detach()
+        Thetas = Thetas.requires_grad_(True)
         # Produit scalaire par batch :
         # XX[b, i, j] = <X_{b,i}, X_{b,j}>
-        XX = torch.matmul(X, X.transpose(-1, -2))        # (B, M, M)
+        XX = torch.matmul(Thetas, Thetas.transpose(-1, -2))        # (B, M, M)
         # XY[b, i, j] = <X_{b,i}, Y_{b,j}>
-        XY = torch.matmul(X, Y.transpose(-1, -2))        # (B, M, M)
+        XY = torch.matmul(Thetas, Thetas.transpose(-1, -2))        # (B, M, M)
         # YY[b, i, j] = <Y_{b,i}, Y_{b,j}>
-        YY = torch.matmul(Y, Y.transpose(-1, -2))        # (B, M, M)
-
+        YY = torch.matmul(Thetas, Thetas.transpose(-1, -2))        # (B, M, M)
         # Normes au carré :
         # diag_x[b, i] = ||X_{b,i}||^2
         diag_x = XX.diagonal(dim1=-2, dim2=-1).unsqueeze(-1)  # (B, M, 1)
@@ -54,14 +52,18 @@ class RBF(nn.Module):
         dnorm2 = -2.0 * XY + diag_x + diag_y             # (B, M, M)
 
         # Calcule gamma à partir de dnorm2 (et éventuellement sigma)
-        gamma = self._compute_gamma(dnorm2, m=X.size(-2))
+        gamma = self._compute_gamma(dnorm2, m=Thetas.size(-2))
 
         # Kernel RBF :
         # K[b, i, j] = exp( - gamma * dnorm2[b, i, j] )
         # gamma est un scalaire tensor -> broadcast sur (B, M, M)
         K = torch.exp(-gamma * dnorm2)
-        gradX, = torch.autograd.grad(K.sum(), X, create_graph=True)
-        grad_term = -gradX
+        grad_Thetas, = torch.autograd.grad(K.sum(), Thetas, create_graph=True)
+        grad_term = -grad_Thetas
+
+        # ratio de k et du grad
+        print("grad mean :", grad_term.abs().mean().item())
+        print("k mean :", K.abs().mean().item())
         return K, grad_term 
 
     def _compute_gamma(self, dnorm2, m):
