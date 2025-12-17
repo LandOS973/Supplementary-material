@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 
 class HammingKernel(nn.Module):
@@ -16,11 +17,13 @@ class HammingKernel(nn.Module):
 
     def __init__(self):
         super().__init__()
+        self.mask = None
 
     def forward(self, Thetas):
         """
         Thetas : (B, M, N)
         """
+        B, M, N = Thetas.shape
         Thetas = Thetas.requires_grad_(True)
 
         probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
@@ -31,7 +34,13 @@ class HammingKernel(nn.Module):
 
         N = Thetas.size(-1) 
         K =((N - D) / N)# (B, M, M)
+        if self.mask is None:
+            self.mask = torch.triu(
+                torch.ones((B, M, M), device=Thetas.device)
+            )
 
-        grad_Thetas, = torch.autograd.grad(K.sum(), Thetas, create_graph=True)
+        UpperTriangular_K = K*self.mask
+
+        grad_Thetas, = torch.autograd.grad(UpperTriangular_K.sum().sum(), Thetas, create_graph=True)
         grad_term = -grad_Thetas
         return K, grad_term

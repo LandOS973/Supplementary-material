@@ -71,10 +71,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # Buffers (B, M)
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
-
-        # États d'optimisation globaux
         self.last_theta_grad = None
-        self.optimizer = None
 
     def forward(self):
         """
@@ -101,9 +98,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # Baseline en version (B, M)
         self.baseline.resize_(nb_instances, self.M).zero_()
-
-        # Optimizer REINFORCE
-        self.optimizer = torch.optim.SGD([self.theta], lr=0.02)
 
         # Historique de visualisation
         self.theta_history = []
@@ -186,13 +180,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
         loss = -loss_per_instance.sum()
 
-        self.optimizer.zero_grad(set_to_none=True)
-        loss.backward()
+        grad_theta, = torch.autograd.grad(loss, theta, create_graph=False)
+        self.last_theta_grad = grad_theta.detach().clone().view(B, M, N)
 
-        if self.theta.grad is None:
-            self.last_theta_grad = torch.zeros_like(self.theta)
-        else:
-            self.last_theta_grad = self.theta.grad.detach().clone()
         with torch.no_grad():
             baseline_new = fitness.mean(dim=1)  # (BM,)
             self.baseline = baseline_new.view(B, M)
