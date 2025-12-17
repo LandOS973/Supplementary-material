@@ -24,13 +24,13 @@ class HammingKernel(nn.Module):
         Thetas = Thetas.requires_grad_(True)
 
         probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
-        probs_j = torch.sigmoid(Thetas).unsqueeze(1)  # (B, 1, P, N)
+        probs_j = torch.sigmoid(Thetas).unsqueeze(1)  # (B, 1, M, N)
 
-        hamming = probs_i + probs_j - 2 * probs_i * probs_j  # (B, M, P, N)
-        D = hamming.sum(dim=-1)  # (B, M, P)
+        hamming = probs_i + probs_j - 2 * probs_i * probs_j  # (B, M, M, N)
+        D = hamming.sum(dim=-1)  # (B, M, M)
 
         N = Thetas.size(-1) 
-        K =((N - D) / N)# (B, M, P)
+        K =((N - D) / N)# (B, M, M)
 
         grad_Thetas, = torch.autograd.grad(K.sum(), Thetas, create_graph=True)
         grad_term = -grad_Thetas
