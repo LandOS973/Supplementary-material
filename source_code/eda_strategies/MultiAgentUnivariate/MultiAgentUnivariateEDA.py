@@ -63,6 +63,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
         self.svgd = SVGD(kernel_impl, alpha=self.svgd_alpha)
         self.theta_history = []
+        self.kernel_metric_history = []
 
         # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
         self.theta = None
@@ -106,6 +107,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # Historique de visualisation
         self.theta_history = []
+        self.kernel_metric_history = []
         self.last_theta_grad = None
         if self.enable_visualization:
             self._record_theta()
@@ -218,6 +220,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         with torch.enable_grad():
             phi = self.svgd.phi(theta, score)  # (B, M, N)
+            kernel_stats = self.svgd.get_last_kernel_stats()
+            if kernel_stats:
+                self.kernel_metric_history.append(kernel_stats)
 
         with torch.no_grad():
             self.theta += self.learning_rate_svgd * phi
@@ -238,6 +243,14 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     
     def get_theta_history(self):
         return {"values": self.theta_history}
+
+    def get_kernel_metric_history(self):
+        return list(self.kernel_metric_history)
+
+    def get_latest_kernel_metrics(self):
+        if not self.kernel_metric_history:
+            return None
+        return self.kernel_metric_history[-1]
 
     def _refresh_agent_views(self):
         if self.theta is None:

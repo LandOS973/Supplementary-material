@@ -35,6 +35,8 @@ def render_agent_dashboard(
     l2_pairwise_history=None,
     entropy_history=None,
     entropy_agent_history=None,
+    kernel_value_history=None,
+    kernel_grad_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -70,6 +72,18 @@ def render_agent_dashboard(
     pairwise_js = _prepare_pairwise(js_pairwise_history)
     pairwise_l2 = _prepare_pairwise(l2_pairwise_history)
     entropy_agent_series = _prepare_agent_series(entropy_agent_history)
+
+    ratio_history = None
+    if kernel_value_history and kernel_grad_history:
+        length = min(len(kernel_value_history), len(kernel_grad_history))
+        if length > 0:
+            ratio_history = []
+            eps = 1e-8
+            for idx in range(length):
+                grad = kernel_grad_history[idx]
+                val = kernel_value_history[idx]
+                denom = grad if abs(grad) > eps else eps
+                ratio_history.append(val / denom)
 
     metrics_data = OrderedDict()
     if iterations and hamming_history:
@@ -108,9 +122,35 @@ def render_agent_dashboard(
             overlay_type="per_agent",
             overlay_data=entropy_agent_series,
         )
+    if iterations and kernel_value_history:
+        metrics_data["Kernel Value"] = dict(
+            average=kernel_value_history,
+            ylabel="k(i,j)",
+            title="Average Kernel Similarity",
+            color="tab:purple",
+            overlay_type=None,
+            overlay_data=None,
+        )
+    if iterations and kernel_grad_history:
+        metrics_data["Kernel Gradient"] = dict(
+            average=kernel_grad_history,
+            ylabel="‖∇k‖",
+            title="Average Kernel Gradient ",
+            color="tab:brown",
+            overlay_type=None,
+            overlay_data=None,
+        )
+    if iterations and ratio_history:
+        metrics_data["Kernel Ratio"] = dict(
+            average=ratio_history,
+            ylabel="k / ∇k",
+            title="Kernel Similarity / Gradient Ratio",
+            color="tab:pink",
+            overlay_type=None,
+            overlay_data=None,
+        )
 
     metric_names = list(metrics_data.keys())
-    max_metrics_displayed = 3
 
     try:
         root = tk.Tk()
@@ -236,27 +276,17 @@ def render_agent_dashboard(
             canvas.draw_idle()
             update_overlays()
 
-        def enforce_selection_limits(changed_metric=None):
-            enabled = [name for name in metrics_order if metric_vars.get(name, tk.IntVar()).get()]
-            if not enabled:
-                fallback = changed_metric or (metrics_order[0] if metrics_order else None)
-                if fallback:
-                    metric_vars[fallback].set(1)
-                    enabled = [fallback]
-            if len(enabled) > max_metrics_displayed:
-                if changed_metric and changed_metric in enabled:
-                    metric_vars[changed_metric].set(0)
-                    enabled = [name for name in metrics_order if metric_vars[name].get()]
-                else:
-                    while len(enabled) > max_metrics_displayed:
-                        last = enabled.pop()
-                        metric_vars[last].set(0)
-                    enabled = [name for name in metrics_order if metric_vars[name].get()]
-            return enabled
-
         def _toggle_metric(metric_name):
             nonlocal selected_metrics
-            selected = enforce_selection_limits(metric_name)
+            selected = [name for name in metrics_order if metric_vars.get(name, tk.IntVar()).get()]
+            if not selected:
+                if metric_name in metrics_order:
+                    metric_vars[metric_name].set(1)
+                    selected = [metric_name]
+                elif metrics_order:
+                    first = metrics_order[0]
+                    metric_vars[first].set(1)
+                    selected = [first]
             selected_metrics = selected
             draw_metrics()
 
@@ -377,8 +407,11 @@ def render_agent_dashboard(
         agent_menu = tk.OptionMenu(agent_frame, selected_agent, *agent_options, command=lambda *_: update_overlays())
         agent_menu.pack(side="left")
 
+        hidden_defaults = {"Entropy", "L2", "JS"}
         if metrics_order:
-            default_selection = metrics_order[:max_metrics_displayed]
+            default_selection = [name for name in metrics_order if name not in hidden_defaults]
+            if not default_selection:
+                default_selection = metrics_order[:]
             metric_frame = tk.Frame(button_container)
             metric_frame.pack(side="left", padx=4, pady=4)
             tk.Label(metric_frame, text="Metrics:").pack(side="left")
@@ -414,7 +447,7 @@ def render_agent_dashboard(
 
         selected_metrics = [name for name in metrics_order if metric_vars.get(name, tk.IntVar()).get()]
         if not selected_metrics and metrics_order:
-            selected_metrics = metrics_order[:max_metrics_displayed]
+            selected_metrics = [name for name in metrics_order if name not in hidden_defaults] or metrics_order[:]
             for name in metrics_order:
                 metric_vars[name].set(1 if name in selected_metrics else 0)
 

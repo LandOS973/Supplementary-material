@@ -7,6 +7,7 @@ class SVGD:
         if alpha == 0:
             raise ValueError("alpha must be non-zero.")
         self.alpha = float(alpha)
+        self.last_kernel_stats = None
 
     def phi(self, thetas, score):
         """
@@ -38,4 +39,11 @@ class SVGD:
         phi = (score_term / self.alpha + grad_term) / M  # (B, M, N)
         if torch.isnan(phi).any() or torch.isinf(phi).any():
             phi = torch.nan_to_num(phi, nan=0.0, posinf=0.0, neginf=0.0)
+        self.last_kernel_stats = {
+            "avg_kernel_value": float(K.mean().item()),
+            "avg_kernel_grad": float(grad_term.mean().item()),
+        }
         return phi
+
+    def get_last_kernel_stats(self):
+        return self.last_kernel_stats or None

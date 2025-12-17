@@ -163,6 +163,8 @@ def get_Score_trajectoriesNK_cuda(
     l2_pairwise_history = []
     entropy_agent_history = []
     kl_pairwise_history = []
+    avg_kernel_value_history = []
+    avg_kernel_grad_history = []
     metrics = MetricsCalculator(normalization_factor=N)
 
     use_tqdm = bool(verbose and enable_visualization)
@@ -288,6 +290,14 @@ def get_Score_trajectoriesNK_cuda(
             else:
                 entropy_agent_history.append(None)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
+            kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
+            kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
+            if kernel_stats:
+                avg_kernel_value_history.append(kernel_stats.get("avg_kernel_value", 0.0))
+                avg_kernel_grad_history.append(kernel_stats.get("avg_kernel_grad", 0.0))
+            else:
+                avg_kernel_value_history.append(0.0)
+                avg_kernel_grad_history.append(0.0)
 
         runtime_steps.append((epoch + 1) * size_pop)
         best_fitness_history.append(-global_best)
@@ -365,6 +375,8 @@ def get_Score_trajectoriesNK_cuda(
             l2_pairwise_history,
             avg_entropy_history,
             entropy_agent_history,
+            avg_kernel_value_history,
+            avg_kernel_grad_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)
