@@ -26,7 +26,11 @@ def _load_kernel_config(kernel_name: str, repo_root: str):
             f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. Kernels disponibles: {available}"
         )
     cfg = OmegaConf.load(str(kernel_path))
-    return OmegaConf.to_container(cfg, resolve=True)
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True) or {}
+    if "name" not in cfg_dict:
+        # propagate the requested kernel name so downstream components don't fall back to HK
+        cfg_dict["name"] = kernel_name
+    return cfg_dict
 
 
 @hydra.main(config_path="../config", config_name="config")
