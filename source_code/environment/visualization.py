@@ -73,18 +73,6 @@ def render_agent_dashboard(
     pairwise_l2 = _prepare_pairwise(l2_pairwise_history)
     entropy_agent_series = _prepare_agent_series(entropy_agent_history)
 
-    ratio_history = None
-    if kernel_value_history and kernel_grad_history:
-        length = min(len(kernel_value_history), len(kernel_grad_history))
-        if length > 0:
-            ratio_history = []
-            eps = 1e-8
-            for idx in range(length):
-                grad = kernel_grad_history[idx]
-                val = kernel_value_history[idx]
-                denom = grad if abs(grad) > eps else eps
-                ratio_history.append(val / denom)
-
     metrics_data = OrderedDict()
     if iterations and hamming_history:
         metrics_data["Hamming"] = dict(
@@ -137,15 +125,6 @@ def render_agent_dashboard(
             ylabel="‖∇k‖",
             title="Average Kernel Gradient ",
             color="tab:brown",
-            overlay_type=None,
-            overlay_data=None,
-        )
-    if iterations and ratio_history:
-        metrics_data["Kernel Ratio"] = dict(
-            average=ratio_history,
-            ylabel="k / ∇k",
-            title="Kernel Similarity / Gradient Ratio",
-            color="tab:pink",
             overlay_type=None,
             overlay_data=None,
         )
@@ -451,6 +430,8 @@ def render_agent_dashboard(
             for name in metrics_order:
                 metric_vars[name].set(1 if name in selected_metrics else 0)
 
+        # ensure Tk has finalized widget sizes before drawing to avoid large initial padding
+        root.update_idletasks()
         draw_metrics()
         _toggle_theta_panel()
 

@@ -30,11 +30,9 @@ class SVGD:
             K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
         if torch.isnan(grad_term).any() or torch.isinf(grad_term).any():
             grad_term = torch.nan_to_num(grad_term, nan=0.0, posinf=0.0, neginf=0.0)
-        # K_transpose[b, i, j] = k(θ_j, θ_i)
-        K_transpose = K.transpose(-2, -1)  # (B, M, M)
         # First SVGD term: Σ_j k(θ_j, θ_i) * score_j
         # matmul: (B, M, M) @ (B, M, N) -> (B, M, N)
-        score_term = torch.matmul(K_transpose, score)
+        score_term = torch.matmul(K, score)
         # Average over M particles
         phi = (score_term / self.alpha + grad_term) / M  # (B, M, N)
         if torch.isnan(phi).any() or torch.isinf(phi).any():

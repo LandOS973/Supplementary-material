@@ -178,7 +178,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         )  # (BM, λa)
 
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
-        loss = -loss_per_instance.sum()
+        loss = loss_per_instance.sum()
 
         grad_theta, = torch.autograd.grad(loss, theta, create_graph=False)
         self.last_theta_grad = grad_theta.detach().clone().view(B, M, N)
@@ -206,7 +206,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             return
 
         theta = self.theta  # (B, M, N)
-        score = -self.last_theta_grad.detach()  # pas de rétroprop vers les agents
+        score = self.last_theta_grad.detach()  # pas de rétroprop vers les agents
 
         with torch.enable_grad():
             phi = self.svgd.phi(theta, score)  # (B, M, N)

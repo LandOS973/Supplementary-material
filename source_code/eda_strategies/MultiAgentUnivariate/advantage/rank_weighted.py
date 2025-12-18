@@ -101,3 +101,54 @@ class PerAgentRankWeightedAdvantage(AdvantageStrategy):
 
         # Retour au shape original (B*M, λ_agent)
         return ranked.view(BM, lambda_per_agent)
+
+
+class NormalizedFitnessAdvantage(AdvantageStrategy):
+    """
+    Normalise la fitness de chaque individu j de l'agent i à l'itération t selon :
+        h_{i,j,t} = (f(x_{i,j,t}) - f^{ref}_{i,t}) / (f^{max}_t - f^{ref}_{i,t})
+
+    où f^{ref}_{i,t} est la fitness moyenne de l'agent i à l'itération précédente
+    (fournie via `baseline`) et f^{max}_t est la meilleure fitness observée jusqu'ici
+    pour l'instance correspondante. Résultat borné automatiquement via eps.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.best_fitness = None  # (B,)
+        self.fitness_mean = None  # (B,)
+
+
+    def compute(self, fitness, nb_instances=None, num_agents=None, **context):
+        nb_instances = nb_instances or context.get("nb_instances")
+        num_agents = num_agents or context.get("num_agents")
+        if nb_instances is None or num_agents is None:
+            raise ValueError("nb_instances and num_agents must be provided for NormalizedFitnessAdvantage.")
+        nb_instances = int(nb_instances)
+        num_agents = int(num_agents)
+
+        BM, lambda_per_agent = fitness.shape
+        device, dtype = fitness.device, fitness.dtype
+
+        current_fitness = fitness.view(nb_instances, num_agents, lambda_per_agent)
+
+        if self.fitness_mean is None or self.fitness_mean.shape[0] != nb_instances:
+            previous_mean = torch.zeros(nb_instances, device=device, dtype=dtype)
+        else:
+            previous_mean = self.fitness_mean.to(device=device, dtype=dtype)
+        instance_baseline = previous_mean.view(nb_instances, 1, 1)
+
+        current_best = current_fitness.view(nb_instances, -1).max(dim=1).values
+        if self.best_fitness is None:
+            self.best_fitness = current_best.detach().clone()
+        else:
+            self.best_fitness = torch.maximum(self.best_fitness, current_best)
+        best_per_instance = self.best_fitness.view(nb_instances, 1, 1)
+
+        denom = best_per_instance - instance_baseline
+        normalized = (current_fitness - instance_baseline) / denom
+
+        with torch.no_grad():
+            self.fitness_mean = current_fitness.view(nb_instances, -1).mean(dim=1).detach().clone()
+
+        return normalized.view(BM, lambda_per_agent)

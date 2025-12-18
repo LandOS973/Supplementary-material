@@ -33,6 +33,9 @@ class RBF(nn.Module):
             K : (B, M, P) avec K[b, i, j] = exp( - gamma * || X_{b,i} - Y_{b,j} ||^2 )
         """
         Thetas = Thetas.requires_grad_(True)
+
+        B, M, N = Thetas.shape
+
         # Produit scalaire par batch :
         # XX[b, i, j] = <X_{b,i}, X_{b,j}>
         XX = torch.matmul(Thetas, Thetas.transpose(-1, -2))        # (B, M, M)
@@ -58,9 +61,18 @@ class RBF(nn.Module):
         # K[b, i, j] = exp( - gamma * dnorm2[b, i, j] )
         # gamma est un scalaire tensor -> broadcast sur (B, M, M)
         K = torch.exp(-gamma * dnorm2)
-        grad_Thetas, = torch.autograd.grad(K.sum(), Thetas, create_graph=True)
-        grad_term = -grad_Thetas
-        return K, grad_term 
+
+
+
+        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
+
+        for i in range(M):
+            Ki = K[:,:,i]
+            vect_grad_Thetas_j, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas_j, dim=1).data
+
+
+        return K, grad_Thetas
 
     def _compute_gamma(self, dnorm2, m):
         """

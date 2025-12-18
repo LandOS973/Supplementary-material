@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
 
 
 class HammingKernel(nn.Module):
@@ -17,30 +16,33 @@ class HammingKernel(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.mask = None
 
     def forward(self, Thetas):
         """
         Thetas : (B, M, N)
         """
-        B, M, N = Thetas.shape
         Thetas = Thetas.requires_grad_(True)
+
+        B, M, N = Thetas.shape
+
 
         probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
         probs_j = torch.sigmoid(Thetas).unsqueeze(1)  # (B, 1, M, N)
 
         hamming = probs_i + probs_j - 2 * probs_i * probs_j  # (B, M, M, N)
+
         D = hamming.sum(dim=-1)  # (B, M, M)
 
+
+
         N = Thetas.size(-1) 
-        K =((N - D) / N)# (B, M, M)
-        if self.mask is None:
-            self.mask = torch.triu(
-                torch.ones((B, M, M), device=Thetas.device)
-            )
+        K =((N - D) / (N))# (B, M, M)
 
-        UpperTriangular_K = K*self.mask
+        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 
-        grad_Thetas, = torch.autograd.grad(UpperTriangular_K.sum().sum(), Thetas, create_graph=True)
-        grad_term = -grad_Thetas
-        return K, grad_term
+        for i in range(M):
+            Ki = K[:,:,i]
+            vect_grad_Thetas_j, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas_j, dim=1).data
+
+        return K, grad_Thetas
