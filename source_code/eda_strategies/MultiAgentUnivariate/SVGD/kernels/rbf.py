@@ -36,43 +36,39 @@ class RBF(nn.Module):
 
         B, M, N = Thetas.shape
 
-        # Produit scalaire par batch :
-        # XX[b, i, j] = <X_{b,i}, X_{b,j}>
-        XX = torch.matmul(Thetas, Thetas.transpose(-1, -2))        # (B, M, M)
-        # XY[b, i, j] = <X_{b,i}, Y_{b,j}>
-        XY = torch.matmul(Thetas, Thetas.transpose(-1, -2))        # (B, M, M)
-        # YY[b, i, j] = <Y_{b,i}, Y_{b,j}>
-        YY = torch.matmul(Thetas, Thetas.transpose(-1, -2))        # (B, M, M)
-        # Normes au carré :
-        # diag_x[b, i] = ||X_{b,i}||^2
-        diag_x = XX.diagonal(dim1=-2, dim2=-1).unsqueeze(-1)  # (B, M, 1)
-        # diag_y[b, j] = ||Y_{b,j}||^2
-        diag_y = YY.diagonal(dim1=-2, dim2=-1).unsqueeze(-2)  # (B, 1, M)
 
-        # Distances au carré :
-        # dnorm2[b, i, j] = ||X_{b,i} - Y_{b,j}||^2
-        #                 = ||X_{b,i}||^2 + ||Y_{b,j}||^2 - 2 <X_{b,i}, Y_{b,j}>
-        dnorm2 = -2.0 * XY + diag_x + diag_y             # (B, M, M)
 
-        # Calcule gamma à partir de dnorm2 (et éventuellement sigma)
-        gamma = self._compute_gamma(dnorm2, m=Thetas.size(-2))
+        theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
+        theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
 
-        # Kernel RBF :
-        # K[b, i, j] = exp( - gamma * dnorm2[b, i, j] )
-        # gamma est un scalaire tensor -> broadcast sur (B, M, M)
+        dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
+
+        gamma = 0.01
+
+
         K = torch.exp(-gamma * dnorm2)
 
+        vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
 
-
-        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
-
-        for i in range(M):
-            Ki = K[:,:,i]
-            vect_grad_Thetas_j, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
-            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas_j, dim=1).data
+        grad_Thetas = vect_grad.sum(dim=1)  # (B, M, N)
 
 
         return K, grad_Thetas
+
+
+
+        # # print(K[0][:5][:5])
+        #
+        # grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
+        #
+        # for i in range(M):
+        #     Ki = K[:,:,i]
+        #     vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+        #     grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
+
+
+
+
 
     def _compute_gamma(self, dnorm2, m):
         """

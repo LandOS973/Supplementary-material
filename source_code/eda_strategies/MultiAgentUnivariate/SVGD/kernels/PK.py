@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class HammingKernel(nn.Module):
+class ProbabilityKernel(nn.Module):
     """
     Kernel basé sur la similarité de Hamming.
 
@@ -26,27 +26,23 @@ class HammingKernel(nn.Module):
         B, M, N = Thetas.shape
 
 
+        theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
+        theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
 
-        probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
-        probs_j = torch.sigmoid(Thetas.detach()).unsqueeze(1)  # (B, 1, M, N)
-
-        hamming = probs_i + probs_j.detach() - 2 * probs_i * probs_j.detach()  # (B, M, M, N)
-
-        D = hamming.sum(dim=-1)  # (B, M, M)
+        probs_i = torch.sigmoid(theta_i)
+        probs_j = torch.sigmoid(theta_j)
 
 
+        dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1)
 
-        N = Thetas.size(-1) 
-        K =((N - D) / (N))# (B, M, M)
+        gamma = 0.01
 
-        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 
-        for i in range(M):
-            Ki = K[:,:,i]
-            vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+        K = torch.exp(-gamma * dnorm2)
 
-            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
+        vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
 
+        grad_Thetas = vect_grad.sum(dim=1)  # (B, M, N)
 
 
         return K, grad_Thetas
