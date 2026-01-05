@@ -13,16 +13,15 @@ class RBF(nn.Module):
         K[b, i, j] = k(X[b, i, :], Y[b, j, :])
                    = exp( - gamma * || X_{b,i} - Y_{b,j} ||^2 )
 
-    où gamma = 1 / (2 * sigma^2), avec sigma soit fixé, soit estimé par
-    "median heuristic" à partir des distances dans dnorm2.
     """
 
-    def __init__(self, sigma=None):
+    def __init__(self, gamma=0.08):
         super().__init__()
         # sigma :
         #   - si None : sigma sera estimé automatiquement (median heuristic)
         #   - sinon   : on utilise cette valeur fixe (float ou tensor)
-        self.sigma = sigma
+        # facteur de largeur du noyau RBF (peut être fixé via la config)
+        self.gamma = gamma
 
     def forward(self, Thetas):
         """
@@ -43,10 +42,7 @@ class RBF(nn.Module):
 
         dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
 
-        gamma = 0.08
-
-
-        K = torch.exp(-gamma * dnorm2)
+        K = torch.exp(-self.gamma * dnorm2)
 
         grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 

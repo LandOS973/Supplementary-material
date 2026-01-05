@@ -12,8 +12,10 @@ class ProbabilityKernel(nn.Module):
     où p(X) = sigmoid(X) est le vecteur des probabilités associées à l'agent X.
     """
 
-    def __init__(self):
+    def __init__(self, gamma=1.0):
         super().__init__()
+        # largeur du noyau appliqué sur les probabilités
+        self.gamma = gamma
 
     def forward(self, Thetas):
         """
@@ -33,10 +35,7 @@ class ProbabilityKernel(nn.Module):
 
         dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
 
-        gamma = 1
-
-
-        K = torch.exp(-gamma * dnorm2)
+        K = torch.exp(-self.gamma * dnorm2)
 
         vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
 

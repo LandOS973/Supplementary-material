@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from types import SimpleNamespace
 
 from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
@@ -52,7 +53,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
-        self.kernel_params = self.kernel_config.get("params") or {}
+        self.kernel_params = {}
 
         # λ par agent
         self.lambda_per_agent = lambda_ // M
@@ -249,7 +250,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.theta is None:
             self.agents = []
             return
-        self.agents = [self.theta[:, idx, :] for idx in range(self.M)]
+        self.agents = [SimpleNamespace(theta=self.theta[:, idx, :]) for idx in range(self.M)]
 
     def _build_svgd_kernel(self, kernel_name, kernel_params):
         kernel = kernel_name.lower()
@@ -258,8 +259,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "ppk":
             return PPK()
         if kernel == "rbf":
-            sigma = kernel_params.get("sigma") if isinstance(kernel_params, dict) else None
-            return RBF(sigma=sigma)
+            gamma = self.kernel_config.get("gamma")
+            return RBF(gamma=gamma if gamma is not None else 0.08)
         if kernel == "pk":
-            return ProbabilityKernel()
+            gamma = self.kernel_config.get("gamma")
+            return ProbabilityKernel(gamma=gamma if gamma is not None else 1.0)
         raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")
