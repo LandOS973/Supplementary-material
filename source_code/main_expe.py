@@ -13,14 +13,30 @@ import torch
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
+from utils.main_utils import rank_vs_global_ranking
 
 
 # ============
 #  Grilles
 # ============
-LEARNING_RATES = [0.001, 0.005, 0.01, 0.02, 0.05]
-ALPHA_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]  # svgd_alpha
-GAMMA_VALUES = [0.5, 1.0, 1.5, 2.0, 3.0]  # utilisé pour RBF/PK
+DEFAULT_LEARNING_RATES = [0.001, 0.005, 0.01, 0.02, 0.05]
+DEFAULT_ALPHA_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]  # svgd_alpha
+# grilles par kernel
+LEARNING_RATE_GRID = {
+    "rbf": [0.5, 0.3, 0.2, 0.1, 0.05],
+    "pk": [0.5, 0.3, 0.2, 0.1, 0.05],
+    "hk": [0.1, 0.5, 0.1, 1.5, 2.0],
+}
+ALPHA_GRID = {
+    "rbf": [0.04, 0.05, 0.08, 0.1, 0.15],
+    "pk": [0.04, 0.05, 0.08, 0.1, 0.15],
+    "hk": [1, 2, 3, 4, 5],
+}
+GAMMA_GRID = {  # None => pas de gamma pour HK
+    "rbf": [0.5, 1.0, 1.5, 2.0, 3.0],
+    "pk": [0.5, 1.0, 1.5, 2.0, 3.0],
+    "hk": [None],
+}
 
 M_VALUES = [1, 5, 10]
 LAMBDA_VALUES = [5, 10]
@@ -28,7 +44,7 @@ ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 KERNELS = ["rbf", "pk", "hk"]
 
 PROBLEMS = [
-    dict(name="QUBO", dim=128, type_instance=5),
+    dict(name="QUBO", dim=64, type_instance=5),
     dict(name="NK", dim=128, type_instance=4),
 ]
 
@@ -192,7 +208,7 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, lr, alpha, gamma)
     return avg_score, history, run_meta
 
 
-def _save_history_csv(out_dir, problem_name, kernel_name, entry):
+def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
     history = entry["history"]
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     runtime = history.get("runtime") or list(range(1, len(history.get("best_fitness", [])) + 1))
@@ -221,6 +237,37 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry):
         f.write(f"alpha: {meta['alpha']}\n")
         f.write(f"gamma: {meta['gamma']}\n")
         f.write(f"avg_score: {meta['avg_score']}\n")
+        if ranking:
+            best_algo, best_score, my_rank, n_rank, my_pct = ranking
+            if best_algo is not None and n_rank:
+                pct_str = f"{my_pct:.1f}%" if my_pct is not None else "n/a"
+                f.write(f"ranking_best_algo: {best_algo}\n")
+                f.write(f"ranking_best_score: {best_score}\n")
+                f.write(f"ranking_my_rank: {my_rank}/{n_rank} ({pct_str})\n")
+        else:
+            f.write("ranking: unavailable\n")
+
+def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name):
+    problem_dir = os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}")
+    summary_path = os.path.join(problem_dir, f"{problem_name}_{kernel_name}_best_summary.txt")
+    if not os.path.isfile(summary_path):
+        return None
+    try:
+        with open(summary_path, "r") as f:
+            lines = f.readlines()
+        avg_score = None
+        for line in lines:
+            if line.strip().lower().startswith("avg_score"):
+                try:
+                    avg_score = float(line.split(":", 1)[1].strip())
+                except Exception:
+                    avg_score = None
+                break
+        if avg_score is None:
+            return None
+        return {"history": None, "meta": {"avg_score": avg_score}}
+    except Exception:
+        return None
 
 
 def main():
@@ -239,32 +286,58 @@ def main():
     start_all = time.time()
     for problem in PROBLEMS:
         problem_ctx = _load_instances(problem, DEFAULTS["device"])
+        # initialize with existing best (to avoid overwriting better past runs)
+        for k in KERNELS:
+            existing = _load_existing_best(outdir, problem_ctx["type_problem"], problem_ctx["dim"], problem_ctx["type_instance"], k)
+            if existing:
+                best_per_problem_kernel[(problem_ctx["type_problem"], k)] = existing
 
-        combos = itertools.product(
-            KERNELS,
-            ADVANTAGES,
-            M_VALUES,
-            LAMBDA_VALUES,
-            LEARNING_RATES,
-            ALPHA_VALUES,
+        expanded = []
+        for kernel_name in KERNELS:
+            lr_list = LEARNING_RATE_GRID.get(kernel_name, DEFAULT_LEARNING_RATES)
+            alpha_list = ALPHA_GRID.get(kernel_name, DEFAULT_ALPHA_VALUES)
+            gamma_list = GAMMA_GRID.get(kernel_name, [None])
+            for advantage, M, lambda_ in itertools.product(ADVANTAGES, M_VALUES, LAMBDA_VALUES):
+                for lr in lr_list:
+                    for alpha in alpha_list:
+                        for gamma in gamma_list:
+                            expanded.append((kernel_name, advantage, M, lambda_, lr, alpha, gamma))
+
+        total_runs = len(expanded)
+        print(
+            f"[{problem_ctx['type_problem']} dim={problem_ctx['dim']} t={problem_ctx['type_instance']}] "
+            f"total runs: {total_runs}"
         )
-        for kernel_name, advantage, M, lambda_, lr, alpha in combos:
-            gamma_list = GAMMA_VALUES if kernel_name in ("rbf", "pk") else [None]
-            for gamma in gamma_list:
-                avg_score, history, meta = _run_once(
-                    problem_ctx, kernel_name, advantage, M, lambda_, lr, alpha, gamma
+
+        for idx, (kernel_name, advantage, M, lambda_, lr, alpha, gamma) in enumerate(expanded, 1):
+            t0 = time.time()
+            gamma_str = f"{gamma}" if gamma is not None else "n/a"
+            print(
+                f"▶ Run {idx}/{total_runs} | kernel={kernel_name} (gamma={gamma_str}) | "
+                f"adv={advantage} | M={M} | lambda={lambda_} | lr={lr} | alpha={alpha}"
+            )
+            avg_score, history, meta = _run_once(
+                problem_ctx, kernel_name, advantage, M, lambda_, lr, alpha, gamma
+            )
+            dt = time.time() - t0
+            print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+            key = (problem_ctx["type_problem"], kernel_name)
+            current_best = best_per_problem_kernel.get(key)
+            if current_best is None or avg_score < current_best["meta"]["avg_score"]:
+                best_per_problem_kernel[key] = {"history": history, "meta": meta}
+                print("   ↳ new best for this problem+kernel.")
+                ranking = rank_vs_global_ranking(repo_root, meta["dim"], meta["type_instance"], avg_score)
+                problem_dir = os.path.join(
+                    outdir,
+                    f"{meta['problem']}_dim{meta['dim']}_t{meta['type_instance']}",
                 )
-                key = (problem_ctx["type_problem"], kernel_name)
-                current_best = best_per_problem_kernel.get(key)
-                if current_best is None or avg_score < current_best["meta"]["avg_score"]:
-                    best_per_problem_kernel[key] = {"history": history, "meta": meta}
-
-    for (problem_name, kernel_name), entry in best_per_problem_kernel.items():
-        problem_dir = os.path.join(
-            outdir,
-            f"{problem_name}_dim{entry['meta']['dim']}_t{entry['meta']['type_instance']}",
-        )
-        _save_history_csv(problem_dir, problem_name, kernel_name, entry)
+                _save_history_csv(
+                    problem_dir,
+                    meta["problem"],
+                    kernel_name,
+                    {"history": history, "meta": meta},
+                    ranking=ranking,
+                )
 
     print(f"[DONE] main_expe completed in {time.time() - start_all:.2f}s. Results in {outdir}")
 
