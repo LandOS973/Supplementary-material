@@ -5,6 +5,7 @@ from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.rbf import RBF
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.ppk import PPK
+from eda_strategies.MultiAgentUnivariate.SVGD.kernels.PK import ProbabilityKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
@@ -91,7 +92,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.nb_instances = nb_instances
 
         # theta : (B, M, N)
-        init_sigma =0.0001
+        init_sigma =0.1
         init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
 
         # init_theta = torch.zeros((nb_instances, self.M, self.N), device=self.device)
@@ -259,4 +260,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "rbf":
             sigma = kernel_params.get("sigma") if isinstance(kernel_params, dict) else None
             return RBF(sigma=sigma)
-        raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf.")
+        if kernel == "pk":
+            return ProbabilityKernel()
+        raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")

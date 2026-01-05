@@ -4,14 +4,12 @@ import torch.nn as nn
 
 class ProbabilityKernel(nn.Module):
     """
-    Kernel basé sur la similarité de Hamming.
-
-    Pour deux ensembles d'agents X et Y de forme (B, M, N) et (B, P, N),
-    on calcule la distance moyenne de Hamming attendue entre chaque paire
-    d'agents puis le kernel k(i, j) = N - D_{i, j}.
-
-    Avec p_i = sigmoid(theta_i) les probabilités Bernoulli de l'agent i :
-        D_{i, j} = Σ_k (p_{i,k} + p_{j,k} - 2 p_{i,k} p_{j,k})
+    Kernel de probabilité pour tenseurs (B, M, N).
+    Pour deux tenseurs X, Y de forme (B, M, N)
+    ce module renvoie un tenseur K de forme (B, M, P) avec :
+        K[b, i, j] = k(X[b, i, :], Y[b, j, :])
+                   = exp( - gamma * || p(X_{b,i}) - p(Y_{b,j}) ||^2 )
+    où p(X) = sigmoid(X) est le vecteur des probabilités associées à l'agent X.
     """
 
     def __init__(self):
@@ -33,9 +31,9 @@ class ProbabilityKernel(nn.Module):
         probs_j = torch.sigmoid(theta_j)
 
 
-        dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1)
+        dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
 
-        gamma = 0.01
+        gamma = 1
 
 
         K = torch.exp(-gamma * dnorm2)

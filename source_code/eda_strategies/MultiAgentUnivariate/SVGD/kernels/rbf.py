@@ -43,14 +43,19 @@ class RBF(nn.Module):
 
         dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
 
-        gamma = 0.01
+        gamma = 0.08
 
 
         K = torch.exp(-gamma * dnorm2)
 
-        vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
+        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 
-        grad_Thetas = vect_grad.sum(dim=1)  # (B, M, N)
+        for i in range(M):
+            Ki = K[:,:,i]
+            vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+
+            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
+
 
 
         return K, grad_Thetas
@@ -70,46 +75,46 @@ class RBF(nn.Module):
 
 
 
-    def _compute_gamma(self, dnorm2, m):
-        """
-        dnorm2 : (B, M, P)  distances au carré ||X_{b,i} - Y_{b,j}||^2
-        m      : nombre de points (M)
+    # def _compute_gamma(self, dnorm2, m):
+    #     """
+    #     dnorm2 : (B, M, P)  distances au carré ||X_{b,i} - Y_{b,j}||^2
+    #     m      : nombre de points (M)
 
-        Objectif : retourner gamma tel que
-            k(x, y) = exp( - gamma * ||x - y||^2 )
+    #     Objectif : retourner gamma tel que
+    #         k(x, y) = exp( - gamma * ||x - y||^2 )
 
-        - Si sigma est fixé :
-              gamma = 1 / (2 * sigma^2)
-        - Si sigma est None :
-              on estime sigma via la "median heuristic" :
+    #     - Si sigma est fixé :
+    #           gamma = 1 / (2 * sigma^2)
+    #     - Si sigma est None :
+    #           on estime sigma via la "median heuristic" :
 
-                  h ≈ median( dnorm2 ) / (2 * log(m + 1))
-                  sigma = sqrt(h)
-                  gamma = 1 / (2 * sigma^2)
-        """
-        if self.sigma is None:
-            # Median heuristic : on prend la médiane de toutes les distances au carré.
-            # detach() pour ne pas backpropager à travers ce choix de sigma.
-            median = torch.median(dnorm2.detach().flatten())
+    #               h ≈ median( dnorm2 ) / (2 * log(m + 1))
+    #               sigma = sqrt(h)
+    #               gamma = 1 / (2 * sigma^2)
+    #     """
+    #     if self.sigma is None:
+    #         # Median heuristic : on prend la médiane de toutes les distances au carré.
+    #         # detach() pour ne pas backpropager à travers ce choix de sigma.
+    #         median = torch.median(dnorm2.detach().flatten())
 
-            # h ~ variance effective, divisée par 2 log(m+1) (stabilisation).
-            h = median / (2.0 * math.log(m + 1.0))
+    #         # h ~ variance effective, divisée par 2 log(m+1) (stabilisation).
+    #         h = median / (2.0 * math.log(m + 1.0))
 
-            # sigma = sqrt(h), avec clamp pour éviter sigma=0.
-            sigma_val = torch.sqrt(torch.clamp(h, min=1e-8))
-        else:
-            # sigma fourni par l'utilisateur (float ou tensor)
-            sigma_val = torch.tensor(
-                self.sigma,
-                device=dnorm2.device,
-                dtype=dnorm2.dtype
-            )
+    #         # sigma = sqrt(h), avec clamp pour éviter sigma=0.
+    #         sigma_val = torch.sqrt(torch.clamp(h, min=1e-8))
+    #     else:
+    #         # sigma fourni par l'utilisateur (float ou tensor)
+    #         sigma_val = torch.tensor(
+    #             self.sigma,
+    #             device=dnorm2.device,
+    #             dtype=dnorm2.dtype
+    #         )
 
-        # gamma = 1 / (2 * sigma^2), avec petit epsilon pour la stabilité num.
-        gamma = 1.0 / (1e-8 + 2.0 * sigma_val ** 2)
+    #     # gamma = 1 / (2 * sigma^2), avec petit epsilon pour la stabilité num.
+    #     gamma = 1.0 / (1e-8 + 2.0 * sigma_val ** 2)
 
-        # S'assurer que gamma est bien un tensor (scalaire) sur le bon device/dtype.
-        if not torch.is_tensor(gamma):
-            gamma = torch.tensor(gamma, device=dnorm2.device, dtype=dnorm2.dtype)
+    #     # S'assurer que gamma est bien un tensor (scalaire) sur le bon device/dtype.
+    #     if not torch.is_tensor(gamma):
+    #         gamma = torch.tensor(gamma, device=dnorm2.device, dtype=dnorm2.dtype)
 
-        return gamma
+    #     return gamma
