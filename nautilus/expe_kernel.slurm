@@ -9,6 +9,7 @@
 
 echo "Run main_ppo_eda"
 
+export PYTHONUNBUFFERED=1
 PYTHON=/micromamba/$USER/envs/ppo_env/bin/python
 
 srun $PYTHON ../source_code/main_expe.py
