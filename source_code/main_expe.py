@@ -19,33 +19,32 @@ from utils.main_utils import rank_vs_global_ranking
 # ============
 #  Grilles
 # ============
-DEFAULT_LEARNING_RATES = [0.001, 0.005, 0.01, 0.02, 0.05]
+DEFAULT_LEARNING_RATES = [0.1, 0.5, 0.3, 0.2, 0.8]
 DEFAULT_ALPHA_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]  # svgd_alpha
 # grilles par kernel
 LEARNING_RATE_GRID = {
-    "rbf": [0.5, 0.3, 0.2, 0.1, 0.05],
-    "pk": [0.5, 0.3, 0.2, 0.1, 0.05],
-    "hk": [0.1, 0.5, 0.1, 1.5, 2.0],
+    "rbf": [0.5, 0.3, 0.2, 0.8, 1.0],
+    "pk": [0.5, 0.3, 0.2, 0.8, 1.0],
+    "hk": [0.1, 0.5, 1.0, 1.5, 2.0],
 }
 ALPHA_GRID = {
-    "rbf": [0.04, 0.05, 0.08, 0.1, 0.15],
-    "pk": [0.04, 0.05, 0.08, 0.1, 0.15],
+    "rbf": [0.1, 0.05, 0.03, 0.02, 0.01],
+    "pk": [0.02 ,0.04, 0.05, 0.08, 0.1, 0.15],
     "hk": [1, 2, 3, 4, 5],
 }
 GAMMA_GRID = {  # None => pas de gamma pour HK
-    "rbf": [0.5, 1.0, 1.5, 2.0, 3.0],
-    "pk": [0.5, 1.0, 1.5, 2.0, 3.0],
+    "rbf": [0.3, 0.8, 1.5, 3.0, 5.0],
+    "pk": [0.3, 0.8, 1.5, 3.0, 5.0],
     "hk": [None],
 }
 
-M_VALUES = [1, 5, 10]
+M_VALUES = [10, 5, 1]
 LAMBDA_VALUES = [5, 10]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 KERNELS = ["rbf", "pk", "hk"]
 
 PROBLEMS = [
-    dict(name="QUBO", dim=64, type_instance=5),
-    dict(name="NK", dim=128, type_instance=4),
+    dict(name="QUBO", dim=128, type_instance=5)
 ]
 
 DEFAULTS = dict(
