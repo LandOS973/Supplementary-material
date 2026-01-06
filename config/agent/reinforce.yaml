@@ -1,6 +1,6 @@
 name: REINFORCE-EDA
 updateMethod: REINFORCE
-M: 6
-lambda: 36
-advantage: globalrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness
-kernel: rbf  # rbf | hk | ppk
+M: 5
+lambda: 10
+advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness
+kernel:  pk # rbf | hk | pk

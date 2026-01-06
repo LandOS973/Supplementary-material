@@ -46,6 +46,7 @@ def get_Score_trajectoriesQUBO_cuda(
     avg_hamming_history = []
     avg_js_history = []
     avg_l2_history = []
+    avg_l1_history = []
     avg_entropy_history = []
     best_fitness_history = []
     runtime_steps = []
@@ -53,6 +54,7 @@ def get_Score_trajectoriesQUBO_cuda(
     hamming_pairwise_history = []
     js_pairwise_history = []
     l2_pairwise_history = []
+    l1_pairwise_history = []
     entropy_agent_history = []
     kl_pairwise_history = []
     avg_kernel_value_history = []
@@ -146,14 +148,17 @@ def get_Score_trajectoriesQUBO_cuda(
             avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
             avg_js, pairwise_js = metrics.compute_average_js(strategy.agents)
             avg_l2, pairwise_l2 = metrics.compute_l2_distance(strategy.agents)
+            avg_l1, pairwise_l1 = metrics.compute_l1_distance(strategy.agents)
             avg_entropy, per_agent_entropy = metrics.compute_entropy(strategy.agents)
             avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
             avg_js_history.append(avg_js if avg_js is not None else 0.0)
             avg_l2_history.append(avg_l2 if avg_l2 is not None else 0.0)
+            avg_l1_history.append(avg_l1 if avg_l1 is not None else 0.0)
             avg_entropy_history.append(avg_entropy if avg_entropy is not None else 0.0)
             hamming_pairwise_history.append(pairwise_matrix.tolist() if pairwise_matrix is not None else None)
             js_pairwise_history.append(pairwise_js.tolist() if pairwise_js is not None else None)
             l2_pairwise_history.append(pairwise_l2.tolist() if pairwise_l2 is not None else None)
+            l1_pairwise_history.append(pairwise_l1.tolist() if pairwise_l1 is not None else None)
             if per_agent_entropy is not None:
                 entropy_agent_history.append(per_agent_entropy)
             else:
@@ -242,6 +247,8 @@ def get_Score_trajectoriesQUBO_cuda(
             js_pairwise_history,
             avg_l2_history,
             l2_pairwise_history,
+            avg_l1_history,
+            l1_pairwise_history,
             avg_entropy_history,
             entropy_agent_history,
             avg_kernel_value_history,
@@ -261,6 +268,7 @@ def get_Score_trajectoriesQUBO_cuda(
             avg_hamming=avg_hamming_history,
             avg_js=avg_js_history,
             avg_l2=avg_l2_history,
+            avg_l1=avg_l1_history,
             avg_entropy=avg_entropy_history,
         )
         return bestScore_np, history

@@ -2,20 +2,20 @@ import torch
 import torch.nn as nn
 
 
-class HammingKernel(nn.Module):
+class ProbabilityKernel(nn.Module):
     """
-    Kernel basé sur la similarité de Hamming.
-
-    Pour deux ensembles d'agents X et Y de forme (B, M, N) et (B, P, N),
-    on calcule la distance moyenne de Hamming attendue entre chaque paire
-    d'agents puis le kernel k(i, j) = N - D_{i, j}.
-
-    Avec p_i = sigmoid(theta_i) les probabilités Bernoulli de l'agent i :
-        D_{i, j} = Σ_k (p_{i,k} + p_{j,k} - 2 p_{i,k} p_{j,k})
+    Kernel de probabilité pour tenseurs (B, M, N).
+    Pour deux tenseurs X, Y de forme (B, M, N)
+    ce module renvoie un tenseur K de forme (B, M, P) avec :
+        K[b, i, j] = k(X[b, i, :], Y[b, j, :])
+                   = exp( - gamma * || p(X_{b,i}) - p(Y_{b,j}) ||^2 )
+    où p(X) = sigmoid(X) est le vecteur des probabilités associées à l'agent X.
     """
 
-    def __init__(self):
+    def __init__(self, gamma=1.0):
         super().__init__()
+        # largeur du noyau appliqué sur les probabilités
+        self.gamma = gamma
 
     def forward(self, Thetas):
         """
@@ -26,27 +26,20 @@ class HammingKernel(nn.Module):
         B, M, N = Thetas.shape
 
 
+        theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
+        theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
 
-        probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
-        probs_j = torch.sigmoid(Thetas.detach()).unsqueeze(1)  # (B, 1, M, N)
-
-        hamming = probs_i + probs_j.detach() - 2 * probs_i * probs_j.detach()  # (B, M, M, N)
-
-        D = hamming.sum(dim=-1)  # (B, M, M)
+        probs_i = torch.sigmoid(theta_i)
+        probs_j = torch.sigmoid(theta_j)
 
 
+        dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
 
-        N = Thetas.size(-1) 
-        K =((N - D) / (N))# (B, M, M)
+        K = torch.exp(-self.gamma * dnorm2)
 
-        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
+        vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
 
-        for i in range(M):
-            Ki = K[:,:,i]
-            vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
-
-            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
-
+        grad_Thetas = vect_grad.sum(dim=1)  # (B, M, N)
 
 
         return K, grad_Thetas

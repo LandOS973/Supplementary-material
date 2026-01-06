@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
+from types import SimpleNamespace
 
 from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.rbf import RBF
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.ppk import PPK
+from eda_strategies.MultiAgentUnivariate.SVGD.kernels.PK import ProbabilityKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
@@ -12,7 +14,7 @@ from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     """
     Multi-agent collaboratif :
-    - Budget λ divisé entre agents (λ/M solutions par agent)
+    - Budget λ défini par agent (M * λ solutions au total)
     - B => NOMBRE D'INSTANCES
     - M => NOMBRE D'AGENTS
     - N => NOMBRE DE VARIABLES
@@ -33,15 +35,16 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         advantage_cfg=None,
         kernel_config=None,
     ):
-        Abstract_EDA.__init__(self, N, lambda_, device)
-        nn.Module.__init__(self)
-
-        # Hypothèse vectorisée : λ est divisible par M
-        assert lambda_ % M == 0, "lambda_ % M != 0"
-
         self.M = M
         self.N = N
-        self.lambda_ = lambda_
+        # λ is now defined per agent; total population is M * λ
+        self.lambda_per_agent = int(lambda_)
+        self.total_lambda = self.lambda_per_agent * self.M
+        Abstract_EDA.__init__(self, N, self.total_lambda, device)
+        nn.Module.__init__(self)
+
+        # Keep legacy attribute name for downstream code expecting total λ
+        self.lambda_ = self.total_lambda
         self.device = device
         self.learning_rate = learning_rate
         self.learning_rate_svgd = learning_rate_svgd
@@ -51,10 +54,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
-        self.kernel_params = self.kernel_config.get("params") or {}
+        self.kernel_params = {}
 
-        # λ par agent
-        self.lambda_per_agent = lambda_ // M
         # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
         self.agents = []
@@ -92,8 +93,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.nb_instances = nb_instances
 
         # theta : (B, M, N)
-        init_sigma = 1e-2
+        init_sigma =0.1
         init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
+
+        # init_theta = torch.zeros((nb_instances, self.M, self.N), device=self.device)
         self.theta = nn.Parameter(init_theta)
         self._refresh_agent_views()
 
@@ -112,11 +115,13 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         """
         Génère (nb_instances, λ, N, 1) en une seule fois.
 
-        Chaque agent a λ/M solutions, on échantillonne (B, M, λ_agent, N),
-        puis on aplati en (B, λ, N, 1) avec λ = M * λ_agent.
+        Chaque agent possède son propre budget λ_agent (= lambda_per_agent),
+        on échantillonne (B, M, λ_agent, N), puis on aplati en (B, λ_total, N, 1)
+        avec λ_total = M * λ_agent.
         """
         B, M, N = self.nb_instances, self.M, self.N
         λa = self.lambda_per_agent
+        λ_total = self.total_lambda
 
         probs = self.forward()  # (B, M, N)
         probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), 1e-10, 1 - 1e-10)
@@ -127,7 +132,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # On concatène tous les agents sur la dimension λ : (B, λ, N, 1)
         # on tire tout les lamdba en une fois pour eviter les boucles
-        samples = samples_agents.view(B, self.lambda_, N).unsqueeze(-1)
+        samples = samples_agents.view(B, λ_total, N).unsqueeze(-1)
         return samples
 
     def updateDistribution(self, solutionList, scoreList):
@@ -206,7 +211,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
     # =======================
 
     def toString(self):
-        return f"MultiAgent_Collaborative_M{self.M}_lambda{self.lambda_}"
+        return f"MultiAgent_Collaborative_M{self.M}_lambdaPerAgent{self.lambda_per_agent}"
 
     def _apply_svgd(self):
         """
@@ -257,7 +262,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.theta is None:
             self.agents = []
             return
-        self.agents = [self.theta[:, idx, :] for idx in range(self.M)]
+        self.agents = [SimpleNamespace(theta=self.theta[:, idx, :]) for idx in range(self.M)]
 
     def _build_svgd_kernel(self, kernel_name, kernel_params):
         kernel = kernel_name.lower()
@@ -266,6 +271,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "ppk":
             return PPK()
         if kernel == "rbf":
-            sigma = kernel_params.get("sigma") if isinstance(kernel_params, dict) else None
-            return RBF(sigma=sigma)
-        raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf.")
+            gamma = self.kernel_config.get("gamma")
+            return RBF(gamma=gamma if gamma is not None else 0.08)
+        if kernel == "pk":
+            gamma = self.kernel_config.get("gamma")
+            return ProbabilityKernel(gamma=gamma if gamma is not None else 1.0)
+        raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")

@@ -92,7 +92,7 @@ class MetricsCalculator:
             return 0.0, None
 
         with torch.no_grad():
-            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)  # (M, B, N)
+            theta = torch.stack([torch.sigmoid(self.agent_theta_tensor(agent).detach()) for agent in agents], dim=0)  # (M, B, N)
 
         theta_i = theta.unsqueeze(1)  # (M,1,B,N)
         theta_j = theta.unsqueeze(0)  # (1,M,B,N)
@@ -102,6 +102,25 @@ class MetricsCalculator:
 
         num_agents = theta.shape[0]
         total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum()
+        num_pairs = num_agents * (num_agents - 1)
+        avg = (total / num_pairs).item() if num_pairs > 0 else 0.0
+        return avg, pairwise_mean.cpu().numpy()
+
+    def compute_l1_distance(self, agents):
+        if agents is None or len(agents) < 2:
+            return 0.0, None
+
+        with torch.no_grad():
+            theta = torch.stack([torch.sigmoid(self.agent_theta_tensor(agent).detach()) for agent in agents], dim=0)  # (M, B, N)
+
+        theta_i = theta.unsqueeze(1)  # (M,1,B,N)
+        theta_j = theta.unsqueeze(0)  # (1,M,B,N)
+        diff = torch.abs(theta_i - theta_j)  # (M,M,B,N)
+        pairwise = torch.sum(diff, dim=-1)  # (M,M,B)
+        pairwise_mean = pairwise.mean(dim=-1)  # (M,M)
+
+        num_agents = theta.shape[0]
+        total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum() 
         num_pairs = num_agents * (num_agents - 1)
         avg = (total / num_pairs).item() if num_pairs > 0 else 0.0
         return avg, pairwise_mean.cpu().numpy()

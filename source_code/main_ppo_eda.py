@@ -69,6 +69,7 @@ def main(cfg: DictConfig):
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
     kernel_lr = kernel_cfg.get("learning_rate_svgd")
     kernel_alpha = kernel_cfg.get("alpha")
+    kernel_gamma = kernel_cfg.get("gamma") or (kernel_cfg.get("params") or {}).get("gamma")
     learning_rate_svgd = float(
         agent_val("learning_rate_svgd")
         or cfg.get('learning_rate_svgd')
@@ -81,9 +82,12 @@ def main(cfg: DictConfig):
         or kernel_alpha
         or 10.0
     )
+    gamma_suffix = ""
+    if kernel_name in ("pk", "rbf"):
+        gamma_suffix = f", gamma: {kernel_gamma}"
     print(
         f"Using REINFORCE update. Number of agents: {M} with learning_rate_svgd: {learning_rate_svgd}, "
-        f"λ: {lambda_}, svgd_alpha: {svgd_alpha}, advantage={advantage_cfg}, kernel={kernel_name}"
+        f"λ: {lambda_}, svgd_alpha: {svgd_alpha}, advantage={advantage_cfg}, kernel={kernel_name}{gamma_suffix}"
     )
 
     torch.manual_seed(seed)

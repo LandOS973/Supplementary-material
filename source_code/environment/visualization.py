@@ -33,6 +33,8 @@ def render_agent_dashboard(
     js_pairwise_history=None,
     l2_history=None,
     l2_pairwise_history=None,
+    l1_history=None,
+    l1_pairwise_history=None,
     entropy_history=None,
     entropy_agent_history=None,
     kernel_value_history=None,
@@ -71,6 +73,7 @@ def render_agent_dashboard(
     pairwise_hamming = _prepare_pairwise(hamming_pairwise_history)
     pairwise_js = _prepare_pairwise(js_pairwise_history)
     pairwise_l2 = _prepare_pairwise(l2_pairwise_history)
+    pairwise_l1 = _prepare_pairwise(l1_pairwise_history)
     entropy_agent_series = _prepare_agent_series(entropy_agent_history)
 
     metrics_data = OrderedDict()
@@ -100,6 +103,15 @@ def render_agent_dashboard(
             color="tab:red",
             overlay_type="pairwise",
             overlay_data=pairwise_l2,
+        )
+    if iterations and l1_history:
+        metrics_data["L1"] = dict(
+            average=l1_history,
+            ylabel="L1",
+            title="Average L1 Distance",
+            color="tab:pink",
+            overlay_type="pairwise",
+            overlay_data=pairwise_l1,
         )
     if entropy_history and entropy_agent_series is not None:
         metrics_data["Entropy"] = dict(
@@ -386,7 +398,7 @@ def render_agent_dashboard(
         agent_menu = tk.OptionMenu(agent_frame, selected_agent, *agent_options, command=lambda *_: update_overlays())
         agent_menu.pack(side="left")
 
-        hidden_defaults = {"Entropy", "L2", "JS"}
+        hidden_defaults = {"Entropy", "L2", "JS", "L1"}
         if metrics_order:
             default_selection = [name for name in metrics_order if name not in hidden_defaults]
             if not default_selection:
