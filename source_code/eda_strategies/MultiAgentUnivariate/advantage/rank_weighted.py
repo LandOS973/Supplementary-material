@@ -146,7 +146,10 @@ class NormalizedFitnessAdvantage(AdvantageStrategy):
         best_per_instance = self.best_fitness.view(nb_instances, 1, 1)
 
         denom = best_per_instance - instance_baseline
-        normalized = (current_fitness - instance_baseline) / denom
+        eps = torch.finfo(dtype).eps
+        safe_denom = torch.where(torch.abs(denom) < eps, torch.ones_like(denom), denom)
+        normalized = (current_fitness - instance_baseline) / safe_denom
+        normalized = torch.nan_to_num(normalized, nan=0.0, posinf=0.0, neginf=0.0)
 
         with torch.no_grad():
             self.fitness_mean = current_fitness.view(nb_instances, -1).mean(dim=1).detach().clone()

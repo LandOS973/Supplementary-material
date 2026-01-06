@@ -68,6 +68,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
         self.theta = None
         self.nb_instances = 0
+        self.latest_advantages = None
 
         # Buffers (B, M)
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
@@ -105,6 +106,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.last_theta_grad = None
         if self.enable_visualization:
             self._record_theta()
+        self.latest_advantages = None
 
     def sample_solutions(self):
         """
@@ -179,6 +181,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
         loss = loss_per_instance.sum()
+        with torch.no_grad():
+            reshaped_adv = advantages.detach().view(B, M, λa)
+            per_instance = reshaped_adv.view(B, self.lambda_)
+            self.latest_advantages = per_instance.cpu()
 
         grad_theta, = torch.autograd.grad(loss, theta, create_graph=False)
         self.last_theta_grad = grad_theta.detach().clone().view(B, M, N)
@@ -189,6 +195,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # moyenne sur tous les (B, M) comme avant (Moyenne sur B, puis sur M)
         return loss_per_instance.mean()
+
+    def get_latest_advantages(self):
+        if self.latest_advantages is None:
+            return None
+        return self.latest_advantages.detach().cpu()
 
     # =======================
     #   SVGD 
