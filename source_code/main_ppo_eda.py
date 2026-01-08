@@ -7,6 +7,7 @@ import random
 from pathlib import Path
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
+from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 
 
@@ -41,8 +42,16 @@ def main(cfg: DictConfig):
     print('running on device: ' + device)
     type_problem = cfg.problem.name if 'problem' in cfg and 'name' in cfg.problem else cfg.get('type_problem', 'QUBO')
     print(f"Running with problem type: {type_problem}")
-    dim = cfg.problem.dim if 'problem' in cfg and 'dim' in cfg.problem else cfg.get('dim', 64)
-    type_instance = cfg.problem.type_instance if 'problem' in cfg and 'type_instance' in cfg.problem else cfg.get('type_instance', 1)
+    dim = (
+        cfg.problem.n
+        if 'problem' in cfg and 'n' in cfg.problem
+        else cfg.problem.dim if 'problem' in cfg and 'dim' in cfg.problem else cfg.get('dim', 64)
+    )
+    type_instance = (
+        cfg.problem.k
+        if 'problem' in cfg and 'k' in cfg.problem
+        else cfg.problem.type_instance if 'problem' in cfg and 'type_instance' in cfg.problem else cfg.get('type_instance', 1)
+    )
     print(f"Running with dim={dim}, type_instance={type_instance}")
     nb_restarts = int(cfg.nb_restarts)
     nb_instances_test = int(cfg.nb_instances_test)
@@ -99,6 +108,7 @@ def main(cfg: DictConfig):
     write_logs = bool(cfg.get('write_logs', False))
     pathResult = None
 
+    block_size = None
     if (type_problem == "QUBO"):
 
         # Instances live under source_code/instances in this repo; resolve absolute path
@@ -140,6 +150,12 @@ def main(cfg: DictConfig):
 
         nk3_path = os.path.join(script_dir, "instances", "nk3", str(dim), str(type_instance)) + os.sep
         tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(nk3_path, nb_instances_test, nb_restarts, lambda_, dim, D, type_instance, device)
+    elif type_problem == "BLOCK":
+        block_size = type_instance
+        if block_size <= 0:
+            raise ValueError(f"block_size must be positive, got {block_size}")
+        if N % block_size != 0:
+            raise ValueError(f"dim={N} must be divisible by block_size={block_size}")
 
 
 
@@ -166,15 +182,38 @@ def main(cfg: DictConfig):
         advantage_cfg=advantage_cfg,
         kernel_config=kernel_cfg,
     ).to(device)
-    name_file_result = None
     if (type_problem == "QUBO"):
-        list_scores = get_Score_trajectoriesQUBO_cuda(strategy, N, nb_instances_test, nb_restarts, budget, lambda_, tensor_Q_test, device, verbose, name_file_result, enable_visualization=visualization_enabled)
+        list_scores = get_Score_trajectoriesQUBO_cuda(
+            strategy,
+            N,
+            nb_instances_test,
+            nb_restarts,
+            budget,
+            lambda_,
+            tensor_Q_test,
+            device,
+            verbose,
+            enable_visualization=visualization_enabled,
+        )
 
     elif (type_problem == "NK" or type_problem == "NK3"):
         list_scores = get_Score_trajectoriesNK_cuda(strategy, N,  type_instance, D, nb_instances_test, nb_restarts, 
                                                     budget, lambda_,
                                                     vectorIndex_th, tensor_matrix_locus,
-                                                    tensor_matrix_contrib, device, verbose, name_file_result)
+                                                    tensor_matrix_contrib, device, verbose)
+    elif type_problem == "BLOCK":
+        list_scores = get_Score_trajectoriesBLOCK_cuda(
+            strategy,
+            N,
+            block_size,
+            nb_instances_test,
+            nb_restarts,
+            budget,
+            lambda_,
+            device,
+            verbose,
+            enable_visualization=visualization_enabled,
+        )
         
     print(list_scores)
     average_test_score = np.mean(list_scores)

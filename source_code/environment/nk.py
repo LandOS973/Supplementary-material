@@ -127,7 +127,6 @@ def get_Score_trajectoriesNK_cuda(
     tensor_matrix_contrib,
     device,
     verbose,
-    name_file,
     enable_visualization=True,
     return_history=False,
 ):
@@ -175,12 +174,7 @@ def get_Score_trajectoriesNK_cuda(
 
 
 
-    if(name_file is not None):
-        f_results = open(name_file, "w")
-        f_results.write("runtime, mean, median, std, 2%, 5%, 10%, 25%, 50%, 75%, 90%, 95%, 98%" + "\n")
-        f_results.close()
         
-    list_tensor_solution = []
 
     for epoch in pbar:
 
@@ -236,7 +230,6 @@ def get_Score_trajectoriesNK_cuda(
 
         current_score = torch.max(tensor_score, dim=1).values
 
-        list_tensor_solution.append(tensor_solution)
         index_solution = torch.argmax(tensor_score, dim=1)
         index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1,1,N,1)
         best_current_solution = torch.gather(tensor_solution, 1 , index_solution).squeeze(3).squeeze(1)
@@ -315,43 +308,8 @@ def get_Score_trajectoriesNK_cuda(
                 postfix["avg_js"] = avg_js
             pbar.set_postfix(**postfix)
 
-        if(name_file is not None):
-            if(((epoch +1)*size_pop) % 100 == 0):
-                
-                bestScore_np = -bestScore.cpu().numpy()/N               
-                mean = np.mean(bestScore_np)
-                median = np.percentile(bestScore_np, 50)
-                std = np.std(bestScore_np)
-                _2per = np.percentile(bestScore_np, 2)
-                _5per = np.percentile(bestScore_np, 5)
-                _10per = np.percentile(bestScore_np, 10)
-                _25per = np.percentile(bestScore_np, 25)
-                _75per = np.percentile(bestScore_np, 75)
-                _90per = np.percentile(bestScore_np, 90)
-                _95per = np.percentile(bestScore_np, 95)
-                _98per = np.percentile(bestScore_np, 98)
-                
-                f_results = open(name_file, "a")
-                f_results.write(str((epoch + 1)*size_pop) + "," +  str(mean) + "," +  str(median) + "," +  str(std) + "," +  str(_2per) + "," +  str(_5per) + "," +  str(_10per) + "," +  str(_25per) + "," +  str(median) + "," +  str(_75per) + "," +  str(_90per) + "," +  str(_95per) + "," +  str(_98per) + "\n")
-                f_results.close()
 
 
-    if name_file is not None:
-        f_hamming = open(name_file + "_HD", "w")
-        f_hamming.write("runtime, avg distance, avg std pop" + "\n")
-        f_hamming.close()
-
-        bestGlobalSolution = bestGlobalSolution.unsqueeze(1).repeat(1,10,1)
-
-        for idx, tensor_solution in enumerate(list_tensor_solution):
-            hamming_distance = torch.sum(torch.abs(tensor_solution.squeeze(3) - bestGlobalSolution), dim=2).cpu().numpy()
-            avg_distance = np.mean(hamming_distance)
-            avg_std_distance = np.mean(np.std(hamming_distance, axis = 1))
-
-            f_hamming = open(name_file + "_HD_best", "a")
-            f_hamming.write(str((idx + 1)*size_pop) + "," +  str(avg_distance) + "," +  str(avg_std_distance) + "\n")
-            f_hamming.close()
-            
     bestScore_np = -bestScore.detach().cpu().numpy()/N
     if track_leader and agent_best_overall is not None and hasattr(strategy, "agents"):
         print("Per-agent summary:")

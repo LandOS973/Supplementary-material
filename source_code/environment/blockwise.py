@@ -1,36 +1,32 @@
-from utils.walsh_expansion import WalshExpansion
-from tqdm import tqdm
-import os
 import torch
+from tqdm import tqdm
 
 from environment.visualization import render_agent_dashboard, render_svgd_field_plot
 from environment.metrics import MetricsCalculator
 
 
-
-def get_Score_trajectoriesQUBO_cuda(
+def get_Score_trajectoriesBLOCK_cuda(
     strategy,
     N,
+    block_size,
     nb_instances,
     nb_restarts,
     budget,
     size_pop,
-    tensor_Q,
     device,
     verbose,
     enable_visualization=True,
     return_history=False,
 ):
-
     size_pop = strategy.lambda_
+    total_cases = nb_instances * nb_restarts
 
-    # tensor_Q is expected to have shape (total_cases, N, N) where total_cases = nb_instances_found * nb_restarts
-    # repeat to match population size
-    tensor_Q = (tensor_Q.unsqueeze(1)).repeat([1, size_pop, 1, 1]).to(device)
+    if block_size <= 0:
+        raise ValueError(f"block_size must be positive, got {block_size}")
+    if N % block_size != 0:
+        raise ValueError(f"N={N} must be divisible by block_size={block_size}")
 
-    total_cases = tensor_Q.size(0)
-
-    # Now initialize strategy and tracking tensors based on actual available cases
+    num_blocks = N // block_size
     strategy.reset_learned_parameters(total_cases)
     bestScore = torch.ones(total_cases).to(device) * (-99999)
 
@@ -39,6 +35,7 @@ def get_Score_trajectoriesQUBO_cuda(
     agent_best_overall = None
     if track_leader:
         agent_best_overall = [torch.ones(total_cases).to(device) * (-99999) for _ in agent_lambdas]
+
     nb_iterations = budget // size_pop
 
     avg_hamming_history = []
@@ -61,61 +58,36 @@ def get_Score_trajectoriesQUBO_cuda(
 
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
-        
-        
 
-
-    
-
-    
-    
-    
-    
-
-
-    
     for epoch in pbar:
-
         tensor_solution = strategy.sample_solutions()
 
-        if epoch == 0:
-            startSolution = tensor_solution[:,0,:,:].squeeze(2)
-        
-
-
-        tensor_QUBO = tensor_solution*2 - 1
-
-        Qx = tensor_Q @ tensor_QUBO
-
-        tensor_score = -(torch.transpose(Qx, 2, 3) @ tensor_QUBO).squeeze(2).squeeze(2)  
-        
+        tensor_binary = tensor_solution.squeeze(3)
+        tensor_blocks = tensor_binary.reshape(total_cases, size_pop, num_blocks, block_size)
+        block_counts = tensor_blocks.sum(dim=3)
+        block_proportions = block_counts / float(block_size)
+        block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
+        tensor_score = block_scores.mean(dim=2)
 
         current_score = torch.max(tensor_score, dim=1).values
 
-
-
-
-
-        
         index_solution = torch.argmax(tensor_score, dim=1)
-        index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1,1,N,1)
-        best_current_solution = torch.gather(tensor_solution, 1 , index_solution).squeeze(3).squeeze(1)
+        index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1, 1, N, 1)
+        best_current_solution = torch.gather(tensor_solution, 1, index_solution).squeeze(3).squeeze(1)
 
-        if(epoch == 0):
+        if epoch == 0:
             bestGlobalSolution = best_current_solution
         else:
-            tmp_current_score = current_score.unsqueeze(1).repeat(1,N)
-            tmp_bestScore = bestScore.unsqueeze(1).repeat(1,N)
-            bestGlobalSolution = torch.where(tmp_current_score > tmp_bestScore, best_current_solution,  bestGlobalSolution)
+            tmp_current_score = current_score.unsqueeze(1).repeat(1, N)
+            tmp_bestScore = bestScore.unsqueeze(1).repeat(1, N)
+            bestGlobalSolution = torch.where(tmp_current_score > tmp_bestScore, best_current_solution, bestGlobalSolution)
 
-            
-            
-        bestScore = torch.where(current_score > bestScore, current_score,  bestScore)
-        strategy.updateDistribution( tensor_solution, tensor_score)
+        bestScore = torch.where(current_score > bestScore, current_score, bestScore)
+        strategy.updateDistribution(tensor_solution, tensor_score)
 
         global_current = metrics.compute_fitness(current_score)
         global_best = metrics.compute_fitness(bestScore)
-        best_fitness_history.append(-global_best)
+        best_fitness_history.append(global_best)
         runtime_steps.append((epoch + 1) * size_pop)
 
         leader_idx = None
@@ -129,9 +101,11 @@ def get_Score_trajectoriesQUBO_cuda(
                 agent_scores = tensor_score[:, start_idx:end_idx]
                 agent_best_values, _ = torch.max(agent_scores, dim=1)
                 agent_best_scores.append(agent_best_values)
-                agent_best_overall[idx] = torch.where(agent_best_values > agent_best_overall[idx],
-                                                      agent_best_values,
-                                                      agent_best_overall[idx])
+                agent_best_overall[idx] = torch.where(
+                    agent_best_values > agent_best_overall[idx],
+                    agent_best_values,
+                    agent_best_overall[idx],
+                )
                 start_idx = end_idx
 
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
@@ -166,23 +140,18 @@ def get_Score_trajectoriesQUBO_cuda(
                 avg_kernel_grad_history.append(0.0)
 
         if use_tqdm:
-           postfix = {"bestScore": -global_best, "current_score": -global_current}
-           if track_leader and leader_idx is not None:
-               postfix["leader"] = leader_idx
-               postfix["avg_hamming"] = avg_hamming
-               postfix["avg_js"] = avg_js
-           pbar.set_postfix(**postfix)
+            postfix = {"bestScore": global_best, "current_score": global_current}
+            if track_leader and leader_idx is not None:
+                postfix["leader"] = leader_idx
+                postfix["avg_hamming"] = avg_hamming
+                postfix["avg_js"] = avg_js
+            pbar.set_postfix(**postfix)
 
-
-
-
-
-    bestScore_np = -bestScore.detach().cpu().numpy()
-
+    bestScore_np = bestScore.detach().cpu().numpy()
     if track_leader and agent_best_overall is not None and hasattr(strategy, "agents"):
         print("Per-agent summary:")
         for idx, agent in enumerate(strategy.agents):
-            avg_best = -torch.mean(agent_best_overall[idx]).item()
+            avg_best = torch.mean(agent_best_overall[idx]).item()
             theta_mean = torch.mean(metrics.agent_theta_tensor(agent)).item()
             print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
 
@@ -231,55 +200,3 @@ def get_Score_trajectoriesQUBO_cuda(
         return bestScore_np, history
 
     return bestScore_np
-
-
-
-
-def getTensorInstances_QUBO(path, nb_instances, nb_restarts,  N, t, device, phase):
-
-    list_matrix_Q = []
-    list_matrix_K = []
-    # Ensure path exists and discover available instance files matching pattern
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Instances path not found: {path}")
-
-    prefix = f"puboi_evo_n_{N}_t_{t}_i_"
-    files = [f for f in os.listdir(path) if f.startswith(prefix) and f.endswith('.json')]
-
-    if len(files) == 0:
-        raise FileNotFoundError(f"No QUBO instance files found in {path} with prefix {prefix}")
-
-    # extract instance numbers and sort
-    def inst_index(fname):
-        try:
-            part = fname[len(prefix):-5]  # strip prefix and .json
-            return int(part)
-        except Exception:
-            return 0
-
-    files_sorted = sorted(files, key=inst_index)
-
-    # select up to nb_instances available files
-    selected_files = files_sorted[:nb_instances]
-
-    if len(selected_files) < nb_instances:
-        print(f"Warning: requested {nb_instances} instances but only found {len(selected_files)} in {path}. Using {len(selected_files)} instances.")
-
-    for fname in selected_files:
-        filename = os.path.join(path, fname)
-        f = WalshExpansion()
-        f.load(filename)
-        Q = f.to_symmetric_Q()
-
-        Q_th = torch.tensor(Q, dtype=torch.float32)
-
-        for i in range(nb_restarts):
-            list_matrix_Q.append(Q_th)
-
-
-    with torch.no_grad():
-
-        tensor_Q = torch.stack(list_matrix_Q, dim=0)
-
-
-    return tensor_Q

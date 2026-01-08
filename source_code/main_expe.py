@@ -12,6 +12,7 @@ import torch
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
+from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from utils.main_utils import rank_vs_global_ranking
 
@@ -113,6 +114,25 @@ def _load_instances(problem_cfg, device):
             nk_base_path=base_path,
         )
 
+    if name == "BLOCK":
+        block_size = type_instance
+        if block_size <= 0:
+            raise ValueError(f"block_size must be positive, got {block_size}")
+        if dim % block_size != 0:
+            raise ValueError(f"dim={dim} must be divisible by block_size={block_size}")
+        return dict(
+            type_problem="BLOCK",
+            dim=dim,
+            type_instance=type_instance,
+            block_size=block_size,
+            tensor_Q_test=None,
+            dim_variables=None,
+            D=None,
+            vectorIndex_th=None,
+            tensor_matrix_locus=None,
+            tensor_matrix_contrib=None,
+        )
+
     raise ValueError(f"Unsupported problem {name}")
 
 
@@ -152,7 +172,20 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, lr, gamma, bandwi
             problem_ctx["tensor_Q_test"],
             device,
             False,
-            None,
+            enable_visualization=False,
+            return_history=True,
+        )
+    elif problem_ctx["type_problem"] == "BLOCK":
+        list_scores, history = get_Score_trajectoriesBLOCK_cuda(
+            strategy,
+            problem_ctx["dim"],
+            problem_ctx["block_size"],
+            DEFAULTS["nb_instances_test"],
+            DEFAULTS["nb_restarts"],
+            DEFAULTS["budget"],
+            lambda_,
+            device,
+            False,
             enable_visualization=False,
             return_history=True,
         )
@@ -181,7 +214,6 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, lr, gamma, bandwi
             tensor_matrix_contrib,
             device,
             False,
-            None,
             enable_visualization=False,
             return_history=True,
         )

@@ -10,7 +10,6 @@ from collections import defaultdict
 import numpy as np
 import torch
 import random
-import tempfile
 import argparse
 import sys
 import socket
@@ -18,6 +17,7 @@ import socket
 # --- imports projet (identiques à ton main) ---
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
+from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from utils.main_utils import (
     flat_or_matrix_to_instances,
@@ -246,6 +246,17 @@ def main():
                 dim_variables = [3 for _ in range(dim)]
             else:
                 dim_variables = None
+        elif type_problem == "BLOCK":
+            block_size = type_instance
+            if block_size <= 0:
+                raise ValueError(f"block_size must be positive, got {block_size}")
+            if dim % block_size != 0:
+                raise ValueError(f"dim={dim} must be divisible by block_size={block_size}")
+            dim_variables = None
+            vectorIndex_th = None
+            tensor_matrix_locus = None
+            tensor_matrix_contrib = None
+            D = None
         else:
             raise ValueError(f"type_problem inconnu: {type_problem}")
 
@@ -269,31 +280,36 @@ def main():
         # ---- Exécution avec chemin TEMPORAIRE (UNE barre), puis suppression immédiate ----
         t0 = time.time()
         run_history = None
-        with tempfile.NamedTemporaryFile(prefix="rl_eda_", suffix=".log", delete=False) as tmpf:
-            temp_path = tmpf.name
-        try:
-            if type_problem == "QUBO":
-                list_scores, run_history = get_Score_trajectoriesQUBO_cuda(
-                    strategy, dim, nb_instances_test, nb_restarts, budget, lambda_,
-                    tensor_Q_test, device, verbose, temp_path,
-                    enable_visualization=DEFAULTS.get("visualization", True),
-                    return_history=True
-                )
-            elif type_problem in ("NK", "NK3"):
-                list_scores, run_history = get_Score_trajectoriesNK_cuda(
-                    strategy, dim, type_instance, D, nb_instances_test, nb_restarts, budget, lambda_,
-                    vectorIndex_th, tensor_matrix_locus, tensor_matrix_contrib, device, verbose, temp_path,
-                    enable_visualization=DEFAULTS.get("visualization", True),
-                    return_history=True
-                )
-            else:
-                raise ValueError("Cas non prévu")
-        finally:
-            # on supprime systématiquement le fichier temporaire
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+        if type_problem == "QUBO":
+            list_scores, run_history = get_Score_trajectoriesQUBO_cuda(
+                strategy, dim, nb_instances_test, nb_restarts, budget, lambda_,
+                tensor_Q_test, device, verbose,
+                enable_visualization=DEFAULTS.get("visualization", True),
+                return_history=True
+            )
+        elif type_problem in ("NK", "NK3"):
+            list_scores, run_history = get_Score_trajectoriesNK_cuda(
+                strategy, dim, type_instance, D, nb_instances_test, nb_restarts, budget, lambda_,
+                vectorIndex_th, tensor_matrix_locus, tensor_matrix_contrib, device, verbose,
+                enable_visualization=DEFAULTS.get("visualization", True),
+                return_history=True
+            )
+        elif type_problem == "BLOCK":
+            list_scores, run_history = get_Score_trajectoriesBLOCK_cuda(
+                strategy,
+                dim,
+                block_size,
+                nb_instances_test,
+                nb_restarts,
+                budget,
+                lambda_,
+                device,
+                verbose,
+                enable_visualization=DEFAULTS.get("visualization", True),
+                return_history=True,
+            )
+        else:
+            raise ValueError("Cas non prévu")
         dt = time.time() - t0
 
         # Moyenne globale du run (toutes instances × restarts)

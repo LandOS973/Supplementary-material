@@ -53,7 +53,7 @@ class RBF(nn.Module):
             grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
 
 
-
+        print(K[0])
         return K, grad_Thetas
 
 
