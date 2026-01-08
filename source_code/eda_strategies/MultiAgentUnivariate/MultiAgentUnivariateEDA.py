@@ -28,10 +28,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         M,
         device,
         learning_rate,
-        learning_rate_svgd=None,
+        epsilon_svgd=None,
         enable_visualization=False,
         sigma=None,
-        svgd_alpha=10.0,
+        svgd_gamma=10.0,
         advantage_cfg=None,
         kernel_config=None,
     ):
@@ -47,10 +47,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.lambda_ = self.total_lambda
         self.device = device
         self.learning_rate = learning_rate
-        self.learning_rate_svgd = learning_rate_svgd
+        self.epsilon_svgd = epsilon_svgd
         self.enable_visualization = bool(enable_visualization)
         self.dim_variables = dim_variables
-        self.svgd_alpha = float(svgd_alpha)
+        self.svgd_gamma = float(svgd_gamma)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
@@ -62,7 +62,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # interaction SVGD 
         kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
-        self.svgd = SVGD(kernel_impl, alpha=self.svgd_alpha)
+        self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma)
         self.theta_history = []
         self.kernel_metric_history = []
 
@@ -231,7 +231,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 self.kernel_metric_history.append(kernel_stats)
 
         with torch.no_grad():
-            self.theta += self.learning_rate_svgd * phi
+            self.theta += self.epsilon_svgd * phi
 
     # =======================
     #   Visualisation
@@ -271,9 +271,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "ppk":
             return PPK()
         if kernel == "rbf":
-            gamma = self.kernel_config.get("gamma")
-            return RBF(gamma=gamma if gamma is not None else 0.08)
+            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
+            return RBF(bandwith_kernel=bandwith_kernel if bandwith_kernel is not None else 0.08)
         if kernel == "pk":
-            gamma = self.kernel_config.get("gamma")
-            return ProbabilityKernel(gamma=gamma if gamma is not None else 1.0)
+            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
+            return ProbabilityKernel(bandwith_kernel=bandwith_kernel if bandwith_kernel is not None else 1.0)
         raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")

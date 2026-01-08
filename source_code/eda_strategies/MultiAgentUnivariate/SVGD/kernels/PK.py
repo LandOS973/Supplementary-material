@@ -8,14 +8,14 @@ class ProbabilityKernel(nn.Module):
     Pour deux tenseurs X, Y de forme (B, M, N)
     ce module renvoie un tenseur K de forme (B, M, P) avec :
         K[b, i, j] = k(X[b, i, :], Y[b, j, :])
-                   = exp( - gamma * || p(X_{b,i}) - p(Y_{b,j}) ||^2 )
+                   = exp( - bandwith_kernel * || p(X_{b,i}) - p(Y_{b,j}) ||^2 )
     où p(X) = sigmoid(X) est le vecteur des probabilités associées à l'agent X.
     """
 
-    def __init__(self, gamma=1.0):
+    def __init__(self, bandwith_kernel=1.0):
         super().__init__()
         # largeur du noyau appliqué sur les probabilités
-        self.gamma = gamma
+        self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas):
         """
@@ -35,7 +35,7 @@ class ProbabilityKernel(nn.Module):
 
         dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
 
-        K = torch.exp(-self.gamma * dnorm2)
+        K = torch.exp(-self.bandwith_kernel * dnorm2)
 
         vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
 

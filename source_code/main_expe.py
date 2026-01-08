@@ -20,19 +20,19 @@ from utils.main_utils import rank_vs_global_ranking
 #  Grilles
 # ============
 DEFAULT_LEARNING_RATES = [0.1, 0.5, 0.3, 0.2, 0.8]
-DEFAULT_ALPHA_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]  # svgd_alpha
+DEFAULT_gamma_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]  # svgd_gamma
 # grilles par kernel
 LEARNING_RATE_GRID = {
     "rbf": [0.5, 0.3, 0.2, 0.8, 1.0],
     "pk": [0.5, 0.3, 0.2, 0.8, 1.0],
     "hk": [0.1, 0.5, 1.0, 1.5, 2.0],
 }
-ALPHA_GRID = {
+gamma_GRID = {
     "rbf": [0.1, 0.05, 0.03, 0.02, 0.01],
     "pk": [0.02 ,0.04, 0.05, 0.08, 0.1, 0.15],
     "hk": [1, 2, 3, 4, 5],
 }
-GAMMA_GRID = {  # None => pas de gamma pour HK
+bandwith_kernel_GRID = {  # None => pas de bandwith_kernel pour HK
     "rbf": [0.3, 0.8, 1.5, 3.0, 5.0],
     "pk": [0.3, 0.8, 1.5, 3.0, 5.0],
     "hk": [None],
@@ -52,7 +52,7 @@ DEFAULTS = dict(
     nb_instances_test=10,
     nb_restarts=10,
     budget=10000,
-    learning_rate_svgd=0.2,
+    epsilon_svgd=0.2,
     visualization=False,
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
@@ -116,14 +116,14 @@ def _load_instances(problem_cfg, device):
     raise ValueError(f"Unsupported problem {name}")
 
 
-def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, lr, alpha, gamma):
+def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, lr, gamma, bandwith_kernel):
     device = DEFAULTS["device"]
-    learning_rate_svgd = DEFAULTS["learning_rate_svgd"]
+    epsilon_svgd = DEFAULTS["epsilon_svgd"]
 
     # kernel configuration
-    kernel_config = {"name": kernel_name, "learning_rate_svgd": learning_rate_svgd, "alpha": alpha}
-    if kernel_name in ("rbf", "pk") and gamma is not None:
-        kernel_config["gamma"] = gamma
+    kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
+    if kernel_name in ("rbf", "pk") and bandwith_kernel is not None:
+        kernel_config["bandwith_kernel"] = bandwith_kernel
 
     factory = FactoryStrategyEA()
     strategy = factory.createStrategyEA(
@@ -134,9 +134,9 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, lr, alpha, gamma)
         problem_ctx["dim_variables"],
         M,
         learning_rate=lr,
-        learning_rate_svgd=learning_rate_svgd,
+        epsilon_svgd=epsilon_svgd,
         enable_visualization=DEFAULTS["visualization"],
-        svgd_alpha=alpha,
+        svgd_gamma=gamma,
         advantage_cfg=advantage,
         kernel_config=kernel_config,
     ).to(device)
@@ -200,8 +200,8 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, lr, alpha, gamma)
         M=M,
         lambda_=lambda_,
         learning_rate=lr,
-        alpha=alpha,
         gamma=gamma,
+        bandwith_kernel=bandwith_kernel,
         avg_score=avg_score,
     )
     return avg_score, history, run_meta
@@ -233,8 +233,8 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         f.write(f"M: {meta['M']}\n")
         f.write(f"lambda: {meta['lambda_']}\n")
         f.write(f"learning_rate: {meta['learning_rate']}\n")
-        f.write(f"alpha: {meta['alpha']}\n")
         f.write(f"gamma: {meta['gamma']}\n")
+        f.write(f"bandwith_kernel: {meta['bandwith_kernel']}\n")
         f.write(f"avg_score: {meta['avg_score']}\n")
         if ranking:
             best_algo, best_score, my_rank, n_rank, my_pct = ranking
@@ -294,13 +294,13 @@ def main():
         expanded = []
         for kernel_name in KERNELS:
             lr_list = LEARNING_RATE_GRID.get(kernel_name, DEFAULT_LEARNING_RATES)
-            alpha_list = ALPHA_GRID.get(kernel_name, DEFAULT_ALPHA_VALUES)
-            gamma_list = GAMMA_GRID.get(kernel_name, [None])
+            gamma_list = gamma_GRID.get(kernel_name, DEFAULT_gamma_VALUES)
+            bandwith_kernel_list = bandwith_kernel_GRID.get(kernel_name, [None])
             for advantage, M, lambda_ in itertools.product(ADVANTAGES, M_VALUES, LAMBDA_VALUES):
                 for lr in lr_list:
-                    for alpha in alpha_list:
-                        for gamma in gamma_list:
-                            expanded.append((kernel_name, advantage, M, lambda_, lr, alpha, gamma))
+                    for gamma in gamma_list:
+                        for bandwith_kernel in bandwith_kernel_list:
+                            expanded.append((kernel_name, advantage, M, lambda_, lr, gamma, bandwith_kernel))
 
         total_runs = len(expanded)
         print(
@@ -308,15 +308,15 @@ def main():
             f"total runs: {total_runs}"
         )
 
-        for idx, (kernel_name, advantage, M, lambda_, lr, alpha, gamma) in enumerate(expanded, 1):
+        for idx, (kernel_name, advantage, M, lambda_, lr, gamma, bandwith_kernel) in enumerate(expanded, 1):
             t0 = time.time()
-            gamma_str = f"{gamma}" if gamma is not None else "n/a"
+            bandwith_kernel_str = f"{bandwith_kernel}" if bandwith_kernel is not None else "n/a"
             print(
-                f"▶ Run {idx}/{total_runs} | kernel={kernel_name} (gamma={gamma_str}) | "
-                f"adv={advantage} | M={M} | lambda={lambda_} | lr={lr} | alpha={alpha}"
+                f"▶ Run {idx}/{total_runs} | kernel={kernel_name} (bandwith_kernel={bandwith_kernel_str}) | "
+                f"adv={advantage} | M={M} | lambda={lambda_} | lr={lr} | gamma={gamma}"
             )
             avg_score, history, meta = _run_once(
-                problem_ctx, kernel_name, advantage, M, lambda_, lr, alpha, gamma
+                problem_ctx, kernel_name, advantage, M, lambda_, lr, gamma, bandwith_kernel
             )
             dt = time.time() - t0
             print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")

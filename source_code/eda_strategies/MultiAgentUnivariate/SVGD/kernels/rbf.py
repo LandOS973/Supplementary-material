@@ -11,17 +11,17 @@ class RBF(nn.Module):
     ce module renvoie un tenseur K de forme (B, M, P) avec :
 
         K[b, i, j] = k(X[b, i, :], Y[b, j, :])
-                   = exp( - gamma * || X_{b,i} - Y_{b,j} ||^2 )
+                   = exp( - bandwith_kernel * || X_{b,i} - Y_{b,j} ||^2 )
 
     """
 
-    def __init__(self, gamma=0.08):
+    def __init__(self, bandwith_kernel=0.08):
         super().__init__()
         # sigma :
         #   - si None : sigma sera estimé automatiquement (median heuristic)
         #   - sinon   : on utilise cette valeur fixe (float ou tensor)
         # facteur de largeur du noyau RBF (peut être fixé via la config)
-        self.gamma = gamma
+        self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas):
         """
@@ -29,7 +29,7 @@ class RBF(nn.Module):
         Y : (B, P, N)
 
         Retourne :
-            K : (B, M, P) avec K[b, i, j] = exp( - gamma * || X_{b,i} - Y_{b,j} ||^2 )
+            K : (B, M, P) avec K[b, i, j] = exp( - bandwith_kernel * || X_{b,i} - Y_{b,j} ||^2 )
         """
         Thetas = Thetas.requires_grad_(True)
 
@@ -42,7 +42,7 @@ class RBF(nn.Module):
 
         dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
 
-        K = torch.exp(-self.gamma * dnorm2)
+        K = torch.exp(-self.bandwith_kernel * dnorm2)
 
         grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 
@@ -71,22 +71,22 @@ class RBF(nn.Module):
 
 
 
-    # def _compute_gamma(self, dnorm2, m):
+    # def _compute_bandwith_kernel(self, dnorm2, m):
     #     """
     #     dnorm2 : (B, M, P)  distances au carré ||X_{b,i} - Y_{b,j}||^2
     #     m      : nombre de points (M)
 
-    #     Objectif : retourner gamma tel que
-    #         k(x, y) = exp( - gamma * ||x - y||^2 )
+    #     Objectif : retourner bandwith_kernel tel que
+    #         k(x, y) = exp( - bandwith_kernel * ||x - y||^2 )
 
     #     - Si sigma est fixé :
-    #           gamma = 1 / (2 * sigma^2)
+    #           bandwith_kernel = 1 / (2 * sigma^2)
     #     - Si sigma est None :
     #           on estime sigma via la "median heuristic" :
 
     #               h ≈ median( dnorm2 ) / (2 * log(m + 1))
     #               sigma = sqrt(h)
-    #               gamma = 1 / (2 * sigma^2)
+    #               bandwith_kernel = 1 / (2 * sigma^2)
     #     """
     #     if self.sigma is None:
     #         # Median heuristic : on prend la médiane de toutes les distances au carré.
@@ -106,11 +106,11 @@ class RBF(nn.Module):
     #             dtype=dnorm2.dtype
     #         )
 
-    #     # gamma = 1 / (2 * sigma^2), avec petit epsilon pour la stabilité num.
-    #     gamma = 1.0 / (1e-8 + 2.0 * sigma_val ** 2)
+    #     # bandwith_kernel = 1 / (2 * sigma^2), avec petit epsilon pour la stabilité num.
+    #     bandwith_kernel = 1.0 / (1e-8 + 2.0 * sigma_val ** 2)
 
-    #     # S'assurer que gamma est bien un tensor (scalaire) sur le bon device/dtype.
-    #     if not torch.is_tensor(gamma):
-    #         gamma = torch.tensor(gamma, device=dnorm2.device, dtype=dnorm2.dtype)
+    #     # S'assurer que bandwith_kernel est bien un tensor (scalaire) sur le bon device/dtype.
+    #     if not torch.is_tensor(bandwith_kernel):
+    #         bandwith_kernel = torch.tensor(bandwith_kernel, device=dnorm2.device, dtype=dnorm2.dtype)
 
-    #     return gamma
+    #     return bandwith_kernel

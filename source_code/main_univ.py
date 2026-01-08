@@ -60,8 +60,8 @@ DEFAULTS = dict(
     type_strategy="PPO-EDA",   # utilisé par la fabrique
     problem_name="QUBO",       # defaults: problem: qubo
     visualization=False,
-    agent_learning_rate_svgd=0.2,
-    svgd_alpha=10.0,
+    agent_epsilon_svgd=0.2,
+    svgd_gamma=10.0,
     advantage="baseline",
 )
 
@@ -71,7 +71,7 @@ DEFAULTS = dict(
 GRID = dict(
     agent_learning_rate=[0.007, 0.01, 0.02],
     agent_M=[1, 2, 4, 5],
-    agent_learning_rate_svgd=[0.2, 0.5, 1.0],
+    agent_epsilon_svgd=[0.2, 0.5, 1.0],
     problem_dim=[64, 128, 256],
     problem_type_instance=[0, 1, 2, 3, 4, 5],
     agent_lambda=[10, 15, 20, 25],
@@ -139,12 +139,12 @@ def main():
 
     # Filtres additionnels pour éliminer les combinaisons redondantes:
     #  - SVGD n'a pas d'effet quand M=1 ⇒ garder uniquement le pas par défaut
-    default_svgd = DEFAULTS.get("agent_learning_rate_svgd", None)
+    default_svgd = DEFAULTS.get("agent_epsilon_svgd", None)
 
     filtered = []
     for cfg in combos:
         m_val = int(cfg.get("agent_M", 1))
-        lr_svgd = float(cfg.get("agent_learning_rate_svgd", default_svgd or 0.0))
+        lr_svgd = float(cfg.get("agent_epsilon_svgd", default_svgd or 0.0))
         if default_svgd is not None and m_val == 1 and abs(lr_svgd - default_svgd) > 1e-12:
             continue
 
@@ -173,11 +173,11 @@ def main():
         type_instance = int(cfg["problem_type_instance"])
 
         learning_rate = float(cfg["agent_learning_rate"])
-        learning_rate_svgd = float(
-            cfg.get("agent_learning_rate_svgd", DEFAULTS.get("agent_learning_rate_svgd", 0.1))
+        epsilon_svgd = float(
+            cfg.get("agent_epsilon_svgd", DEFAULTS.get("agent_epsilon_svgd", 0.1))
         )
-        svgd_alpha = float(
-            cfg.get("svgd_alpha", DEFAULTS.get("svgd_alpha", 10.0))
+        svgd_gamma = float(
+            cfg.get("svgd_gamma", DEFAULTS.get("svgd_gamma", 10.0))
         )
         advantage_cfg = cfg.get("advantage", DEFAULTS.get("advantage", "baseline"))
         M = int(cfg["agent_M"])
@@ -187,7 +187,7 @@ def main():
         print(
             f"=========================================================DEBUT=======================================================================\n"
             f"▶ Run {i}/{total} | agent=REINFORCE lr={learning_rate} "
-            f"M={M} lr_svgd={learning_rate_svgd} "
+            f"M={M} lr_svgd={epsilon_svgd} "
             f"lambda/M={lambda_per_agent_str} | problem={type_problem} dim={dim} t={type_instance}"
         )
 
@@ -259,9 +259,9 @@ def main():
             dim_variables,
             M,
             learning_rate=learning_rate,
-            learning_rate_svgd=learning_rate_svgd,
+            epsilon_svgd=epsilon_svgd,
             enable_visualization=DEFAULTS.get("visualization", True),
-            svgd_alpha=svgd_alpha,
+            svgd_gamma=svgd_gamma,
             advantage_cfg=advantage_cfg,
             kernel_config=None,
         ).to(device)
@@ -327,8 +327,8 @@ def main():
             advantage_type = "baseline"
         algo_key = (
             f"REINFORCE:{DEFAULTS['type_strategy']}:lr{learning_rate}:"
-            f"M{M}:lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{learning_rate_svgd}"
-            f":scoreDiv{svgd_alpha}:advantage{advantage_type}"
+            f"M{M}:lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{epsilon_svgd}"
+            f":scoreDiv{svgd_gamma}:advantage{advantage_type}"
         )
         if run_history is not None:
             run_histories[(type_problem, dim, type_instance, algo_key)] = run_history

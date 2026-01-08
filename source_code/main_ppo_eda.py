@@ -67,27 +67,27 @@ def main(cfg: DictConfig):
     repo_root = os.path.abspath(os.path.join(script_dir, ".."))
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    kernel_lr = kernel_cfg.get("learning_rate_svgd")
-    kernel_alpha = kernel_cfg.get("alpha")
-    kernel_gamma = kernel_cfg.get("gamma") or (kernel_cfg.get("params") or {}).get("gamma")
-    learning_rate_svgd = float(
-        agent_val("learning_rate_svgd")
-        or cfg.get('learning_rate_svgd')
+    kernel_lr = kernel_cfg.get("epsilon_svgd")
+    kernel_gamma = kernel_cfg.get("gamma")
+    kernel_bandwith_kernel = kernel_cfg.get("bandwith_kernel") or (kernel_cfg.get("params") or {}).get("bandwith_kernel")
+    epsilon_svgd = float(
+        agent_val("epsilon_svgd")
+        or cfg.get('epsilon_svgd')
         or kernel_lr
         or 0.5
     )
-    svgd_alpha = float(
-        agent_val("alpha")
-        or cfg.get('alpha')
-        or kernel_alpha
+    svgd_gamma = float(
+        agent_val("gamma")
+        or cfg.get('gamma')
+        or kernel_gamma
         or 10.0
     )
-    gamma_suffix = ""
+    bandwith_kernel_suffix = ""
     if kernel_name in ("pk", "rbf"):
-        gamma_suffix = f", gamma: {kernel_gamma}"
+        bandwith_kernel_suffix = f", bandwith_kernel: {kernel_bandwith_kernel}"
     print(
-        f"Using REINFORCE update. Number of agents: {M} with learning_rate_svgd: {learning_rate_svgd}, "
-        f"λ: {lambda_}, svgd_alpha: {svgd_alpha}, advantage={advantage_cfg}, kernel={kernel_name}{gamma_suffix}"
+        f"Using REINFORCE update. Number of agents: {M} with epsilon_svgd: {epsilon_svgd}, "
+        f"λ: {lambda_}, svgd_gamma: {svgd_gamma}, advantage={advantage_cfg}, kernel={kernel_name}{bandwith_kernel_suffix}"
     )
 
     torch.manual_seed(seed)
@@ -160,9 +160,9 @@ def main(cfg: DictConfig):
         dim_variables,
         M,
         learning_rate=learning_rate,
-        learning_rate_svgd=learning_rate_svgd,
+        epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
-        svgd_alpha=svgd_alpha,
+        svgd_gamma=svgd_gamma,
         advantage_cfg=advantage_cfg,
         kernel_config=kernel_cfg,
     ).to(device)

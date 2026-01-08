@@ -19,9 +19,9 @@ class FactoryStrategyEA:
         dim_variables,
         M,
         learning_rate,
-        learning_rate_svgd,
+        epsilon_svgd,
         enable_visualization=False,
-        svgd_alpha=10.0,
+        svgd_gamma=10.0,
         advantage_cfg=None,
         kernel_config=None,
     ):
@@ -38,9 +38,9 @@ class FactoryStrategyEA:
                     M,
                     device=device,
                     learning_rate=learning_rate,
-                    learning_rate_svgd=learning_rate_svgd,
+                    epsilon_svgd=epsilon_svgd,
                     enable_visualization=enable_visualization,
-                    svgd_alpha=svgd_alpha,
+                    svgd_gamma=svgd_gamma,
                     advantage_cfg=advantage_cfg,
                     kernel_config=kernel_config,
                 )
