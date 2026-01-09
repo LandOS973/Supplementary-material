@@ -15,7 +15,7 @@ class RBF(nn.Module):
 
     """
 
-    def __init__(self, bandwith_kernel=0.08):
+    def __init__(self, bandwith_kernel):
         super().__init__()
         # sigma :
         #   - si None : sigma sera estimé automatiquement (median heuristic)
@@ -33,14 +33,24 @@ class RBF(nn.Module):
         """
         Thetas = Thetas.requires_grad_(True)
 
-        B, M, N = Thetas.shape
-
+        B, M, N = Thetas.shape 
+        # B : nombre d'instances 
+        # M : nombre de particules
+        # N : dimension des particules
 
 
         theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
         theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
 
         dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
+
+        if self.bandwith_kernel is None:
+            # Estimation automatique de la bandwith via la median heuristic
+            median = torch.median(dnorm2.detach().flatten())
+            h = median / (2.0 * math.log(M + 1.0))
+            sigma_val = torch.sqrt(h)
+            bandwith_kernel = 1.0 / (1e-8 + 2.0 * sigma_val ** 2)
+            self.bandwith_kernel = bandwith_kernel
 
         K = torch.exp(-self.bandwith_kernel * dnorm2)
 
@@ -49,68 +59,6 @@ class RBF(nn.Module):
         for i in range(M):
             Ki = K[:,:,i]
             vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
-
             grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
-
-
-        print(K[0])
+        self.bandwith_kernel = None  # reset for next call
         return K, grad_Thetas
-
-
-
-        # # print(K[0][:5][:5])
-        #
-        # grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
-        #
-        # for i in range(M):
-        #     Ki = K[:,:,i]
-        #     vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
-        #     grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
-
-
-
-
-
-    # def _compute_bandwith_kernel(self, dnorm2, m):
-    #     """
-    #     dnorm2 : (B, M, P)  distances au carré ||X_{b,i} - Y_{b,j}||^2
-    #     m      : nombre de points (M)
-
-    #     Objectif : retourner bandwith_kernel tel que
-    #         k(x, y) = exp( - bandwith_kernel * ||x - y||^2 )
-
-    #     - Si sigma est fixé :
-    #           bandwith_kernel = 1 / (2 * sigma^2)
-    #     - Si sigma est None :
-    #           on estime sigma via la "median heuristic" :
-
-    #               h ≈ median( dnorm2 ) / (2 * log(m + 1))
-    #               sigma = sqrt(h)
-    #               bandwith_kernel = 1 / (2 * sigma^2)
-    #     """
-    #     if self.sigma is None:
-    #         # Median heuristic : on prend la médiane de toutes les distances au carré.
-    #         # detach() pour ne pas backpropager à travers ce choix de sigma.
-    #         median = torch.median(dnorm2.detach().flatten())
-
-    #         # h ~ variance effective, divisée par 2 log(m+1) (stabilisation).
-    #         h = median / (2.0 * math.log(m + 1.0))
-
-    #         # sigma = sqrt(h), avec clamp pour éviter sigma=0.
-    #         sigma_val = torch.sqrt(torch.clamp(h, min=1e-8))
-    #     else:
-    #         # sigma fourni par l'utilisateur (float ou tensor)
-    #         sigma_val = torch.tensor(
-    #             self.sigma,
-    #             device=dnorm2.device,
-    #             dtype=dnorm2.dtype
-    #         )
-
-    #     # bandwith_kernel = 1 / (2 * sigma^2), avec petit epsilon pour la stabilité num.
-    #     bandwith_kernel = 1.0 / (1e-8 + 2.0 * sigma_val ** 2)
-
-    #     # S'assurer que bandwith_kernel est bien un tensor (scalaire) sur le bon device/dtype.
-    #     if not torch.is_tensor(bandwith_kernel):
-    #         bandwith_kernel = torch.tensor(bandwith_kernel, device=dnorm2.device, dtype=dnorm2.dtype)
-
-    #     return bandwith_kernel

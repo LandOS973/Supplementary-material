@@ -69,7 +69,6 @@ DEFAULTS = dict(
 # 2) Grille d’hparams 
 # =========================
 GRID = dict(
-    agent_learning_rate=[0.007, 0.01, 0.02],
     agent_M=[1, 2, 4, 5],
     agent_epsilon_svgd=[0.2, 0.5, 1.0],
     problem_dim=[64, 128, 256],
@@ -172,10 +171,10 @@ def main():
         dim = int(cfg["problem_dim"])
         type_instance = int(cfg["problem_type_instance"])
 
-        learning_rate = float(cfg["agent_learning_rate"])
         epsilon_svgd = float(
             cfg.get("agent_epsilon_svgd", DEFAULTS.get("agent_epsilon_svgd", 0.1))
         )
+        learning_rate = epsilon_svgd
         svgd_gamma = float(
             cfg.get("svgd_gamma", DEFAULTS.get("svgd_gamma", 10.0))
         )
@@ -186,7 +185,7 @@ def main():
 
         print(
             f"=========================================================DEBUT=======================================================================\n"
-            f"▶ Run {i}/{total} | agent=REINFORCE lr={learning_rate} "
+            f"▶ Run {i}/{total} | agent=REINFORCE epsilon_svgd={epsilon_svgd} "
             f"M={M} lr_svgd={epsilon_svgd} "
             f"lambda/M={lambda_per_agent_str} | problem={type_problem} dim={dim} t={type_instance}"
         )
@@ -342,7 +341,7 @@ def main():
         else:
             advantage_type = "baseline"
         algo_key = (
-            f"REINFORCE:{DEFAULTS['type_strategy']}:lr{learning_rate}:"
+            f"REINFORCE:{DEFAULTS['type_strategy']}:epsilon_svgd{epsilon_svgd}:"
             f"M{M}:lambdaPerAgent{lambda_per_agent_str}:lambdaTotal{lambda_}:lr_svgd{epsilon_svgd}"
             f":scoreDiv{svgd_gamma}:advantage{advantage_type}"
         )

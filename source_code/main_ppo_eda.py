@@ -70,7 +70,7 @@ def main(cfg: DictConfig):
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
     M = int(agent_val("M") or cfg.get('M') or 1)
-    learning_rate = float(agent_val("learning_rate") or cfg.get('learning_rate') or 0.0)
+    learning_rate = None
     typeStrategy = "PPO-EDA"
     script_dir = os.path.abspath(os.path.dirname(__file__))
     repo_root = os.path.abspath(os.path.join(script_dir, ".."))
@@ -85,6 +85,7 @@ def main(cfg: DictConfig):
         or kernel_lr
         or 0.5
     )
+    learning_rate = epsilon_svgd
     svgd_gamma = float(
         agent_val("gamma")
         or cfg.get('gamma')
