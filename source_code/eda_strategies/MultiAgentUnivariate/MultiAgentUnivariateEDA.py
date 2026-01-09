@@ -6,6 +6,7 @@ from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.rbf import RBF
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.ppk import PPK
+from eda_strategies.MultiAgentUnivariate.SVGD.kernels.JSD import JSD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.PK import ProbabilityKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
@@ -276,4 +277,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "pk":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
             return ProbabilityKernel(bandwith_kernel=bandwith_kernel if bandwith_kernel is not None else 1.0)
+        if kernel == "jsd":
+            return JSD()
         raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")

@@ -3,4 +3,4 @@ updateMethod: REINFORCE
 M: 5
 lambda: 5
 advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness
-kernel:  rbf # rbf | hk | pk
+kernel:  jsd # rbf | hk | pk | ppk | jsd
