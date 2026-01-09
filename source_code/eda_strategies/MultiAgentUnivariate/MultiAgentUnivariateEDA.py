@@ -277,11 +277,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             return RBF(bandwith_kernel=bandwith_kernel)
         if kernel == "pk":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
-<<<<<<< Updated upstream
             return ProbabilityKernel(bandwith_kernel=bandwith_kernel if bandwith_kernel is not None else 1.0)
         if kernel == "jsd":
             return JSD()
-=======
-            return ProbabilityKernel(bandwith_kernel=bandwith_kernel)
->>>>>>> Stashed changes
         raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")
