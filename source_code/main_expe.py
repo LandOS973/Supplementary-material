@@ -42,7 +42,7 @@ bandwith_kernel_GRID = {  # None => pas de bandwith_kernel pour HK
     "hk": [None],
 }
 
-M_VALUES = [15 ,10, 7, 5, 3, 1]
+M_VALUES = [10, 5, 3, 1]
 LAMBDA_VALUES = [3, 5, 10, 15]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk"]

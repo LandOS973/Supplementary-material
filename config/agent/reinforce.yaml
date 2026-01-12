@@ -1,6 +1,7 @@
 name: REINFORCE-EDA
 updateMethod: REINFORCE
-M: 5
-lambda: 10
+M: 10
+lambda: 3
 advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness
 kernel:  jsd # rbf | hk | pk | ppk | jsd
+no_interact: false

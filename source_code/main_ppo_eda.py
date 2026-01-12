@@ -67,6 +67,7 @@ def main(cfg: DictConfig):
     budget = int(cfg.get('budget', 10000))
     visualization_enabled = bool(cfg.get('visualization', True))
     advantage_cfg = agent_val("advantage") or cfg.get('advantage') or "baseline"
+    no_interact = bool(agent_val("no_interact") or cfg.get("no_interact") or False)
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
     M = int(agent_val("M") or cfg.get('M') or 1)
@@ -97,7 +98,8 @@ def main(cfg: DictConfig):
         bandwith_kernel_suffix = f", bandwith_kernel: {kernel_bandwith_kernel}"
     print(
         f"Using REINFORCE update. Number of agents: {M} with epsilon_svgd: {epsilon_svgd}, "
-        f"λ: {lambda_}, svgd_gamma: {svgd_gamma}, advantage={advantage_cfg}, kernel={kernel_name}{bandwith_kernel_suffix}"
+        f"λ: {lambda_}, svgd_gamma: {svgd_gamma}, advantage={advantage_cfg}, "
+        f"kernel={kernel_name}{bandwith_kernel_suffix}, no_interact={no_interact}, bandwith_kernel: {kernel_bandwith_kernel}"
     )
 
     torch.manual_seed(seed)
@@ -184,6 +186,7 @@ def main(cfg: DictConfig):
         svgd_gamma=svgd_gamma,
         advantage_cfg=advantage_cfg,
         kernel_config=kernel_cfg,
+        no_interact=no_interact,
     ).to(device)
     if (type_problem == "QUBO"):
         list_scores = get_Score_trajectoriesQUBO_cuda(

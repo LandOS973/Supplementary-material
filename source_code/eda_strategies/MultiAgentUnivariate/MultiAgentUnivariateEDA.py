@@ -31,6 +31,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         learning_rate,
         epsilon_svgd=None,
         enable_visualization=False,
+        no_interact=False,
         sigma=None,
         svgd_gamma=10.0,
         advantage_cfg=None,
@@ -50,6 +51,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.learning_rate = learning_rate
         self.epsilon_svgd = epsilon_svgd
         self.enable_visualization = bool(enable_visualization)
+        self.no_interact = bool(no_interact)
         self.dim_variables = dim_variables
         self.svgd_gamma = float(svgd_gamma)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
@@ -225,7 +227,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         theta = self.theta  # (B, M, N)
         score = self.last_theta_grad.detach()  # pas de rétroprop vers les agents
 
-        M = self.M
+        if self.no_interact or self.M <= 1:
+            with torch.no_grad():
+                self.theta += self.epsilon_svgd * score
+            return
 
         with torch.enable_grad():
             phi = self.svgd.phi(theta, score)  # (B, M, N)
@@ -234,10 +239,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 self.kernel_metric_history.append(kernel_stats)
 
         with torch.no_grad():
-            if self.M > 1:
-                self.theta += self.epsilon_svgd * phi
-            else:
-                self.theta += self.epsilon_svgd * score
+            self.theta += self.epsilon_svgd * phi
 
     # =======================
     #   Visualisation
