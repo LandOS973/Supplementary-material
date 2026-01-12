@@ -281,7 +281,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "rbf":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
             return RBF(bandwith_kernel=bandwith_kernel)
-            return RBF(bandwith_kernel=bandwith_kernel)
         if kernel == "pk":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
             return ProbabilityKernel(bandwith_kernel=bandwith_kernel)

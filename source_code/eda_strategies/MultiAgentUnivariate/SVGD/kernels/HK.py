@@ -39,7 +39,7 @@ class HammingKernel(nn.Module):
 
 
         N = Thetas.size(-1) 
-        dist = (N - D) # (B, M, M)
+        dist = (N - D) / float(N) # (B, M, M)
 
         if self.bandwith_kernel is None:
             bandwith_kernel = adaptative_bandwith(dist, eps=1e-8)

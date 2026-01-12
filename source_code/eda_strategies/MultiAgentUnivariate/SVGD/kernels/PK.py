@@ -34,7 +34,6 @@ class ProbabilityKernel(nn.Module):
         probs_i = torch.sigmoid(theta_i)
         probs_j = torch.sigmoid(theta_j)
 
-
         dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
 
         if self.bandwith_kernel is None:

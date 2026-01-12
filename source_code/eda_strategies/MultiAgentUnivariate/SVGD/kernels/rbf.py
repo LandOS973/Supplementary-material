@@ -44,7 +44,6 @@ class RBF(nn.Module):
         theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
 
         dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
-
         if self.bandwith_kernel is None:
             # Estimation automatique de la bandwith via la median heuristic
             bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)

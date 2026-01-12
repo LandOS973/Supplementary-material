@@ -3,7 +3,6 @@ import argparse
 import itertools
 import os
 import random
-import sys
 import time
 from pathlib import Path
 
@@ -20,33 +19,15 @@ from utils.main_utils import rank_vs_global_ranking
 # ============
 #  Grilles
 # ============
-DEFAULT_EPSILON_SVGD = [0.1, 0.5, 0.3, 0.2, 0.8]
-DEFAULT_gamma_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]  # svgd_gamma
-# grilles par kernel
-EPSILON_SVGD_GRID = {
-    "rbf": [0.005, 0.01, 0.02, 0.03, 0.1, 0.2, 0.5],
-    "jsd": [0.005, 0.01, 0.02, 0.03, 0.1, 0.2, 0.5],
-    "pk": [0.005, 0.01, 0.02, 0.03, 0.1, 0.2, 0.5],
-    "hk": [0.005, 0.01, 0.02, 0.03, 0.1, 0.2, 0.5],
-}
-gamma_GRID = {
-    "jsd": [0.001, 0.005, 0.01, 0.02, 0.03],
-    "rbf": [0.001, 0.005, 0.01, 0.02, 0.03],
-    "pk": [0.02 ,0.04, 0.05, 0.08, 0.1, 0.15],
-    "hk": [0.001, 0.005, 0.01, 0.02, 0.03],
-}
-bandwith_kernel_GRID = {  # None => pas de bandwith_kernel pour HK
-    "jsd": [None],
-    "rbf": [None],
-    "pk": [None],
-    "hk": [None],
-}
+EPSILON_SVGD_GRID = [0.005, 0.01, 0.03, 0.1, 0.2, 0.5]
+GAMMA_GRID = [0.001, 0.01, 0.03, 0.1]
+BANDWITH_KERNEL_GRID = [None]
 
 M_VALUES = [10, 5, 3, 1]
-LAMBDA_VALUES = [3, 5, 10, 15]
+LAMBDA_VALUES = [3, 5, 7, 10, 15]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
-#KERNELS = ["rbf", "pk", "hk"]
-KERNELS = ["jsd"]
+#KERNELS = ["rbf", "pk", "hk", "jsd"]
+KERNELS = ["rbf"]
 
 PROBLEMS = [
     dict(name="QUBO", dim=128, type_instance=5)
@@ -57,7 +38,6 @@ DEFAULTS = dict(
     nb_instances_test=10,
     nb_restarts=10,
     budget=10000,
-    epsilon_svgd=0.2,
     visualization=False,
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
@@ -328,9 +308,9 @@ def main():
 
         expanded = []
         for kernel_name in KERNELS:
-            epsilon_list = EPSILON_SVGD_GRID.get(kernel_name, DEFAULT_EPSILON_SVGD)
-            gamma_list = gamma_GRID.get(kernel_name, DEFAULT_gamma_VALUES)
-            bandwith_kernel_list = bandwith_kernel_GRID.get(kernel_name, [None])
+            epsilon_list = EPSILON_SVGD_GRID
+            gamma_list = GAMMA_GRID
+            bandwith_kernel_list = BANDWITH_KERNEL_GRID
             for advantage, M, lambda_ in itertools.product(ADVANTAGES, M_VALUES, LAMBDA_VALUES):
                 for epsilon_svgd in epsilon_list:
                     for gamma in gamma_list:
