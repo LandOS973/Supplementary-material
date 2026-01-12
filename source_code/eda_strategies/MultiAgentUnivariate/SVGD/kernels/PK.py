@@ -44,11 +44,12 @@ class ProbabilityKernel(nn.Module):
 
         K = torch.exp(-bandwith_kernel * dnorm2)
 
-        vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
+        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 
-        grad_Thetas = vect_grad.sum(dim=1)  # (B, M, N)
-
-
+        for i in range(M):
+            Ki = K[:,:,i]
+            vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
         return K, grad_Thetas
 
 

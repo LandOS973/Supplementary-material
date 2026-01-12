@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from .utils import adaptative_bandwith
 
 
 class HammingKernel(nn.Module):
@@ -14,8 +15,9 @@ class HammingKernel(nn.Module):
         D_{i, j} = Σ_k (p_{i,k} + p_{j,k} - 2 p_{i,k} p_{j,k})
     """
 
-    def __init__(self):
+    def __init__(self, bandwith_kernel=None):
         super().__init__()
+        self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas):
         """
@@ -37,7 +39,14 @@ class HammingKernel(nn.Module):
 
 
         N = Thetas.size(-1) 
-        K =((N - D) / (N))# (B, M, M)
+        dist = (N - D) # (B, M, M)
+
+        if self.bandwith_kernel is None:
+            bandwith_kernel = adaptative_bandwith(dist, eps=1e-8)
+        else:
+            bandwith_kernel = self.bandwith_kernel
+
+        K = torch.exp(-bandwith_kernel * dist)
 
         grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 

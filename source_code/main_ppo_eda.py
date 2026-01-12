@@ -110,6 +110,7 @@ def main(cfg: DictConfig):
     pathResult = None
 
     block_size = None
+    dummy_blocks = 0
     if (type_problem == "QUBO"):
 
         # Instances live under source_code/instances in this repo; resolve absolute path
@@ -157,6 +158,7 @@ def main(cfg: DictConfig):
             raise ValueError(f"block_size must be positive, got {block_size}")
         if N % block_size != 0:
             raise ValueError(f"dim={N} must be divisible by block_size={block_size}")
+        dummy_blocks = int(cfg.problem.dummy_blocks) if "problem" in cfg and "dummy_blocks" in cfg.problem else 0
 
 
 
@@ -214,6 +216,7 @@ def main(cfg: DictConfig):
             device,
             verbose,
             enable_visualization=visualization_enabled,
+            dummy_blocks=dummy_blocks,
         )
         
     print(list_scores)

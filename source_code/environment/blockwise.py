@@ -17,6 +17,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     verbose,
     enable_visualization=True,
     return_history=False,
+    dummy_blocks=0,
 ):
     size_pop = strategy.lambda_
     total_cases = nb_instances * nb_restarts
@@ -25,8 +26,25 @@ def get_Score_trajectoriesBLOCK_cuda(
         raise ValueError(f"block_size must be positive, got {block_size}")
     if N % block_size != 0:
         raise ValueError(f"N={N} must be divisible by block_size={block_size}")
-
     num_blocks = N // block_size
+    if dummy_blocks < 0:
+        raise ValueError(f"dummy_blocks must be >= 0, got {dummy_blocks}")
+    if dummy_blocks >= num_blocks:
+        raise ValueError(
+            f"dummy_blocks={dummy_blocks} must be less than num_blocks={num_blocks}"
+        )
+    scoring_blocks = num_blocks - dummy_blocks
+    if dummy_blocks == 0:
+        dummy_range = "none"
+    else:
+        dummy_var_count = dummy_blocks * block_size
+        dummy_start = N - dummy_var_count + 1
+        dummy_end = N
+        dummy_range = f"{dummy_start}-{dummy_end}"
+    print(
+        f"BLOCK problem | variables={N}, blocks={num_blocks}, block_size={block_size}, "
+        f"dummy_blocks={dummy_blocks}, dummy_variables={dummy_range}"
+    )
     strategy.reset_learned_parameters(total_cases)
     bestScore = torch.ones(total_cases).to(device) * (-99999)
 
@@ -67,7 +85,7 @@ def get_Score_trajectoriesBLOCK_cuda(
         block_counts = tensor_blocks.sum(dim=3)
         block_proportions = block_counts / float(block_size)
         block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
-        tensor_score = block_scores.mean(dim=2)
+        tensor_score = block_scores[:, :, :scoring_blocks].mean(dim=2)
 
         current_score = torch.max(tensor_score, dim=1).values
 
