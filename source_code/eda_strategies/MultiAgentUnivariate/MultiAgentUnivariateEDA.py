@@ -278,11 +278,12 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             return PPK()
         if kernel == "rbf":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
-            return RBF(bandwith_kernel=bandwith_kernel if bandwith_kernel is not None else 0.08)
+            return RBF(bandwith_kernel=bandwith_kernel)
             return RBF(bandwith_kernel=bandwith_kernel)
         if kernel == "pk":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
-            return ProbabilityKernel(bandwith_kernel=bandwith_kernel if bandwith_kernel is not None else 1.0)
+            return ProbabilityKernel(bandwith_kernel=bandwith_kernel)
         if kernel == "jsd":
-            return JSD()
+            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
+            return JSD(bandwith_kernel=bandwith_kernel)
         raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")
