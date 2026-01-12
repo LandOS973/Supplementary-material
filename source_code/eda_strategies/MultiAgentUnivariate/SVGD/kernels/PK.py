@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from .utils import adaptative_bandwith
+
 
 class ProbabilityKernel(nn.Module):
     """
@@ -35,7 +37,12 @@ class ProbabilityKernel(nn.Module):
 
         dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
 
-        K = torch.exp(-self.bandwith_kernel * dnorm2)
+        if self.bandwith_kernel is None:
+            bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
+        else:
+            bandwith_kernel = self.bandwith_kernel
+
+        K = torch.exp(-bandwith_kernel * dnorm2)
 
         vect_grad, = torch.autograd.grad(K.sum(), theta_i, retain_graph=True)  # (B, M, M, N)
 

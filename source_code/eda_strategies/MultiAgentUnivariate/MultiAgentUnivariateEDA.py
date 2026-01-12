@@ -225,6 +225,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         theta = self.theta  # (B, M, N)
         score = self.last_theta_grad.detach()  # pas de rétroprop vers les agents
 
+        M = self.M
+
         with torch.enable_grad():
             phi = self.svgd.phi(theta, score)  # (B, M, N)
             kernel_stats = self.svgd.get_last_kernel_stats()
@@ -232,7 +234,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 self.kernel_metric_history.append(kernel_stats)
 
         with torch.no_grad():
-            self.theta += self.epsilon_svgd * phi
+            if self.M > 1:
+                self.theta += self.epsilon_svgd * phi
+            else:
+                self.theta += self.epsilon_svgd * score
 
     # =======================
     #   Visualisation

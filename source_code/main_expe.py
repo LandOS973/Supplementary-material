@@ -25,25 +25,28 @@ DEFAULT_gamma_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]  # svgd_gamma
 # grilles par kernel
 EPSILON_SVGD_GRID = {
     "rbf": [0.002, 0.005, 0.01, 0.02, 0.03, 0.1, 0.5],
+    "jsd": [0.002, 0.005, 0.01, 0.02, 0.03, 0.1, 0.5],
     "pk": [0.002, 0.005, 0.01, 0.02, 0.03, 0.1, 0.5],
     "hk": [0.1, 0.5, 1.0, 1.5, 2.0],
 }
 gamma_GRID = {
+    "jsd": [0.001, 0.005, 0.01, 0.02, 0.03],
     "rbf": [0.001, 0.005, 0.01, 0.02, 0.03],
     "pk": [0.02 ,0.04, 0.05, 0.08, 0.1, 0.15],
     "hk": [1, 2, 3, 4, 5],
 }
 bandwith_kernel_GRID = {  # None => pas de bandwith_kernel pour HK
+    "jsd": [None],
     "rbf": [None],
     "pk": [None],
     "hk": [None],
 }
 
-M_VALUES = [15, 10, 7, 5, 1]
-LAMBDA_VALUES = [1, 5, 10, 15]
+M_VALUES = [15 ,10, 7, 5, 3, 1]
+LAMBDA_VALUES = [3, 5, 10, 15]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk"]
-KERNELS = ["rbf"]
+KERNELS = ["jsd"]
 
 PROBLEMS = [
     dict(name="QUBO", dim=128, type_instance=5)

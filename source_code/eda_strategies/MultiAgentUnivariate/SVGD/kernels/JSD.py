@@ -1,9 +1,12 @@
 import torch
 import torch.nn as nn
 
+from .utils import adaptative_bandwith
+
 class JSD(nn.Module):
-    def __init__(self):
+    def __init__(self, bandwith_kernel=None):
         super().__init__()
+        self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas):
         Thetas = Thetas.requires_grad_(True)
@@ -27,13 +30,10 @@ class JSD(nn.Module):
         dist = jsd.sum(dim=-1) / float(N)                        # (B, M, M) normalisé
 
         # ===== median heuristic =====
-        mask = ~torch.eye(M, device=Thetas.device, dtype=torch.bool).unsqueeze(0).expand(B, -1, -1)      
-        vals = dist.detach()[mask] 
-        mediane = torch.median(vals)
-        denom = 2.0 * torch.log(torch.tensor(float(M + 1), device=Thetas.device, dtype=Thetas.dtype))
-        h = (mediane / denom)
-        sigma = torch.sqrt(h)
-        gamma = 1.0 / (1e-6 + 2.0 * sigma ** 2)
+        if self.bandwith_kernel is None:
+            gamma = adaptative_bandwith(dist, eps=1e-6)
+        else:
+            gamma = self.bandwith_kernel
 
         # Kernel
         K = torch.exp(-gamma * dist)                             # (B, M, M)
@@ -45,7 +45,4 @@ class JSD(nn.Module):
             Ki = K[:, :, i]  # même convention que toi
             vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
             grad_Thetas[:, i, :] = torch.sum(vect_grad_Thetas, dim=1)
-
-        print(K[0])
-
         return K, grad_Thetas

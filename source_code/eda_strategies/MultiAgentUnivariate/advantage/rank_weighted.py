@@ -31,9 +31,9 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
         # Nombre d'individus par instance : λ = M * λ_agent
         num_individuals = per_instance.shape[1]
         # Pas positif Δ = (w_max - w_min) / (λ - 1)
-        delta = (self.start_weight - self.end_weight) / (num_individuals - 1)
-
-        # Rang r = 0,...,λ-1 → w_r = w_max - r * Δ
+        total_individuals = lambda_per_agent * num_agents
+        denom = max(total_individuals - 1, 1)
+        delta = (self.start_weight - self.end_weight) / denom
         ranks = torch.arange(
             num_individuals,
             device=fitness.device,
@@ -80,15 +80,21 @@ class PerAgentRankWeightedAdvantage(AdvantageStrategy):
         reshaped = fitness.view(nb_instances, num_agents, lambda_per_agent)
 
         # Pas positif Δ = (w_max - w_min) / (λ_agent - 1)
-        delta = (self.start_weight - self.end_weight) / (lambda_per_agent - 1)
-
-        # Rang r = 0,...,λ_agent-1 → v_r = w_max - r * Δ
-        ranks = torch.arange(
-            lambda_per_agent,
-            device=fitness.device,
-            dtype=fitness.dtype,
-        )
-        base_weights = self.start_weight - ranks * delta  # (λ_agent,)
+        if lambda_per_agent == 1:
+            base_weights = torch.full(
+                (1,),
+                self.start_weight,
+                device=fitness.device,
+                dtype=fitness.dtype,
+            )
+        else:
+            delta = (self.start_weight - self.end_weight) / (lambda_per_agent - 1)
+            ranks = torch.arange(
+                lambda_per_agent,
+                device=fitness.device,
+                dtype=fitness.dtype,
+            )
+            base_weights = self.start_weight - ranks * delta  # (λ_agent,)
 
         # On étend à (B, M, λ_agent)
         weight_vector = base_weights.view(1, 1, -1).expand_as(reshaped)

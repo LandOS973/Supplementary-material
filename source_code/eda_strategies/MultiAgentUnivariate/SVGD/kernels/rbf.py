@@ -1,6 +1,7 @@
-import math
 import torch
 import torch.nn as nn
+
+from .utils import adaptative_bandwith
 
 
 class RBF(nn.Module):
@@ -46,13 +47,11 @@ class RBF(nn.Module):
 
         if self.bandwith_kernel is None:
             # Estimation automatique de la bandwith via la median heuristic
-            median = torch.median(dnorm2.detach().flatten())
-            h = median / (2.0 * math.log(M + 1.0))
-            sigma_val = torch.sqrt(h)
-            bandwith_kernel = 1.0 / (1e-8 + 2.0 * sigma_val ** 2)
-            self.bandwith_kernel = bandwith_kernel
+            bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
+        else:
+            bandwith_kernel = self.bandwith_kernel
 
-        K = torch.exp(-self.bandwith_kernel * dnorm2)
+        K = torch.exp(-bandwith_kernel * dnorm2)
 
         grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
 
@@ -60,5 +59,4 @@ class RBF(nn.Module):
             Ki = K[:,:,i]
             vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
             grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
-        self.bandwith_kernel = None  # reset for next call
         return K, grad_Thetas
