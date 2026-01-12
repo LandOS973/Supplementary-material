@@ -5,7 +5,7 @@
 #SBATCH --output=output/expe_%j.out
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --time=00:03:00
+#SBATCH --time=05:00:00
 
 echo "Run main_ppo_eda"
 
