@@ -2,11 +2,11 @@ Problem: QUBO
 Kernel: rbf
 Advantage: peragentrankweighted
 M: 5
-lambda: 10
-learning_rate: 0.002
-gamma: 0.01
+lambda: 15
+epsilon_svgd: 0.03
+gamma: 0.001
 bandwith_kernel: None
-avg_score: -917.780029296875
+avg_score: -917.0399780273438
 ranking_best_algo: PPO-EDA
 ranking_best_score: 933.28
-ranking_my_rank: 14/505 (97.4%)
+ranking_my_rank: 15/505 (97.2%)
