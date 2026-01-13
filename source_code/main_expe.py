@@ -25,12 +25,12 @@ BANDWITH_KERNEL_GRID = [None]
 
 M_VALUES = [15 ,10, 5, 3, 1]
 LAMBDA_VALUES = [5, 7, 10, 15, 20]
-ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
+ADVANTAGES = ["peragentrankweighted"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
-KERNELS = ["jsd"]
+KERNELS = ["rbf"]
 
 PROBLEMS = [
-    dict(name="QUBO", dim=128, type_instance=5)
+    dict(name="QUBO", dim=256, type_instance=1)
 ]
 
 DEFAULTS = dict(
