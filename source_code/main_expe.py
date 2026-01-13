@@ -19,18 +19,21 @@ from utils.main_utils import rank_vs_global_ranking
 # ============
 #  Grilles
 # ============
-EPSILON_SVGD_GRID = [0.01, 0.03, 0.1, 0.2, 0.5, 0.8]
-GAMMA_GRID = [0.0005 ,0.001, 0.01, 0.03, 0.05]
+EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1, 0.2, 0.5, 0.8]
+GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01, 0.03, 0.05]
 BANDWITH_KERNEL_GRID = [None]
 
 M_VALUES = [15 ,10, 5, 3, 1]
 LAMBDA_VALUES = [1, 7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted"]
-#KERNELS = ["rbf", "pk", "hk", "jsd"]
-KERNELS = ["rbf"]
+KERNELS = ["rbf", "pk", "hk", "jsd"]
+KERNELS = ["rbf", "pk", "jsd"]
+#KERNELS = ["rbf"]
 
 PROBLEMS = [
-    dict(name="QUBO", dim=256, type_instance=1)
+    dict(name="QUBO", dim=64, type_instance=3),
+    dict(name="QUBO", dim=128, type_instance=3),
+    dict(name="QUBO", dim=256, type_instance=0)
 ]
 
 DEFAULTS = dict(
