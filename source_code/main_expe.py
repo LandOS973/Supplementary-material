@@ -24,7 +24,7 @@ GAMMA_GRID = [0.0005 ,0.001, 0.01, 0.03, 0.05]
 BANDWITH_KERNEL_GRID = [None]
 
 M_VALUES = [15 ,10, 5, 3, 1]
-LAMBDA_VALUES = [5, 7, 10, 15, 20]
+LAMBDA_VALUES = [1, 7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
 KERNELS = ["rbf"]
