@@ -2,7 +2,7 @@
 #SBATCH --job-name=expe
 #SBATCH --qos=short
 #SBATCH -p gpu
-#SBATCH --output=outputs/expe_%j.out
+#SBATCH --output=/home/t.lan@univ-angers.fr/Supplementary-material/outputs/expe_%j.out
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --time=05:00:00
