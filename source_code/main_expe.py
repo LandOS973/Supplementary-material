@@ -44,6 +44,16 @@ DEFAULTS = dict(
 )
 
 
+def _is_maximization_problem(problem_type: str) -> bool:
+    return problem_type in ("NK", "BLOCK")
+
+
+def _is_better_score(problem_type: str, new_score: float, best_score: float) -> bool:
+    if _is_maximization_problem(problem_type):
+        return new_score > best_score
+    return new_score < best_score
+
+
 def _set_seeds(seed: int):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -343,10 +353,16 @@ def main():
             print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
             key = (problem_ctx["type_problem"], kernel_name)
             current_best = best_per_problem_kernel.get(key)
-            if current_best is None or avg_score < current_best["meta"]["avg_score"]:
+            if current_best is None or _is_better_score(problem_ctx["type_problem"], avg_score, current_best["meta"]["avg_score"]):
                 best_per_problem_kernel[key] = {"history": history, "meta": meta}
                 print("   ↳ new best for this problem+kernel.")
-                ranking = rank_vs_global_ranking(repo_root, meta["dim"], meta["type_instance"], avg_score)
+                ranking = rank_vs_global_ranking(
+                    repo_root,
+                    problem_ctx["type_problem"],
+                    meta["dim"],
+                    meta["type_instance"],
+                    avg_score,
+                )
                 problem_dir = os.path.join(
                     outdir,
                     f"{meta['problem']}_dim{meta['dim']}_t{meta['type_instance']}",

@@ -323,7 +323,9 @@ def main():
         print(f"   ↳ best_score={avg_score:.6f} | runtime={dt:.2f}s")
 
         # Affichage ranking pour ce run (optionnel)
-        best_algo_csv, best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(repo_root, dim, type_instance, avg_score)
+        best_algo_csv, best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(
+            repo_root, type_problem, dim, type_instance, avg_score
+        )
         if best_algo_csv is not None:
             pct_str = f"{my_pct:.1f}%" if my_pct is not None else "n/a"
             print(f"   ↳ ranking file: best={best_algo_csv} ({best_score_csv:.2f}) | your avg rank: {my_rank}/{n_rank} ({pct_str})")

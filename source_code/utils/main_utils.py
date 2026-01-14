@@ -117,10 +117,17 @@ def load_grid_settings(path: str):
     return allowed
 
 
-def rank_vs_global_ranking(repo_root: str, dim: int, type_instance: int, my_score: float):
+def rank_vs_global_ranking(repo_root: str, problem: str, dim: int, type_instance: int, my_score: float):
+    problem = (problem or "").upper()
+    if problem in ("QUBO", "UBQP"):
+        filename = f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+    elif problem == "NK":
+        filename = f"NK_N_{dim}_K_{type_instance}_ranks.csv"
+    else:
+        return None, None, None, 0, None
+
     path = os.path.join(
-        repo_root, "additional_results", "global_ranking",
-        f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+        repo_root, "additional_results", "global_ranking", filename
     )
     if not os.path.isfile(path):
         return None, None, None, 0, None
@@ -467,7 +474,7 @@ def write_realtime_aggregation(
         winner_avg_score = entry["winner_avg_score"]
 
         _best_algo_csv, _best_score_csv, my_rank, n_rank, my_pct = rank_vs_global_ranking(
-            repo_root, int(dim), int(type_instance), winner_avg_score
+            repo_root, problem, int(dim), int(type_instance), winner_avg_score
         )
         rank_val = str(my_rank) if my_rank is not None else ""
         percent_str = f"{my_pct:.1f}" if my_pct is not None else ""
