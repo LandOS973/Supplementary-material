@@ -1,6 +1,8 @@
+import math
+from types import SimpleNamespace
+
 import torch
 import torch.nn as nn
-from types import SimpleNamespace
 
 from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
@@ -10,6 +12,7 @@ from eda_strategies.MultiAgentUnivariate.SVGD.kernels.JSD import JSD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.PK import ProbabilityKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
+from eda_strategies.MultiAgentUnivariate.replay_buffer import ReplayBuffer
 
 
 class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
@@ -36,6 +39,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         svgd_gamma=10.0,
         advantage_cfg=None,
         kernel_config=None,
+        replay_is_clip=1.5,
     ):
         self.M = M
         self.N = N
@@ -58,6 +62,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
         self.kernel_params = {}
+        self.replay_buffer_size = int(self.total_lambda * 1)
+        replay_batch_size = min(self.lambda_per_agent * 1, self.replay_buffer_size)
+        self.replay_is_clip = float(replay_is_clip)
+        self.replay_is_log_clip = math.log(self.replay_is_clip) if self.replay_is_clip > 0 else 0.0
+        self.replay_buffer = ReplayBuffer(self.replay_buffer_size, replay_batch_size)
 
         # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
@@ -110,6 +119,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.theta_history = []
         self.kernel_metric_history = []
         self.last_theta_grad = None
+        self.replay_buffer.reset(nb_instances, self.N, self.device, self.theta.dtype)
         if self.enable_visualization:
             self._record_theta()
         self.latest_advantages = None
@@ -158,8 +168,18 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         B, M, N = self.nb_instances, self.M, self.N
         λa = self.lambda_per_agent
         BM = B * M
-        indivduals = solutionList.view(BM, λa, N)
-        fitness = scoreList.view(BM, λa)
+        indivduals_new = solutionList.view(B, M, λa, N)
+        fitness_new = scoreList.view(B, M, λa)
+        old_samples, old_scores, old_logp = self.replay_buffer.sample(M) # (BM, L_replay, N), (BM, L_replay), (B, M, L_replay)
+        if old_samples is not None:
+            indivduals = torch.cat([indivduals_new, old_samples], dim=2)
+            fitness = torch.cat([fitness_new, old_scores], dim=2)
+        else:
+            indivduals = indivduals_new
+            fitness = fitness_new
+        batch_size = indivduals.shape[2]
+        indivduals = indivduals.view(BM, batch_size, N)
+        fitness = fitness.view(BM, batch_size)
         theta = self.theta.view(BM, N)
         baseline = self.baseline.view(BM)
 
@@ -168,15 +188,29 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         all_Pi_Theta = torch.sigmoid(theta)  # (BM, N)
         all_Pi_Theta = torch.clamp(all_Pi_Theta, 1e-6, 1 - 1e-6)
-        all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
+        all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, batch_size, -1)  # (BM, L, N)
 
         Pi_selected = torch.where(
             indivduals == 1.0,
             all_Pi_Theta_expanded,
             1.0 - all_Pi_Theta_expanded,
-        )  # (BM, λa, N)
+        )  # (BM, L, N)
 
-        log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
+        log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, L)
+        if old_logp is not None:
+            log_Pi_new = log_Pi.view(B, M, batch_size)
+            log_Pi_old_new = log_Pi_new[:, :, :λa].detach()
+            log_Pi_old = torch.cat([log_Pi_old_new, old_logp], dim=2).view(BM, batch_size)
+        else:
+            log_Pi_old = log_Pi.detach()
+            log_Pi_new = log_Pi.view(B, M, batch_size)
+
+        log_ratio = log_Pi.detach() - log_Pi_old
+        log_ratio = torch.clamp(log_ratio, max=self.replay_is_log_clip)
+        weights = torch.exp(log_ratio)
+        weights = torch.clamp(weights, max=self.replay_is_clip).detach()
+        weights = weights / (weights.mean() + 1e-8)
+        print("Weights stats: min {:.4f}, max {:.4f}, mean {:.4f}".format(weights.min().item(), weights.max().item(), weights.mean().item()))
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
             baseline=baseline,
@@ -185,13 +219,14 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             probs=all_Pi_Theta_expanded,
             nb_instances=B,
             num_agents=M,
-        )  # (BM, λa)
+        )  # (BM, L)
 
-        loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
+        weighted_advantages = advantages * weights
+        loss_per_instance = torch.mean(weighted_advantages * log_Pi, dim=1)  # (BM,)
         loss = loss_per_instance.sum()
         with torch.no_grad():
-            reshaped_adv = advantages.detach().view(B, M, λa)
-            per_instance = reshaped_adv.view(B, self.lambda_)
+            reshaped_adv = advantages.detach().reshape(B, M, batch_size)[:, :, :λa]
+            per_instance = reshaped_adv.reshape(B, self.lambda_)
             self.latest_advantages = per_instance.cpu()
 
         grad_theta, = torch.autograd.grad(loss, theta, create_graph=False)
@@ -200,6 +235,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         with torch.no_grad():
             baseline_new = fitness.mean(dim=1)  # (BM,)
             self.baseline = baseline_new.view(B, M)
+            self.replay_buffer.add(indivduals_new, fitness_new, log_Pi_new[:, :, :λa])
 
         # moyenne sur tous les (B, M) comme avant (Moyenne sur B, puis sur M)
         return loss_per_instance.mean()
