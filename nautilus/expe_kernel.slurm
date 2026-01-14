@@ -5,6 +5,7 @@
 #SBATCH --output=/home/t.lan@univ-angers.fr/Supplementary-material/outputs/expe_%j.out
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
+#SBATCH --mem=32G
 #SBATCH --time=05:00:00
 
 echo "Run main_ppo_eda"

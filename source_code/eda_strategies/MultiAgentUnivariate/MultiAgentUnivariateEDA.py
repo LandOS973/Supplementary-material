@@ -158,7 +158,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         B, M, N = self.nb_instances, self.M, self.N
         λa = self.lambda_per_agent
         BM = B * M
-        actions = solutionList.view(BM, λa, N)
+        indivduals = solutionList.view(BM, λa, N)
         fitness = scoreList.view(BM, λa)
         theta = self.theta.view(BM, N)
         baseline = self.baseline.view(BM)
@@ -171,7 +171,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
 
         Pi_selected = torch.where(
-            actions == 1.0,
+            indivduals == 1.0,
             all_Pi_Theta_expanded,
             1.0 - all_Pi_Theta_expanded,
         )  # (BM, λa, N)
@@ -181,7 +181,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             fitness=fitness,
             baseline=baseline,
             theta=theta,
-            actions=actions,
+            indivduals=indivduals,
             probs=all_Pi_Theta_expanded,
             nb_instances=B,
             num_agents=M,

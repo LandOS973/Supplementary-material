@@ -15,7 +15,7 @@ class AdvantageStrategy(ABC):
         Args:
             fitness: Tensor (BM, λa)
             baseline: Tensor (BM,)
-            context: Informations optionnelles (theta, actions, etc.)
+            context: Informations optionnelles (theta, indivduals, etc.)
         Returns:
             Tensor (BM, λa)
         """

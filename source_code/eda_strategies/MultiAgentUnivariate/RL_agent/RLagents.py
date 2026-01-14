@@ -159,13 +159,13 @@ class REINFORCEAgent(UnivariateBase):
     def updateDistribution(self, solutionList, scoreList):
         device = self.device
         scoreList = scoreList
-        actions = solutionList.squeeze(-1)  # (nb_instances, λ, N)
+        indivduals = solutionList.squeeze(-1)  # (nb_instances, λ, N)
         if self.baseline is None:
             self.baseline = torch.zeros(self.nb_instances, device=device)  # (nb_instances,)
         all_Pi_Theta = self.forward()  # (nb_instances, N)
         all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, self.lambda_, -1)  # (nb_instances, λ, N)
         fitness = scoreList  # (nb_instances, λ)
-        Pi_selected = torch.where(actions == 1.0, all_Pi_Theta_expanded, 1.0 - all_Pi_Theta_expanded)  # (nb_instances, λ, N)
+        Pi_selected = torch.where(indivduals == 1.0, all_Pi_Theta_expanded, 1.0 - all_Pi_Theta_expanded)  # (nb_instances, λ, N)
         log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (nb_instances, λ)
         advantages = (fitness - self.baseline.unsqueeze(1))  # (nb_instances, λ)
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (nb_instances,)

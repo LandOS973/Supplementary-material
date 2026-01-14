@@ -31,7 +31,6 @@ KERNELS = ["rbf", "pk", "jsd"]
 #KERNELS = ["rbf"]
 
 PROBLEMS = [
-    dict(name="QUBO", dim=64, type_instance=1),
     dict(name="QUBO", dim=64, type_instance=2),
     dict(name="QUBO", dim=128, type_instance=0),
     dict(name="NK", dim=256, type_instance=0),
