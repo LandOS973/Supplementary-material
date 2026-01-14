@@ -75,8 +75,12 @@ class MetricsCalculator:
         eps = 1e-8
         with torch.no_grad():
             theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)  # (M,B,N)
-            p = torch.clamp(torch.sigmoid(theta), eps, 1 - eps)
+            p = torch.sigmoid(theta)
+            p = torch.nan_to_num(p, nan=0.5, posinf=1.0 - eps, neginf=eps)
+            p = torch.clamp(p, eps, 1 - eps)
             ent = -(p * torch.log(p) + (1 - p) * torch.log1p(-p))  # (M,B,N)
+            if torch.isnan(ent).any() or torch.isinf(ent).any():
+                ent = torch.nan_to_num(ent, nan=0.0, posinf=0.0, neginf=0.0)
             ent = ent.sum(dim=-1).mean(dim=-1)  # (M,)
 
         entropies = ent.cpu().tolist()
