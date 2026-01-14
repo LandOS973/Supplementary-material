@@ -113,6 +113,8 @@ def main(cfg: DictConfig):
 
     block_size = None
     dummy_blocks = 0
+    total_lambda = lambda_ * M if typeStrategy == "PPO-EDA" else lambda_
+
     if (type_problem == "QUBO"):
 
         # Instances live under source_code/instances in this repo; resolve absolute path
@@ -142,7 +144,9 @@ def main(cfg: DictConfig):
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
 
         nk_path = os.path.join(script_dir, "instances", "nk", str(dim), str(type_instance)) + os.sep
-        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(nk_path, nb_instances_test, nb_restarts, lambda_, dim, D, type_instance, device)
+        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
+            nk_path, nb_instances_test, nb_restarts, total_lambda, dim, D, type_instance, device
+        )
 
     elif(type_problem == "NK3"):
 
@@ -153,7 +157,9 @@ def main(cfg: DictConfig):
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
 
         nk3_path = os.path.join(script_dir, "instances", "nk3", str(dim), str(type_instance)) + os.sep
-        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(nk3_path, nb_instances_test, nb_restarts, lambda_, dim, D, type_instance, device)
+        tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
+            nk3_path, nb_instances_test, nb_restarts, total_lambda, dim, D, type_instance, device
+        )
     elif type_problem == "BLOCK":
         block_size = type_instance
         if block_size <= 0:

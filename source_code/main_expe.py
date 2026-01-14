@@ -31,9 +31,7 @@ KERNELS = ["rbf", "pk", "jsd"]
 #KERNELS = ["rbf"]
 
 PROBLEMS = [
-    dict(name="QUBO", dim=64, type_instance=2),
-    dict(name="QUBO", dim=128, type_instance=0),
-    dict(name="NK", dim=256, type_instance=0),
+    dict(name="NK", dim=256, type_instance=2),
 ]
 
 DEFAULTS = dict(
@@ -176,11 +174,12 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
             return_history=True,
         )
     else:
+        total_lambda = strategy.lambda_
         tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
             problem_ctx["nk_base_path"],
             DEFAULTS["nb_instances_test"],
             DEFAULTS["nb_restarts"],
-            lambda_,
+            total_lambda,
             problem_ctx["dim"],
             problem_ctx["D"],
             problem_ctx["type_instance"],
@@ -194,7 +193,7 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
             DEFAULTS["nb_instances_test"],
             DEFAULTS["nb_restarts"],
             DEFAULTS["budget"],
-            lambda_,
+            total_lambda,
             problem_ctx["vectorIndex_th"],
             tensor_matrix_locus,
             tensor_matrix_contrib,
