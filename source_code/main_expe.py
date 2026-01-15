@@ -27,7 +27,7 @@ M_VALUES = [20, 15 ,10, 5, 3, 1]
 LAMBDA_VALUES = [1, 7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
-KERNELS = ["rbf", "pk", "jsd"]
+KERNELS = ["rbf", "pk", "jsd", "hk"]
 #KERNELS = ["rbf"]
 
 PROBLEMS = [
