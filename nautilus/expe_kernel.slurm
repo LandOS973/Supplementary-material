@@ -6,11 +6,13 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --time=05:00:00
+#SBATCH --time=06:00:00
 
-echo "Run main_ppo_eda"
+echo "Job démarré sur $(hostname) à $(date)"
+echo "Run main_expe"
 
 export PYTHONUNBUFFERED=1
 PYTHON=/micromamba/$USER/envs/ppo_env/bin/python
 
 srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe.py
+echo "Job terminé à $(date)"
