@@ -33,6 +33,7 @@ def get_Score_trajectoriesBLOCK_cuda(
         raise ValueError(
             f"dummy_blocks={dummy_blocks} must be less than num_blocks={num_blocks}"
         )
+    # Les derniers blocs peuvent etre "dummy" et donc exclus du calcul du score.
     scoring_blocks = num_blocks - dummy_blocks
     if dummy_blocks == 0:
         dummy_range = "none"
@@ -84,13 +85,17 @@ def get_Score_trajectoriesBLOCK_cuda(
 
         tensor_binary = tensor_solution.squeeze(3)
         tensor_blocks = tensor_binary.reshape(total_cases, size_pop, num_blocks, block_size)
+        # Score par bloc: proportion de 0/1, puis "purite" via max(p, 1-p).
         block_counts = tensor_blocks.sum(dim=3)
         block_proportions = block_counts / float(block_size)
         block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
+        # Fitness par solution: moyenne sur les blocs utiles (les dummy sont ignores).
         tensor_score = block_scores[:, :, :scoring_blocks].mean(dim=2)
 
+        # Fitness par instance: meilleur individu du pool.
         current_score = torch.max(tensor_score, dim=1).values
 
+        # Meilleure solution courante (individu ayant la meilleure fitness).
         index_solution = torch.argmax(tensor_score, dim=1)
         index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1, 1, N, 1)
         best_current_solution = torch.gather(tensor_solution, 1, index_solution).squeeze(3).squeeze(1)
@@ -105,6 +110,7 @@ def get_Score_trajectoriesBLOCK_cuda(
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
         strategy.updateDistribution(tensor_solution, tensor_score)
 
+        # Agregation en scalaire pour le suivi (ex: moyenne/median selon MetricsCalculator).
         global_current = metrics.compute_fitness(current_score)
         global_best = metrics.compute_fitness(bestScore)
         best_fitness_history.append(global_best)
