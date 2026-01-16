@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from types import SimpleNamespace
 
 from eda_strategies.Abstract_EDA import Abstract_EDA
@@ -78,8 +77,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         # Buffers (B, M)
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
         self.last_theta_grad = None
-        self.momentum_alpha = 0.95
-        self.grad_momentum = None # Vt-1
+        self.svgd_optimizer = None
 
     def forward(self):
         """
@@ -116,9 +114,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.enable_visualization:
             self._record_theta()
         self.latest_advantages = None
-        self.grad_momentum = torch.zeros(
-            (nb_instances, self.M, self.N), 
-            device=self.device
+        self.svgd_optimizer = torch.optim.SGD(
+            [self.theta],
+            lr=self.epsilon_svgd,
+            momentum=0.9,
         )
 
     def sample_solutions(self):
@@ -204,22 +203,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         grad_theta, = torch.autograd.grad(loss, theta, create_graph=False)
         current_grad = grad_theta.detach().view(B, M, N)
 
-        if self.momentum_alpha > 0.0:
-            # Vt = alpha_t * Vt-1 + (1 - alpha_t) * gt
-            cosine_sim = F.cosine_similarity(
-                current_grad,
-                self.grad_momentum,
-                dim=2,
-                eps=1e-8,
-            )  # (B, M)
-            alpha_t = (1.0 + cosine_sim) * 0.5
-            alpha_t = torch.clamp(alpha_t, 0.0 , self.momentum_alpha)
-            alpha_t = alpha_t.unsqueeze(-1)
-            print("alpha_t en 0:", alpha_t[0,0].item())
-            self.grad_momentum = alpha_t * self.grad_momentum + (1.0 - alpha_t) * current_grad
-            self.last_theta_grad = self.grad_momentum.clone()
-        else:
-            self.last_theta_grad = current_grad
+        self.last_theta_grad = current_grad
 
         with torch.no_grad():
             baseline_new = fitness.mean(dim=1)  # (BM,)
@@ -262,8 +246,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
 
-        with torch.no_grad():
-            self.theta += self.epsilon_svgd * phi
+        phi_detached = phi.detach()
+        self.svgd_optimizer.zero_grad(set_to_none=True)
+        self.theta.grad = -phi_detached
+        self.svgd_optimizer.step()
 
     # =======================
     #   Visualisation
