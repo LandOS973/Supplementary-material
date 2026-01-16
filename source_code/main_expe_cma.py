@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import argparse
-import itertools
 import os
 import random
 import time
@@ -8,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
+
+import cma
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
@@ -17,23 +17,44 @@ from utils.main_utils import rank_vs_global_ranking
 
 
 # ============
-#  Grilles
+#  CMA config
 # ============
-EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1, 0.5, 0.8]
-GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01, 0.05]
-M_VALUES = [20, 15 ,10, 5, 3, 1]
-LAMBDA_VALUES = [1, 7, 10, 15, 20, 25]
-ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
-#KERNELS = ["rbf", "pk", "hk", "jsd"]
-KERNELS = ["hk"]
-#KERNELS = ["rbf"]
+EPS_MIN = 1e-4
+EPS_MAX = 1.0
+GAMMA_MIN = 1e-6
+GAMMA_MAX = 1e-1
+LAMBDA_MIN = 1
+LAMBDA_MAX = 30
+M_MIN = 1
+M_MAX = 30
 
+ADVANTAGE_OPTIONS = [
+    "peragentrankweighted",
+    "globalrankweighted",
+    "baseline",
+    "normalizedfitness",
+]
+
+CMA_MAX_EVALS = 256
+CMA_POPSIZE = None
+CMA_POPSIZE_SCALE = 2.0
+CMA_SIGMA = 1.0
+CMA_RESTARTS = 3
+RANDOM_INIT_EVALS = 16
+
+
+# ============
+#  Experiments
+# ============
 PROBLEMS = [
-    dict(name="NK", dim=256, type_instance=2),
     dict(name="QUBO", dim=64, type_instance=0),
     dict(name="QUBO", dim=64, type_instance=1),
     dict(name="QUBO", dim=64, type_instance=2),
 ]
+
+KERNELS = ["hk"]
+BANDWITH_KERNEL = None
+
 
 DEFAULTS = dict(
     seed=0,
@@ -135,7 +156,6 @@ def _load_instances(problem_cfg, device):
 def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel):
     device = DEFAULTS["device"]
 
-    # kernel configuration
     kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
     if kernel_name in ("rbf", "pk") and bandwith_kernel is not None:
         kernel_config["bandwith_kernel"] = bandwith_kernel
@@ -335,6 +355,7 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         else:
             f.write("ranking: unavailable\n")
 
+
 def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name):
     problem_dir = os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}")
     summary_path = os.path.join(problem_dir, f"{problem_name}_{kernel_name}_best_summary.txt")
@@ -358,86 +379,251 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name):
         return None
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Grid experiments for RL-EDA.")
-    parser.add_argument("--outdir", type=str, default=None, help="Répertoire où écrire les CSV et résumés.")
-    args, _ = parser.parse_known_args()
+def _decode_params(x, eps_bounds, gamma_bounds, lambda_bounds, advantage_options, m_bounds):
+    log_eps, log_gamma, lambda_cont, adv_cont, m_cont = x
+    eps = float(10 ** log_eps)
+    gamma = float(10 ** log_gamma)
+    lambda_min, lambda_max = lambda_bounds
+    lambda_ = int(np.round(lambda_cont))
+    lambda_ = int(np.clip(lambda_, lambda_min, lambda_max))
+    m_min, m_max = m_bounds
+    M = int(np.round(m_cont))
+    M = int(np.clip(M, m_min, m_max))
+    eps = float(np.clip(eps, eps_bounds[0], eps_bounds[1]))
+    gamma = float(np.clip(gamma, gamma_bounds[0], gamma_bounds[1]))
+    adv_idx = int(np.round(adv_cont))
+    adv_idx = int(np.clip(adv_idx, 0, len(advantage_options) - 1))
+    advantage = advantage_options[adv_idx]
+    return eps, gamma, lambda_, advantage, M
 
+
+def main():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    outdir = args.outdir or os.path.join(repo_root, "results", "experiments")
+    outdir = os.path.join(repo_root, "results", "experiments")
     Path(outdir).mkdir(parents=True, exist_ok=True)
 
     _set_seeds(DEFAULTS["seed"])
 
-    best_per_problem_kernel = {}
+    eps_bounds = (EPS_MIN, EPS_MAX)
+    gamma_bounds = (GAMMA_MIN, GAMMA_MAX)
+    lambda_bounds = (LAMBDA_MIN, LAMBDA_MAX)
+    m_bounds = (M_MIN, M_MAX)
+    advantage_options = list(ADVANTAGE_OPTIONS)
+    bounds = np.array(
+        [
+            [np.log10(EPS_MIN), np.log10(EPS_MAX)],
+            [np.log10(GAMMA_MIN), np.log10(GAMMA_MAX)],
+            [LAMBDA_MIN, LAMBDA_MAX],
+            [0, max(len(advantage_options) - 1, 0)],
+            [M_MIN, M_MAX],
+        ]
+    )
 
+    base_x0 = np.array(
+        [
+            np.mean(bounds[0]),
+            np.mean(bounds[1]),
+            float(LAMBDA_MIN + LAMBDA_MAX) / 2,
+            float(len(advantage_options) - 1) / 2,
+            float(M_MIN + M_MAX) / 2,
+        ]
+    )
+
+    _set_seeds(DEFAULTS["seed"])
+
+    best_per_problem_kernel = {}
     start_all = time.time()
     for problem in PROBLEMS:
         problem_ctx = _load_instances(problem, DEFAULTS["device"])
-        # initialize with existing best (to avoid overwriting better past runs)
-        for k in KERNELS:
-            existing = _load_existing_best(outdir, problem_ctx["type_problem"], problem_ctx["dim"], problem_ctx["type_instance"], k)
-            if existing:
-                best_per_problem_kernel[(problem_ctx["type_problem"], k)] = existing
-
-        expanded = []
         for kernel_name in KERNELS:
-            epsilon_list = EPSILON_SVGD_GRID
-            gamma_list = GAMMA_GRID
-            for advantage, M, lambda_ in itertools.product(ADVANTAGES, M_VALUES, LAMBDA_VALUES):
-                if lambda_ == 1 and advantage != "normalizedfitness":
-                    continue
-                if lambda_ != 1 and advantage == "normalizedfitness":
-                    continue
-                for epsilon_svgd in epsilon_list:
-                    for gamma in gamma_list:
-                        bandwith_kernel = None
-                        expanded.append((kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel))
+            existing = _load_existing_best(
+                outdir,
+                problem_ctx["type_problem"],
+                problem_ctx["dim"],
+                problem_ctx["type_instance"],
+                kernel_name,
+            )
+            if existing:
+                best_per_problem_kernel[
+                    (problem_ctx["type_problem"], problem_ctx["dim"], problem_ctx["type_instance"], kernel_name)
+                ] = existing
 
-        total_runs = len(expanded)
-        print(
-            f"[{problem_ctx['type_problem']} dim={problem_ctx['dim']} t={problem_ctx['type_instance']}] "
-            f"total runs: {total_runs}"
-        )
+            eval_count = 0
+            cache = {}
 
-        for idx, (kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel) in enumerate(expanded, 1):
-            t0 = time.time()
-            bandwith_kernel_str = f"{bandwith_kernel}" if bandwith_kernel is not None else "n/a"
+            def objective(x):
+                nonlocal eval_count
+                eps, gamma, lambda_, advantage, M = _decode_params(
+                    x, eps_bounds, gamma_bounds, lambda_bounds, advantage_options, m_bounds
+                )
+                cache_key = (round(eps, 10), round(gamma, 10), int(lambda_), advantage, int(M))
+                if cache_key in cache:
+                    return cache[cache_key]
+
+                eval_count += 1
+                t0 = time.time()
+                avg_score, history, meta = _run_once(
+                    problem_ctx,
+                    kernel_name,
+                    advantage,
+                    M,
+                    lambda_,
+                    eps,
+                    gamma,
+                    BANDWITH_KERNEL,
+                )
+                dt = time.time() - t0
+                loss = -avg_score if _is_maximization_problem(problem_ctx["type_problem"]) else avg_score
+                info = dict(avg_score=avg_score, history=history, meta=meta, dt=dt)
+                print(
+                    "Eval {}/{} | problem={} t={} | kernel={} | M={} | adv={} | eps={:.6g} gamma={:.6g} "
+                    "lambda={} | avg_score={:.6f} | runtime={:.2f}s".format(
+                        eval_count,
+                        CMA_MAX_EVALS,
+                        problem_ctx["type_problem"],
+                        problem_ctx["type_instance"],
+                        kernel_name,
+                        M,
+                        advantage,
+                        eps,
+                        gamma,
+                        lambda_,
+                        avg_score,
+                        dt,
+                    )
+                )
+                cache[cache_key] = (loss, info)
+                return loss, info
+
             print(
-                f"▶ Run {idx}/{total_runs} | problem={problem_ctx['type_problem']} t={problem_ctx['type_instance']} | "
-                f"kernel={kernel_name} (bandwith_kernel={bandwith_kernel_str}) | "
-                f"adv={advantage} | M={M} | lambda={lambda_} | epsilon_svgd={epsilon_svgd} | gamma={gamma}"
+                "CMA search | problem={} dim={} t={} | kernel={} | M=[{},{}] | max_evals={} popsize={} | restarts={}".format(
+                    problem_ctx["type_problem"],
+                    problem_ctx["dim"],
+                    problem_ctx["type_instance"],
+                    kernel_name,
+                    M_MIN,
+                    M_MAX,
+                    CMA_MAX_EVALS,
+                    CMA_POPSIZE or "auto",
+                    CMA_RESTARTS,
+                )
             )
-            avg_score, history, meta = _run_once(
-                problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel
+
+            best_info = None
+            best_loss = None
+            popsize_default = int((4 + 3 * np.log(len(base_x0))) * CMA_POPSIZE_SCALE)
+            popsize_value = CMA_POPSIZE or max(popsize_default, 4)
+
+            for restart in range(CMA_RESTARTS):
+                cma_opts = {
+                    "seed": DEFAULTS["seed"] + restart,
+                    "bounds": [bounds[:, 0].tolist(), bounds[:, 1].tolist()],
+                    "popsize": popsize_value,
+                    "verbose": -9,
+                    "CMA_active": True,
+                }
+                span = bounds[:, 1] - bounds[:, 0]
+                cma_opts["CMA_stds"] = (span / 3.0).tolist()
+
+                if restart == 0:
+                    for _ in range(RANDOM_INIT_EVALS):
+                        if eval_count >= CMA_MAX_EVALS:
+                            break
+                        rand_unit = np.random.rand(len(base_x0))
+                        x_rand = bounds[:, 0] + rand_unit * (bounds[:, 1] - bounds[:, 0])
+                        loss, info = objective(x_rand)
+                        if best_loss is None or loss < best_loss:
+                            best_loss = loss
+                            best_info = info
+                    if best_info is not None:
+                        best_meta = best_info["meta"]
+                        x0 = np.array(
+                            [
+                                np.log10(best_meta["epsilon_svgd"]),
+                                np.log10(best_meta["gamma"]),
+                                float(best_meta["lambda_"]),
+                                float(advantage_options.index(best_meta["advantage"])),
+                                float(best_meta["M"]),
+                            ]
+                        )
+                    else:
+                        x0 = base_x0.copy()
+                else:
+                    rand_unit = np.random.rand(len(base_x0))
+                    x0 = bounds[:, 0] + rand_unit * (bounds[:, 1] - bounds[:, 0])
+
+                es = cma.CMAEvolutionStrategy(x0, CMA_SIGMA, cma_opts)
+                while eval_count < CMA_MAX_EVALS and not es.stop():
+                    remaining = CMA_MAX_EVALS - eval_count
+                    if remaining < es.popsize:
+                        break
+                    solutions = es.ask()
+                    losses = []
+                    used_solutions = []
+                    for x in solutions:
+                        if eval_count >= CMA_MAX_EVALS:
+                            break
+                        loss, info = objective(x)
+                        losses.append(loss)
+                        used_solutions.append(x)
+                        if best_loss is None or loss < best_loss:
+                            best_loss = loss
+                            best_info = info
+                    if used_solutions:
+                        es.tell(used_solutions, losses)
+                if eval_count >= CMA_MAX_EVALS:
+                    break
+
+            if best_info is None:
+                continue
+            best_meta = best_info["meta"]
+            print(
+                "Best CMA eval | problem={} dim={} t={} | kernel={} | M={} | adv={} | eps={:.6g} gamma={:.6g} "
+                "lambda={} | avg_score={:.6f}".format(
+                    best_meta["problem"],
+                    best_meta["dim"],
+                    best_meta["type_instance"],
+                    kernel_name,
+                    best_meta["M"],
+                    best_meta["advantage"],
+                    best_meta["epsilon_svgd"],
+                    best_meta["gamma"],
+                    best_meta["lambda_"],
+                    best_meta["avg_score"],
+                )
             )
-            dt = time.time() - t0
-            print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-            key = (problem_ctx["type_problem"], kernel_name)
+            key = (
+                problem_ctx["type_problem"],
+                problem_ctx["dim"],
+                problem_ctx["type_instance"],
+                kernel_name,
+            )
             current_best = best_per_problem_kernel.get(key)
-            if current_best is None or _is_better_score(problem_ctx["type_problem"], avg_score, current_best["meta"]["avg_score"]):
-                best_per_problem_kernel[key] = {"history": history, "meta": meta}
-                print("   ↳ new best for this problem+kernel.")
+            if current_best is None or _is_better_score(
+                problem_ctx["type_problem"], best_meta["avg_score"], current_best["meta"]["avg_score"]
+            ):
+                best_per_problem_kernel[key] = {"history": best_info["history"], "meta": best_meta}
+                print("New best for problem+kernel.")
                 ranking = rank_vs_global_ranking(
                     repo_root,
                     problem_ctx["type_problem"],
-                    meta["dim"],
-                    meta["type_instance"],
-                    avg_score,
+                    best_meta["dim"],
+                    best_meta["type_instance"],
+                    best_meta["avg_score"],
                 )
                 problem_dir = os.path.join(
                     outdir,
-                    f"{meta['problem']}_dim{meta['dim']}_t{meta['type_instance']}",
+                    f"{best_meta['problem']}_dim{best_meta['dim']}_t{best_meta['type_instance']}",
                 )
                 _save_history_csv(
                     problem_dir,
-                    meta["problem"],
+                    best_meta["problem"],
                     kernel_name,
-                    {"history": history, "meta": meta},
+                    {"history": best_info["history"], "meta": best_meta},
                     ranking=ranking,
                 )
 
-    print(f"[DONE] main_expe completed in {time.time() - start_all:.2f}s. Results in {outdir}")
+    print("Done. Total time: {:.2f}s. Results in {}".format(time.time() - start_all, outdir))
 
 
 if __name__ == "__main__":

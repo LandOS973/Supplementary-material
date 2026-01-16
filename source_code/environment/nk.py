@@ -354,7 +354,7 @@ def get_Score_trajectoriesNK_cuda(
 
 
     bestScore_np = -bestScore.detach().cpu().numpy()/N
-    if track_leader and agent_best_overall is not None and hasattr(strategy, "agents"):
+    if track_leader and enable_visualization and agent_best_overall is not None and hasattr(strategy, "agents"):
         print("Per-agent summary:")
         for idx, agent in enumerate(strategy.agents):
             avg_best = -torch.mean(agent_best_overall[idx]).item()/N
