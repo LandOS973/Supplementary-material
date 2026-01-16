@@ -31,7 +31,7 @@ KERNELS = ["rbf", "pk", "jsd", "hk"]
 #KERNELS = ["rbf"]
 
 PROBLEMS = [
-    dict(name="NK", dim=128, type_instance=4),
+    dict(name="NK", dim=64, type_instance=4),
 ]
 
 DEFAULTS = dict(
@@ -213,10 +213,23 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
             return_history=True,
         )
 
-    avg_score = float(np.mean(
-        list_scores if isinstance(list_scores, (list, tuple))
-        else (list_scores.detach().cpu().numpy() if torch.is_tensor(list_scores) else list_scores)
-    ))
+    scores_array = (
+        np.asarray(list_scores)
+        if isinstance(list_scores, (list, tuple, np.ndarray))
+        else (list_scores.detach().cpu().numpy() if torch.is_tensor(list_scores) else np.asarray(list_scores))
+    )
+    avg_score = float(np.mean(scores_array))
+    median_score = float(np.percentile(scores_array, 50))
+    std_score = float(np.std(scores_array))
+    p2 = float(np.percentile(scores_array, 2))
+    p5 = float(np.percentile(scores_array, 5))
+    p10 = float(np.percentile(scores_array, 10))
+    p25 = float(np.percentile(scores_array, 25))
+    p50 = float(np.percentile(scores_array, 50))
+    p75 = float(np.percentile(scores_array, 75))
+    p90 = float(np.percentile(scores_array, 90))
+    p95 = float(np.percentile(scores_array, 95))
+    p98 = float(np.percentile(scores_array, 98))
 
     run_meta = dict(
         problem=problem_ctx["type_problem"],
@@ -230,6 +243,17 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
         gamma=gamma,
         bandwith_kernel=bandwith_kernel,
         avg_score=avg_score,
+        median_score=median_score,
+        std_score=std_score,
+        p2=p2,
+        p5=p5,
+        p10=p10,
+        p25=p25,
+        p50=p50,
+        p75=p75,
+        p90=p90,
+        p95=p95,
+        p98=p98,
     )
     return avg_score, history, run_meta
 
@@ -238,18 +262,48 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
     history = entry["history"]
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     runtime = history.get("runtime") or list(range(1, len(history.get("best_fitness", [])) + 1))
+    score_mean = history.get("score_mean", [])
+    score_median = history.get("score_median", [])
+    score_std = history.get("score_std", [])
+    score_p2 = history.get("score_p2", [])
+    score_p5 = history.get("score_p5", [])
+    score_p10 = history.get("score_p10", [])
+    score_p25 = history.get("score_p25", [])
+    score_p50 = history.get("score_p50", [])
+    score_p75 = history.get("score_p75", [])
+    score_p90 = history.get("score_p90", [])
+    score_p95 = history.get("score_p95", [])
+    score_p98 = history.get("score_p98", [])
     rows = zip(
         runtime,
         history.get("best_fitness", []),
         history.get("avg_hamming", []),
         history.get("avg_l1", []),
         history.get("avg_entropy", []),
+        score_mean,
+        score_median,
+        score_std,
+        score_p2,
+        score_p5,
+        score_p10,
+        score_p25,
+        score_p50,
+        score_p75,
+        score_p90,
+        score_p95,
+        score_p98,
     )
     csv_path = os.path.join(out_dir, f"{problem_name}_{kernel_name}_best_metrics.csv")
     with open(csv_path, "w") as f:
-        f.write("step,best_fitness,avg_hamming,avg_l1,avg_entropy\n")
-        for step, bf, ham, l1, ent in rows:
-            f.write(f"{step},{bf},{ham},{l1},{ent}\n")
+        f.write(
+            "step,best_fitness,avg_hamming,avg_l1,avg_entropy,"
+            "mean,median,std,2%,5%,10%,25%,50%,75%,90%,95%,98%\n"
+        )
+        for (step, bf, ham, l1, ent, mean, median, std, p2, p5, p10, p25, p50, p75, p90, p95, p98) in rows:
+            f.write(
+                f"{step},{bf},{ham},{l1},{ent},"
+                f"{mean},{median},{std},{p2},{p5},{p10},{p25},{p50},{p75},{p90},{p95},{p98}\n"
+            )
 
     summary_path = os.path.join(out_dir, f"{problem_name}_{kernel_name}_best_summary.txt")
     meta = entry["meta"]
@@ -263,6 +317,13 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         f.write(f"gamma: {meta['gamma']}\n")
         f.write(f"bandwith_kernel: {meta['bandwith_kernel']}\n")
         f.write(f"avg_score: {meta['avg_score']}\n")
+        f.write(f"median_score: {meta['median_score']}\n")
+        f.write(f"std_score: {meta['std_score']}\n")
+        f.write(
+            "percentiles: "
+            f"2%={meta['p2']}, 5%={meta['p5']}, 10%={meta['p10']}, 25%={meta['p25']}, "
+            f"50%={meta['p50']}, 75%={meta['p75']}, 90%={meta['p90']}, 95%={meta['p95']}, 98%={meta['p98']}\n"
+        )
         if ranking:
             best_algo, best_score, my_rank, n_rank, my_pct = ranking
             if best_algo is not None and n_rank:

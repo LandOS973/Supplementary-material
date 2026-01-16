@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from tqdm import tqdm
 
 from environment.visualization import render_agent_dashboard, render_svgd_field_plot
@@ -66,6 +67,18 @@ def get_Score_trajectoriesBLOCK_cuda(
     avg_entropy_history = []
     best_fitness_history = []
     runtime_steps = []
+    score_mean_history = []
+    score_median_history = []
+    score_std_history = []
+    score_p2_history = []
+    score_p5_history = []
+    score_p10_history = []
+    score_p25_history = []
+    score_p50_history = []
+    score_p75_history = []
+    score_p90_history = []
+    score_p95_history = []
+    score_p98_history = []
     agent_fitness_history = []
     hamming_pairwise_history = []
     js_pairwise_history = []
@@ -109,6 +122,20 @@ def get_Score_trajectoriesBLOCK_cuda(
 
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
         strategy.updateDistribution(tensor_solution, tensor_score)
+
+        scores_np = bestScore.detach().cpu().numpy()
+        score_mean_history.append(float(np.mean(scores_np)))
+        score_median_history.append(float(np.percentile(scores_np, 50)))
+        score_std_history.append(float(np.std(scores_np)))
+        score_p2_history.append(float(np.percentile(scores_np, 2)))
+        score_p5_history.append(float(np.percentile(scores_np, 5)))
+        score_p10_history.append(float(np.percentile(scores_np, 10)))
+        score_p25_history.append(float(np.percentile(scores_np, 25)))
+        score_p50_history.append(float(np.percentile(scores_np, 50)))
+        score_p75_history.append(float(np.percentile(scores_np, 75)))
+        score_p90_history.append(float(np.percentile(scores_np, 90)))
+        score_p95_history.append(float(np.percentile(scores_np, 95)))
+        score_p98_history.append(float(np.percentile(scores_np, 98)))
 
         # Agregation en scalaire pour le suivi (ex: moyenne/median selon MetricsCalculator).
         global_current = metrics.compute_fitness(current_score)
@@ -237,6 +264,18 @@ def get_Score_trajectoriesBLOCK_cuda(
             avg_l2=avg_l2_history,
             avg_l1=avg_l1_history,
             avg_entropy=avg_entropy_history,
+            score_mean=score_mean_history,
+            score_median=score_median_history,
+            score_std=score_std_history,
+            score_p2=score_p2_history,
+            score_p5=score_p5_history,
+            score_p10=score_p10_history,
+            score_p25=score_p25_history,
+            score_p50=score_p50_history,
+            score_p75=score_p75_history,
+            score_p90=score_p90_history,
+            score_p95=score_p95_history,
+            score_p98=score_p98_history,
         )
         return bestScore_np, history
 
