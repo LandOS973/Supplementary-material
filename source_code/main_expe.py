@@ -27,11 +27,15 @@ M_VALUES = [20, 15 ,10, 5, 3, 1]
 LAMBDA_VALUES = [1, 7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
-KERNELS = ["rbf", "pk", "jsd", "hk"]
+KERNELS = ["hk"]
 #KERNELS = ["rbf"]
 
 PROBLEMS = [
-    dict(name="NK", dim=64, type_instance=4),
+    dict(name="NK", dim=128, type_instance=4),
+    dict(name="NK", dim=256, type_instance=2),
+    dict(name="QUBO", dim=64, type_instance=0),
+    dict(name="QUBO", dim=64, type_instance=1),
+    dict(name="QUBO", dim=64, type_instance=2),
 ]
 
 DEFAULTS = dict(
