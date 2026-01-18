@@ -22,17 +22,15 @@ from utils.main_utils import rank_vs_global_ranking
 EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1, 0.5, 0.8]
 GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01, 0.05]
 M_VALUES = [20, 15 ,10, 5, 3, 1]
-LAMBDA_VALUES = [1, 7, 10, 15, 20, 25]
+LAMBDA_VALUES = [7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
-KERNELS = ["hk"]
+KERNELS = [ "pk", "hk", "jsd"]
 #KERNELS = ["rbf"]
 
 PROBLEMS = [
-    dict(name="NK", dim=256, type_instance=2),
-    dict(name="QUBO", dim=64, type_instance=0),
-    dict(name="QUBO", dim=64, type_instance=1),
-    dict(name="QUBO", dim=64, type_instance=2),
+    dict(name="QUBO", dim=256, type_instance=4),
+    dict(name="QUBO", dim=256, type_instance=5),
 ]
 
 DEFAULTS = dict(
