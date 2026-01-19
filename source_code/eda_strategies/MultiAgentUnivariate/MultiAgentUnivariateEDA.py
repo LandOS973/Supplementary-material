@@ -62,7 +62,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
         self.kernel_params = {}
-        self.replay_buffer_size = int(self.total_lambda * 1)
+        self.replay_buffer_size = int(self.total_lambda * 3)
         replay_batch_size = min(self.lambda_per_agent * 1, self.replay_buffer_size)
         self.replay_is_clip = float(replay_is_clip)
         self.replay_is_log_clip = math.log(self.replay_is_clip) if self.replay_is_clip > 0 else 0.0
@@ -210,7 +210,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         weights = torch.exp(log_ratio)
         weights = torch.clamp(weights, max=self.replay_is_clip).detach()
         weights = weights / (weights.mean() + 1e-8)
-        print("Weights stats: min {:.4f}, max {:.4f}, mean {:.4f}".format(weights.min().item(), weights.max().item(), weights.mean().item()))
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
             baseline=baseline,
