@@ -24,10 +24,10 @@ GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01, 0.05]
 M_VALUES = [20, 15 ,10, 5, 3, 1]
 LAMBDA_VALUES = [7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
-#KERNELS = ["rbf", "pk", "hk", "jsd"]
-KERNELS = [ "pk", "hk", "jsd"]
+KERNELS = ["rbf", "pk", "hk", "jsd"]
+#KERNELS = [ "pk", "hk", "jsd"]
 #KERNELS = ["rbf"]
-NO_INTERACT_VALUES = [False, True]
+NO_INTERACT_VALUES = [True, False]
 
 PROBLEMS = [
     dict(name="QUBO", dim=256, type_instance=4),
@@ -350,17 +350,17 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
         avg_score = None
         mode_value = None
         for line in lines:
-            if line.strip().lower().startswith("no_interact"):
+            lowered = line.strip().lower()
+            if lowered.startswith("no_interact"):
                 try:
                     mode_value = line.split(":", 1)[1].strip().lower()
                 except Exception:
                     mode_value = None
-            if line.strip().lower().startswith("avg_score"):
+            if lowered.startswith("avg_score"):
                 try:
                     avg_score = float(line.split(":", 1)[1].strip())
                 except Exception:
                     avg_score = None
-                break
         if mode_value is None:
             return None
         parsed_mode = mode_value in ("true", "1", "yes")
