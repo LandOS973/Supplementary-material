@@ -27,6 +27,7 @@ ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
 KERNELS = [ "pk", "hk", "jsd"]
 #KERNELS = ["rbf"]
+NO_INTERACT_VALUES = [False, True]
 
 PROBLEMS = [
     dict(name="QUBO", dim=256, type_instance=4),
@@ -130,7 +131,7 @@ def _load_instances(problem_cfg, device):
     raise ValueError(f"Unsupported problem {name}")
 
 
-def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel):
+def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact):
     device = DEFAULTS["device"]
 
     # kernel configuration
@@ -152,6 +153,7 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
         svgd_gamma=gamma,
         advantage_cfg=advantage,
         kernel_config=kernel_config,
+        no_interact=no_interact,
     ).to(device)
 
     if problem_ctx["type_problem"] == "QUBO":
@@ -241,6 +243,7 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
         epsilon_svgd=epsilon_svgd,
         gamma=gamma,
         bandwith_kernel=bandwith_kernel,
+        no_interact=no_interact,
         avg_score=avg_score,
         median_score=median_score,
         std_score=std_score,
@@ -315,6 +318,7 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         f.write(f"epsilon_svgd: {meta['epsilon_svgd']}\n")
         f.write(f"gamma: {meta['gamma']}\n")
         f.write(f"bandwith_kernel: {meta['bandwith_kernel']}\n")
+        f.write(f"no_interact: {meta['no_interact']}\n")
         f.write(f"avg_score: {meta['avg_score']}\n")
         f.write(f"median_score: {meta['median_score']}\n")
         f.write(f"std_score: {meta['std_score']}\n")
@@ -333,8 +337,10 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         else:
             f.write("ranking: unavailable\n")
 
-def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name):
+def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, no_interact):
     problem_dir = os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}")
+    if no_interact:
+        problem_dir = os.path.join(problem_dir, "no_interact")
     summary_path = os.path.join(problem_dir, f"{problem_name}_{kernel_name}_best_summary.txt")
     if not os.path.isfile(summary_path):
         return None
@@ -374,15 +380,25 @@ def main():
         problem_ctx = _load_instances(problem, DEFAULTS["device"])
         # initialize with existing best (to avoid overwriting better past runs)
         for k in KERNELS:
-            existing = _load_existing_best(outdir, problem_ctx["type_problem"], problem_ctx["dim"], problem_ctx["type_instance"], k)
-            if existing:
-                best_per_problem_kernel[(problem_ctx["type_problem"], k)] = existing
+            for no_interact in NO_INTERACT_VALUES:
+                existing = _load_existing_best(
+                    outdir,
+                    problem_ctx["type_problem"],
+                    problem_ctx["dim"],
+                    problem_ctx["type_instance"],
+                    k,
+                    no_interact,
+                )
+                if existing:
+                    best_per_problem_kernel[(problem_ctx["type_problem"], k, no_interact)] = existing
 
         expanded = []
         for kernel_name in KERNELS:
             epsilon_list = EPSILON_SVGD_GRID
             gamma_list = GAMMA_GRID
-            for advantage, M, lambda_ in itertools.product(ADVANTAGES, M_VALUES, LAMBDA_VALUES):
+            for advantage, M, lambda_, no_interact in itertools.product(
+                ADVANTAGES, M_VALUES, LAMBDA_VALUES, NO_INTERACT_VALUES
+            ):
                 if lambda_ == 1 and advantage != "normalizedfitness":
                     continue
                 if lambda_ != 1 and advantage == "normalizedfitness":
@@ -390,7 +406,9 @@ def main():
                 for epsilon_svgd in epsilon_list:
                     for gamma in gamma_list:
                         bandwith_kernel = None
-                        expanded.append((kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel))
+                        expanded.append(
+                            (kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact)
+                        )
 
         total_runs = len(expanded)
         print(
@@ -398,20 +416,23 @@ def main():
             f"total runs: {total_runs}"
         )
 
-        for idx, (kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel) in enumerate(expanded, 1):
+        for idx, (kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact) in enumerate(
+            expanded, 1
+        ):
             t0 = time.time()
             bandwith_kernel_str = f"{bandwith_kernel}" if bandwith_kernel is not None else "n/a"
             print(
                 f"▶ Run {idx}/{total_runs} | problem={problem_ctx['type_problem']} t={problem_ctx['type_instance']} | "
                 f"kernel={kernel_name} (bandwith_kernel={bandwith_kernel_str}) | "
-                f"adv={advantage} | M={M} | lambda={lambda_} | epsilon_svgd={epsilon_svgd} | gamma={gamma}"
+                f"adv={advantage} | M={M} | lambda={lambda_} | "
+                f"epsilon_svgd={epsilon_svgd} | gamma={gamma} | no_interact={no_interact}"
             )
             avg_score, history, meta = _run_once(
-                problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel
+                problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact
             )
             dt = time.time() - t0
             print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-            key = (problem_ctx["type_problem"], kernel_name)
+            key = (problem_ctx["type_problem"], kernel_name, no_interact)
             current_best = best_per_problem_kernel.get(key)
             if current_best is None or _is_better_score(problem_ctx["type_problem"], avg_score, current_best["meta"]["avg_score"]):
                 best_per_problem_kernel[key] = {"history": history, "meta": meta}
@@ -427,6 +448,8 @@ def main():
                     outdir,
                     f"{meta['problem']}_dim{meta['dim']}_t{meta['type_instance']}",
                 )
+                if no_interact:
+                    problem_dir = os.path.join(problem_dir, "no_interact")
                 _save_history_csv(
                     problem_dir,
                     meta["problem"],
