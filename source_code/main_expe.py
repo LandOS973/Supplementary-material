@@ -348,13 +348,24 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
         with open(summary_path, "r") as f:
             lines = f.readlines()
         avg_score = None
+        mode_value = None
         for line in lines:
+            if line.strip().lower().startswith("no_interact"):
+                try:
+                    mode_value = line.split(":", 1)[1].strip().lower()
+                except Exception:
+                    mode_value = None
             if line.strip().lower().startswith("avg_score"):
                 try:
                     avg_score = float(line.split(":", 1)[1].strip())
                 except Exception:
                     avg_score = None
                 break
+        if mode_value is None:
+            return None
+        parsed_mode = mode_value in ("true", "1", "yes")
+        if parsed_mode != bool(no_interact):
+            return None
         if avg_score is None:
             return None
         return {"history": None, "meta": {"avg_score": avg_score}}
