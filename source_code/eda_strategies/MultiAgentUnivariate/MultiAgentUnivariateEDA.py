@@ -77,7 +77,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         # Buffers (B, M)
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
         self.last_theta_grad = None
-        self.final_grad = None
+        self.svgd_optimizer = None
 
     def forward(self):
         """
@@ -114,7 +114,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.enable_visualization:
             self._record_theta()
         self.latest_advantages = None
-        self.final_grad = torch.zeros_like(self.theta)
+        self.svgd_optimizer = torch.optim.Adam(
+            [self.theta],
+            lr=self.learning_rate,
+        )
 
     def sample_solutions(self):
         """
@@ -242,13 +245,10 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
 
-        current_grad = phi.detach()
-        alpha = 0.9
-        if self.final_grad is None:
-            self.final_grad = current_grad
-        self.final_grad = alpha * self.final_grad + (1 - alpha) * current_grad
-        with torch.no_grad():
-            self.theta += self.epsilon_svgd * self.final_grad
+        phi_detached = phi.detach()
+        self.svgd_optimizer.zero_grad(set_to_none=True)
+        self.theta.grad = -phi_detached
+        self.svgd_optimizer.step()
 
     # =======================
     #   Visualisation
