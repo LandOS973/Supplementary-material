@@ -20,6 +20,7 @@ COMPETITOR_DIR = Path("/home/landos/Downloads/resultAlgos/results_nevergrad_fina
 INSTANCE_NAME = "UBQP_256_4"
 OUTPUT_PATH = ROOT / "courbes" / INSTANCE_NAME / "comparison_qubo_256_t4.png"
 KERNELS_OUTPUT_DIR = ROOT / "courbes" / INSTANCE_NAME / "Kernels"
+KERNELS_COMPARE_DIR = ROOT / "courbes" / INSTANCE_NAME / "Kernels_interact_vs_no_interact"
 
 
 def load_top_algorithms(
@@ -474,9 +475,71 @@ def plot_kernel_comparison() -> None:
     )
 
 
+def plot_kernel_interact_vs_no_interact() -> None:
+    interact_dir = EXPERIMENT_DIR
+    no_interact_dir = EXPERIMENT_DIR / "no_interact"
+    summary_files = sorted(interact_dir.glob("QUBO_*_best_summary.txt"))
+    if not summary_files:
+        raise FileNotFoundError(f"No summary files found in {interact_dir}")
+
+    kernels: List[str] = []
+    for path in summary_files:
+        data = parse_summary_file(path)
+        kernel = data.get("Kernel")
+        if kernel:
+            kernels.append(kernel)
+    kernels = sorted(set(kernels))
+
+    for kernel in kernels:
+        interact_path = interact_dir / f"QUBO_{kernel}_best_metrics.csv"
+        no_interact_path = no_interact_dir / f"QUBO_{kernel}_best_metrics.csv"
+        if not interact_path.exists() or not no_interact_path.exists():
+            missing = []
+            if not interact_path.exists():
+                missing.append(str(interact_path))
+            if not no_interact_path.exists():
+                missing.append(str(no_interact_path))
+            print(f"Skipping {kernel}: missing metrics file(s): {', '.join(missing)}")
+            continue
+
+        x_int, y_int = load_metric_series(interact_path, x_field="step", y_field="mean")
+        x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field="mean")
+
+        fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
+        ax.plot(
+            x_int,
+            y_int,
+            label="interact",
+            color="#1f77b4",
+            linewidth=1.4,
+            alpha=0.95,
+        )
+        ax.plot(
+            x_no,
+            y_no,
+            label="no_interact",
+            color="#ff7f0e",
+            linewidth=1.4,
+            linestyle="--",
+            alpha=0.95,
+        )
+        ax.set_title(f"Average Score: interact vs no_interact ({kernel})", fontsize=12)
+        ax.set_xlabel("Evaluations", fontsize=10)
+        ax.set_ylabel("Average score", fontsize=10)
+        ax.legend(frameon=False, fontsize=9)
+        style_axes(ax, grid_axis="both")
+        output_path = KERNELS_COMPARE_DIR / f"qubo_dim256_t4_{kernel}_score_interact_vs_no_interact.png"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.tight_layout()
+        fig.savefig(output_path)
+        plt.close(fig)
+        print(f"Saved plot to {output_path}")
+
+
 def main() -> None:
     plot_comparison()
     plot_kernel_comparison()
+    plot_kernel_interact_vs_no_interact()
 
 
 if __name__ == "__main__":
