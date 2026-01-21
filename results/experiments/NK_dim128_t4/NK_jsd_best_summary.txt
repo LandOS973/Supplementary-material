@@ -2,12 +2,15 @@ Problem: NK
 Kernel: jsd
 Advantage: peragentrankweighted
 M: 5
-lambda: 15
-epsilon_svgd: 0.8
-gamma: 0.05
+lambda: 20
+epsilon_svgd: 0.03
+gamma: 0.001
 bandwith_kernel: None
-avg_score: 0.7561163902282715
+no_interact: False
+avg_score: 0.756121814250946
+median_score: 0.7560570240020752
+std_score: 0.012684104964137077
+percentiles: 2%=0.7329762578010559, 5%=0.7368961572647095, 10%=0.7396964430809021, 25%=0.7481577396392822, 50%=0.7560570240020752, 75%=0.7636929750442505, 90%=0.774553120136261, 95%=0.7794290781021118, 98%=0.7839117646217346
 ranking_best_algo: PPO-EDA
 ranking_best_score: 0.7603765
 ranking_my_rank: 2/505 (99.8%)
-no_interact: false

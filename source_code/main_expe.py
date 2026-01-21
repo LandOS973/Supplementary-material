@@ -30,8 +30,7 @@ KERNELS = ["rbf", "pk", "hk", "jsd"]
 NO_INTERACT_VALUES = [True, False]
 
 PROBLEMS = [
-    dict(name="QUBO", dim=256, type_instance=4),
-    dict(name="QUBO", dim=256, type_instance=5),
+    dict(name="NK", dim=128, type_instance=4)
 ]
 
 DEFAULTS = dict(
