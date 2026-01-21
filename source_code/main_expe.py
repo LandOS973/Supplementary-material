@@ -31,7 +31,7 @@ NO_INTERACT_VALUES = [True]
 NO_INTERACT_KERNEL = "hk"
 
 PROBLEMS = [
-    dict(name="NK", dim=64, type_instance=4)
+    dict(name="QUBO", dim=256, type_instance=1)
 ]
 
 DEFAULTS = dict(
