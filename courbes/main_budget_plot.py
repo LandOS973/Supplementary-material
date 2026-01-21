@@ -200,6 +200,14 @@ def main() -> None:
             output_path=budget_output_dir / "entropy_interact_vs_no_interact.png",
             metric_field="avg_entropy",
         )
+        _plot_interact_vs_no_interact(
+            interact_path,
+            no_interact_path,
+            title=f"Average Hamming: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+            ylabel="Average hamming",
+            output_path=budget_output_dir / "hamming_interact_vs_no_interact.png",
+            metric_field="avg_hamming",
+        )
 
 
 if __name__ == "__main__":

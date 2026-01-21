@@ -408,12 +408,12 @@ def main():
         expanded = []
         for kernel_name in KERNELS:
             epsilon_list = EPSILON_SVGD_GRID
-            gamma_list = GAMMA_GRID
             for advantage, M, lambda_, no_interact in itertools.product(
                 ADVANTAGES, M_VALUES, LAMBDA_VALUES, NO_INTERACT_VALUES
             ):
                 if no_interact and kernel_name != NO_INTERACT_KERNEL:
                     continue
+                gamma_list = GAMMA_GRID if not no_interact else [GAMMA_GRID[0]]
                 if lambda_ == 1 and advantage != "normalizedfitness":
                     continue
                 if lambda_ != 1 and advantage == "normalizedfitness":
