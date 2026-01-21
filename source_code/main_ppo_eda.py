@@ -34,12 +34,115 @@ def _load_kernel_config(kernel_name: str, repo_root: str):
     return cfg_dict
 
 
+def _parse_summary_config(summary_path):
+    cfg = {}
+    try:
+        with open(summary_path, "r") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                key = key.strip().lower()
+                value = value.strip()
+                if not value:
+                    continue
+                lowered = value.lower()
+                if lowered in ("none", "null", "n/a"):
+                    parsed = None
+                elif lowered in ("true", "false"):
+                    parsed = lowered == "true"
+                else:
+                    try:
+                        if "." in value:
+                            parsed = float(value)
+                        else:
+                            parsed = int(value)
+                    except ValueError:
+                        parsed = value
+                cfg[key] = parsed
+    except OSError:
+        return None
+    return cfg
+
+
+def _ask_yes_no(prompt, default=False):
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    answer = input(prompt + suffix).strip().lower()
+    if not answer:
+        return default
+    return answer in ("y", "yes", "o", "oui")
+
+
+def _ask_int(prompt, default=None):
+    suffix = f" [defaut: {default}]: " if default is not None else ": "
+    answer = input(prompt + suffix).strip()
+    if not answer:
+        return default
+    try:
+        return int(answer)
+    except ValueError:
+        return default
+
+
+def _write_history_csv(out_dir, filename, history, meta=None):
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    runtime = history.get("runtime") or list(range(1, len(history.get("best_fitness", [])) + 1))
+    score_mean = history.get("score_mean", [])
+    score_median = history.get("score_median", [])
+    score_std = history.get("score_std", [])
+    score_p2 = history.get("score_p2", [])
+    score_p5 = history.get("score_p5", [])
+    score_p10 = history.get("score_p10", [])
+    score_p25 = history.get("score_p25", [])
+    score_p50 = history.get("score_p50", [])
+    score_p75 = history.get("score_p75", [])
+    score_p90 = history.get("score_p90", [])
+    score_p95 = history.get("score_p95", [])
+    score_p98 = history.get("score_p98", [])
+    rows = zip(
+        runtime,
+        history.get("best_fitness", []),
+        history.get("avg_hamming", []),
+        history.get("avg_l1", []),
+        history.get("avg_entropy", []),
+        score_mean,
+        score_median,
+        score_std,
+        score_p2,
+        score_p5,
+        score_p10,
+        score_p25,
+        score_p50,
+        score_p75,
+        score_p90,
+        score_p95,
+        score_p98,
+    )
+    csv_path = os.path.join(out_dir, filename)
+    with open(csv_path, "w") as f:
+        if meta:
+            for key, value in meta.items():
+                f.write(f"# {key}: {value}\n")
+        f.write(
+            "step,best_fitness,avg_hamming,avg_l1,avg_entropy,"
+            "mean,median,std,2%,5%,10%,25%,50%,75%,90%,95%,98%\n"
+        )
+        for (step, bf, ham, l1, ent, mean, median, std, p2, p5, p10, p25, p50, p75, p90, p95, p98) in rows:
+            f.write(
+                f"{step},{bf},{ham},{l1},{ent},"
+                f"{mean},{median},{std},{p2},{p5},{p10},{p25},{p50},{p75},{p90},{p95},{p98}\n"
+            )
+
+
 @hydra.main(config_path="../config", config_name="config")
 def main(cfg: DictConfig):
 
     # Support keeping the original variable names used previously; read them from Hydra cfg
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     print('running on device: ' + device)
+    script_dir = os.path.abspath(os.path.dirname(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
     type_problem = cfg.problem.name if 'problem' in cfg and 'name' in cfg.problem else cfg.get('type_problem', 'QUBO')
     print(f"Running with problem type: {type_problem}")
     dim = (
@@ -73,16 +176,42 @@ def main(cfg: DictConfig):
     M = int(agent_val("M") or cfg.get('M') or 1)
     learning_rate = None
     typeStrategy = "PPO-EDA"
-    script_dir = os.path.abspath(os.path.dirname(__file__))
-    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
+    ask_best_config = bool(cfg.get("ask_best_config", True))
+    epsilon_override = None
+    gamma_override = None
+    bandwith_override = None
+    if ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments?", default=False):
+        budget = _ask_int("Budget a utiliser", default=budget) or budget
+        chosen_kernel = input(f"Choisir kernel (rbf/pk/hk/jsd) [defaut: {kernel_name}]: ").strip().lower()
+        if chosen_kernel:
+            kernel_name = chosen_kernel
+        no_interact = _ask_yes_no(f"Mode no_interact? (actuel: {no_interact})", default=no_interact)
+        instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
+        summary_dir = os.path.join(repo_root, "results", "experiments", instance_name)
+        if no_interact:
+            summary_dir = os.path.join(summary_dir, "no_interact")
+        summary_path = os.path.join(summary_dir, f"{type_problem}_{kernel_name}_best_summary.txt")
+        best_cfg = _parse_summary_config(summary_path)
+        if best_cfg is None:
+            print(f"[WARN] Fichier introuvable: {summary_path}. On garde la config actuelle.")
+        else:
+            advantage_cfg = best_cfg.get("advantage", advantage_cfg)
+            M = int(best_cfg.get("m", M))
+            lambda_ = int(best_cfg.get("lambda", lambda_))
+            epsilon_override = best_cfg.get("epsilon_svgd")
+            gamma_override = best_cfg.get("gamma")
+            bandwith_override = best_cfg.get("bandwith_kernel")
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
+    if bandwith_override is not None:
+        kernel_cfg["bandwith_kernel"] = bandwith_override
     kernel_lr = kernel_cfg.get("epsilon_svgd")
     kernel_gamma = kernel_cfg.get("gamma")
     kernel_bandwith_kernel = kernel_cfg.get("bandwith_kernel") or (kernel_cfg.get("params") or {}).get("bandwith_kernel")
     epsilon_svgd = float(
         agent_val("epsilon_svgd")
         or cfg.get('epsilon_svgd')
+        or epsilon_override
         or kernel_lr
         or 0.5
     )
@@ -90,6 +219,7 @@ def main(cfg: DictConfig):
     svgd_gamma = float(
         agent_val("gamma")
         or cfg.get('gamma')
+        or gamma_override
         or kernel_gamma
         or 10.0
     )
@@ -110,6 +240,7 @@ def main(cfg: DictConfig):
 
     write_logs = bool(cfg.get('write_logs', False))
     pathResult = None
+    write_budget_results = budget != 10000
 
     block_size = None
     dummy_blocks = 0
@@ -195,7 +326,7 @@ def main(cfg: DictConfig):
         no_interact=no_interact,
     ).to(device)
     if (type_problem == "QUBO"):
-        list_scores = get_Score_trajectoriesQUBO_cuda(
+        result = get_Score_trajectoriesQUBO_cuda(
             strategy,
             N,
             nb_instances_test,
@@ -206,15 +337,25 @@ def main(cfg: DictConfig):
             device,
             verbose,
             enable_visualization=visualization_enabled,
+            return_history=write_budget_results,
         )
+        if write_budget_results:
+            list_scores, history = result
+        else:
+            list_scores = result
 
     elif (type_problem == "NK" or type_problem == "NK3"):
-        list_scores = get_Score_trajectoriesNK_cuda(strategy, N,  type_instance, D, nb_instances_test, nb_restarts, 
-                                                    budget, lambda_,
-                                                    vectorIndex_th, tensor_matrix_locus,
-                                                    tensor_matrix_contrib, device, verbose)
+        result = get_Score_trajectoriesNK_cuda(strategy, N,  type_instance, D, nb_instances_test, nb_restarts, 
+                                               budget, lambda_,
+                                               vectorIndex_th, tensor_matrix_locus,
+                                               tensor_matrix_contrib, device, verbose,
+                                               return_history=write_budget_results)
+        if write_budget_results:
+            list_scores, history = result
+        else:
+            list_scores = result
     elif type_problem == "BLOCK":
-        list_scores = get_Score_trajectoriesBLOCK_cuda(
+        result = get_Score_trajectoriesBLOCK_cuda(
             strategy,
             N,
             block_size,
@@ -226,12 +367,30 @@ def main(cfg: DictConfig):
             verbose,
             enable_visualization=visualization_enabled,
             dummy_blocks=dummy_blocks,
+            return_history=write_budget_results,
         )
+        if write_budget_results:
+            list_scores, history = result
+        else:
+            list_scores = result
         
     print(list_scores)
     average_test_score = np.mean(list_scores)
 
     print("average_test_score : " + str(average_test_score))
+    if write_budget_results:
+        instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
+        budget_dir = os.path.join(repo_root, "results", "experiments", instance_name, str(budget))
+        filename = "no_interact.csv" if no_interact else "interact.csv"
+        meta = dict(
+            epsilon_svgd=epsilon_svgd,
+            lambda_=lambda_,
+            gamma=svgd_gamma,
+            kernel=kernel_name,
+            advantage=advantage_cfg,
+            M=M,
+        )
+        _write_history_csv(budget_dir, filename, history, meta=meta)
 
 if __name__ == '__main__':
     # Run hydra main
