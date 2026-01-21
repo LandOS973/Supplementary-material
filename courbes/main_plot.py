@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,17 +19,18 @@ COMPETITOR_DIR = Path("/home/landos/Downloads/resultAlgos/results_nevergrad_fina
 
 def _load_problem_config() -> tuple[str, int, int]:
     config_path = ROOT / "config" / "config.yaml"
-    problem_name = "QUBO"
-    dim = 256
+    problem_name = "NK"
+    dim = 128
     type_instance = 4
     try:
         cfg = OmegaConf.load(config_path)
-        defaults = cfg.get("defaults") or []
-        problem_key = None
-        for entry in defaults:
-            if isinstance(entry, dict) and "problem" in entry:
-                problem_key = entry["problem"]
-                break
+        problem_key = cfg.get("problem")
+        if not problem_key:
+            defaults = cfg.get("defaults") or []
+            for entry in defaults:
+                if isinstance(entry, (dict, DictConfig)) and "problem" in entry:
+                    problem_key = entry["problem"]
+                    break
         problem_key = problem_key or "qubo"
         problem_path = ROOT / "config" / "problem" / f"{problem_key}.yaml"
         problem_cfg = OmegaConf.load(problem_path)
@@ -227,7 +228,11 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
     color_cycle = cycle(plt.cm.tab20.colors)
 
     for algo in algos:
-        paths, has_header = find_competitor_files(algo)
+        try:
+            paths, has_header = find_competitor_files(algo)
+        except FileNotFoundError as exc:
+            print(f"[WARN] {exc}. Skipping.")
+            continue
         if has_header:
             if len(paths) > 1:
                 x_vals, y_vals = load_mean_across_runs(paths)
@@ -347,11 +352,18 @@ def load_metric_series(path: Path, x_field: str, y_field: str) -> Tuple[List[flo
     y_vals: List[float] = []
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle)
+        fieldnames = reader.fieldnames or []
+        invert_best_fitness = False
+        if y_field not in fieldnames and "best_fitness" in fieldnames:
+            y_field = "best_fitness"
+            invert_best_fitness = True
         for row in reader:
             x_val = parse_float(row.get(x_field))
             y_val = parse_float(row.get(y_field))
             if x_val is None or y_val is None:
                 continue
+            if invert_best_fitness:
+                y_val = -y_val
             x_vals.append(x_val)
             y_vals.append(y_val)
     if not x_vals:
@@ -445,7 +457,11 @@ def plot_kernel_metric_curves(
         metrics_path = experiment_dir / f"{problem_name}_{kernel}_best_metrics.csv"
         if not metrics_path.exists():
             raise FileNotFoundError(f"Missing metrics file {metrics_path}")
-        x_vals, y_vals = load_metric_series(metrics_path, x_field="step", y_field=metric_field)
+        try:
+            x_vals, y_vals = load_metric_series(metrics_path, x_field="step", y_field=metric_field)
+        except ValueError as exc:
+            print(f"[WARN] {exc}. Skipping {kernel}.")
+            continue
         mark_every = max(1, len(x_vals) // 25)
         ax.plot(
             x_vals,
@@ -581,8 +597,12 @@ def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) ->
             print(f"Skipping {kernel}: missing metrics file(s): {', '.join(missing)}")
             continue
 
-        x_int, y_int = load_metric_series(interact_path, x_field="step", y_field="mean")
-        x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field="mean")
+        try:
+            x_int, y_int = load_metric_series(interact_path, x_field="step", y_field="mean")
+            x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field="mean")
+        except ValueError as exc:
+            print(f"[WARN] {exc}. Skipping {kernel}.")
+            continue
 
         fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
         ax.plot(
