@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot comparison curves for QUBO (N=256, K=4)."""
+"""Plot comparison curves based on the active config instance."""
 
 from __future__ import annotations
 
@@ -9,18 +9,61 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
+from omegaconf import OmegaConf
 
 
 ROOT = Path(__file__).resolve().parent.parent
-RANKING_PATH = ROOT / "additional_results/global_ranking/UBQP_N_256_K_4_ranks.csv"
 DEFAULT_KERNEL = "rbf"
-MY_DATA_PATH = ROOT / "results/experiments/QUBO_dim256_t4/QUBO_rbf_best_metrics.csv"
-EXPERIMENT_DIR = ROOT / "results/experiments/QUBO_dim256_t4"
 COMPETITOR_DIR = Path("/home/landos/Downloads/resultAlgos/results_nevergrad_final")
-INSTANCE_NAME = "UBQP_256_4"
-OUTPUT_PATH = ROOT / "courbes" / INSTANCE_NAME / "comparison_qubo_256_t4.png"
-KERNELS_OUTPUT_DIR = ROOT / "courbes" / INSTANCE_NAME / "Kernels"
-KERNELS_COMPARE_DIR = ROOT / "courbes" / INSTANCE_NAME / "Kernels_interact_vs_no_interact"
+
+
+def _load_problem_config() -> tuple[str, int, int]:
+    config_path = ROOT / "config" / "config.yaml"
+    problem_name = "QUBO"
+    dim = 256
+    type_instance = 4
+    try:
+        cfg = OmegaConf.load(config_path)
+        defaults = cfg.get("defaults") or []
+        problem_key = None
+        for entry in defaults:
+            if isinstance(entry, dict) and "problem" in entry:
+                problem_key = entry["problem"]
+                break
+        problem_key = problem_key or "qubo"
+        problem_path = ROOT / "config" / "problem" / f"{problem_key}.yaml"
+        problem_cfg = OmegaConf.load(problem_path)
+        problem_name = str(problem_cfg.get("name") or problem_cfg.get("type_problem") or problem_name)
+        dim = int(problem_cfg.get("dim") or problem_cfg.get("n") or dim)
+        type_instance = int(problem_cfg.get("type_instance") or problem_cfg.get("k") or type_instance)
+    except OSError:
+        pass
+    return problem_name, dim, type_instance
+
+
+def _build_instance_context() -> dict[str, Path | str | int]:
+    problem_name, dim, type_instance = _load_problem_config()
+    experiment_dir = ROOT / "results" / "experiments" / f"{problem_name}_dim{dim}_t{type_instance}"
+    if problem_name.upper() == "QUBO":
+        instance_name = f"UBQP_{dim}_{type_instance}"
+        ranking_path = ROOT / "additional_results" / "global_ranking" / f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+    else:
+        instance_name = f"{problem_name}_{dim}_{type_instance}"
+        ranking_path = ROOT / "additional_results" / "global_ranking" / f"{problem_name}_N_{dim}_K_{type_instance}_ranks.csv"
+    output_dir = ROOT / "courbes" / instance_name
+    output_path = output_dir / f"comparison_{problem_name.lower()}_{dim}_t{type_instance}.png"
+    return {
+        "problem_name": problem_name,
+        "dim": dim,
+        "type_instance": type_instance,
+        "instance_name": instance_name,
+        "ranking_path": ranking_path,
+        "experiment_dir": experiment_dir,
+        "my_data_path": experiment_dir / f"{problem_name}_{DEFAULT_KERNEL}_best_metrics.csv",
+        "output_path": output_path,
+        "kernels_output_dir": output_dir / "Kernels",
+        "kernels_compare_dir": output_dir / "Kernels_interact_vs_no_interact",
+    }
 
 
 def load_top_algorithms(
@@ -165,12 +208,20 @@ def load_mean_across_runs(paths: List[Path]) -> Tuple[List[float], List[float]]:
     return x_vals, y_vals
 
 
-def plot_comparison() -> None:
-    algos = load_top_algorithms(RANKING_PATH, limit=10, skip=("PPO-EDA",))
-    best_kernel = find_best_kernel_summary(EXPERIMENT_DIR)
-    my_data_path = EXPERIMENT_DIR / f"QUBO_{best_kernel}_best_metrics.csv"
-    if not my_data_path.exists():
-        my_data_path = MY_DATA_PATH
+def plot_comparison(context: dict[str, Path | str | int]) -> None:
+    ranking_path = context["ranking_path"]
+    experiment_dir = context["experiment_dir"]
+    my_data_path = context["my_data_path"]
+    output_path = context["output_path"]
+    problem_name = str(context["problem_name"])
+    dim = int(context["dim"])
+    type_instance = int(context["type_instance"])
+
+    algos = load_top_algorithms(Path(ranking_path), limit=10, skip=("PPO-EDA",))
+    best_kernel = find_best_kernel_summary(Path(experiment_dir), problem_name)
+    best_metrics_path = Path(experiment_dir) / f"{problem_name}_{best_kernel}_best_metrics.csv"
+    if best_metrics_path.exists():
+        my_data_path = best_metrics_path
 
     fig, ax = plt.subplots(figsize=(10, 6), dpi=160)
     color_cycle = cycle(plt.cm.tab20.colors)
@@ -199,7 +250,7 @@ def plot_comparison() -> None:
         )
 
     my_x, my_y = load_xy_from_csv(
-        my_data_path, has_header=True, x_key="step", y_key="best_fitness"
+        Path(my_data_path), has_header=True, x_key="step", y_key="best_fitness"
     )
     my_filtered = [(x, y) for x, y in zip(my_x, my_y) if x >= 100]
     if not my_filtered:
@@ -215,16 +266,16 @@ def plot_comparison() -> None:
         antialiased=True,
     )
 
-    ax.set_title("Comparison on QUBO (N=256, K=4)")
+    ax.set_title(f"Comparison on {problem_name} (N={dim}, K={type_instance})")
     ax.set_xlabel("Evaluations")
     ax.set_ylabel("Average score")
     ax.legend(fontsize=8, ncol=2, frameon=False)
     ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.5)
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(OUTPUT_PATH)
-    print(f"Saved plot to {OUTPUT_PATH}")
+    fig.savefig(Path(output_path))
+    print(f"Saved plot to {output_path}")
 
 
 def parse_summary_file(path: Path) -> dict[str, str]:
@@ -247,8 +298,8 @@ def parse_float(value: str | None) -> float | None:
         return None
 
 
-def find_best_kernel_summary(summary_dir: Path) -> str:
-    summary_files = sorted(summary_dir.glob("QUBO_*_best_summary.txt"))
+def find_best_kernel_summary(summary_dir: Path, problem_name: str) -> str:
+    summary_files = sorted(summary_dir.glob(f"{problem_name}_*_best_summary.txt"))
     if not summary_files:
         return DEFAULT_KERNEL
 
@@ -346,7 +397,9 @@ def plot_kernel_bar(
     print(f"Saved plot to {output_path}")
 
 
-def plot_kernel_hyperparams(kernels: List[str], params: dict[str, List[float]]) -> None:
+def plot_kernel_hyperparams(
+    kernels: List[str], params: dict[str, List[float]], output_dir: Path, problem_name: str, dim: int, type_instance: int
+) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(10.2, 7.2), dpi=180)
     axes = axes.flatten()
     for idx, (param, values) in enumerate(params.items()):
@@ -367,7 +420,7 @@ def plot_kernel_hyperparams(kernels: List[str], params: dict[str, List[float]]) 
 
     fig.suptitle("Grid Search Hyperparameters", fontsize=13, y=1.02)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    output_path = KERNELS_OUTPUT_DIR / "qubo_dim256_t4_hyperparams.png"
+    output_path = output_dir / f"{problem_name.lower()}_dim{dim}_t{type_instance}_hyperparams.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path)
     plt.close(fig)
@@ -381,11 +434,15 @@ def plot_kernel_metric_curves(
     ylabel: str,
     filename: str,
     show_markers: bool = True,
+    *,
+    experiment_dir: Path,
+    output_dir: Path,
+    problem_name: str,
 ) -> None:
     fig, ax = plt.subplots(figsize=(9.4, 5.4), dpi=180)
     color_cycle = cycle(plt.cm.tab10.colors)
     for kernel in kernels:
-        metrics_path = EXPERIMENT_DIR / f"QUBO_{kernel}_best_metrics.csv"
+        metrics_path = experiment_dir / f"{problem_name}_{kernel}_best_metrics.csv"
         if not metrics_path.exists():
             raise FileNotFoundError(f"Missing metrics file {metrics_path}")
         x_vals, y_vals = load_metric_series(metrics_path, x_field="step", y_field=metric_field)
@@ -408,7 +465,7 @@ def plot_kernel_metric_curves(
     ax.set_ylabel(ylabel, fontsize=10)
     ax.legend(frameon=False, fontsize=9, ncol=2)
     style_axes(ax, grid_axis="both")
-    output_path = KERNELS_OUTPUT_DIR / filename
+    output_path = output_dir / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -416,10 +473,15 @@ def plot_kernel_metric_curves(
     print(f"Saved plot to {output_path}")
 
 
-def plot_kernel_comparison() -> None:
-    summary_files = sorted(EXPERIMENT_DIR.glob("QUBO_*_best_summary.txt"))
+def plot_kernel_comparison(context: dict[str, Path | str | int]) -> None:
+    experiment_dir = Path(context["experiment_dir"])
+    output_dir = Path(context["kernels_output_dir"])
+    problem_name = str(context["problem_name"])
+    dim = int(context["dim"])
+    type_instance = int(context["type_instance"])
+    summary_files = sorted(experiment_dir.glob(f"{problem_name}_*_best_summary.txt"))
     if not summary_files:
-        raise FileNotFoundError(f"No summary files found in {EXPERIMENT_DIR}")
+        raise FileNotFoundError(f"No summary files found in {experiment_dir}")
 
     kernel_data: dict[str, dict[str, str]] = {}
     for path in summary_files:
@@ -430,7 +492,7 @@ def plot_kernel_comparison() -> None:
         kernel_data[kernel] = data
 
     if not kernel_data:
-        raise ValueError(f"No kernel entries found in {EXPERIMENT_DIR}")
+        raise ValueError(f"No kernel entries found in {experiment_dir}")
 
     kernels = sorted(kernel_data.keys())
     hyperparams = {"M": [], "lambda": [], "epsilon_svgd": [], "gamma": []}
@@ -443,42 +505,59 @@ def plot_kernel_comparison() -> None:
                 raise ValueError(f"Missing {param} for kernel {kernel}")
             hyperparams[param].append(value)
 
-    plot_kernel_hyperparams(kernels, hyperparams)
+    plot_kernel_hyperparams(kernels, hyperparams, output_dir, problem_name, dim, type_instance)
     plot_kernel_metric_curves(
         kernels,
         metric_field="mean",
         title="Average Score per Kernel (Evolution)",
         ylabel="Average score",
-        filename="qubo_dim256_t4_curve_avg_score.png",
+        filename=f"{problem_name.lower()}_dim{dim}_t{type_instance}_curve_avg_score.png",
         show_markers=False,
+        experiment_dir=experiment_dir,
+        output_dir=output_dir,
+        problem_name=problem_name,
     )
     plot_kernel_metric_curves(
         kernels,
         metric_field="avg_l1",
         title="Average L1 per Kernel (Evolution)",
         ylabel="Average L1",
-        filename="qubo_dim256_t4_curve_avg_l1.png",
+        filename=f"{problem_name.lower()}_dim{dim}_t{type_instance}_curve_avg_l1.png",
+        experiment_dir=experiment_dir,
+        output_dir=output_dir,
+        problem_name=problem_name,
     )
     plot_kernel_metric_curves(
         kernels,
         metric_field="avg_hamming",
         title="Average Hamming per Kernel (Evolution)",
         ylabel="Average Hamming",
-        filename="qubo_dim256_t4_curve_avg_hamming.png",
+        filename=f"{problem_name.lower()}_dim{dim}_t{type_instance}_curve_avg_hamming.png",
+        experiment_dir=experiment_dir,
+        output_dir=output_dir,
+        problem_name=problem_name,
     )
     plot_kernel_metric_curves(
         kernels,
         metric_field="avg_entropy",
         title="Average Entropy per Kernel (Evolution)",
         ylabel="Average Entropy",
-        filename="qubo_dim256_t4_curve_avg_entropy.png",
+        filename=f"{problem_name.lower()}_dim{dim}_t{type_instance}_curve_avg_entropy.png",
+        experiment_dir=experiment_dir,
+        output_dir=output_dir,
+        problem_name=problem_name,
     )
 
 
-def plot_kernel_interact_vs_no_interact() -> None:
-    interact_dir = EXPERIMENT_DIR
-    no_interact_dir = EXPERIMENT_DIR / "no_interact"
-    summary_files = sorted(interact_dir.glob("QUBO_*_best_summary.txt"))
+def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) -> None:
+    experiment_dir = Path(context["experiment_dir"])
+    output_dir = Path(context["kernels_compare_dir"])
+    problem_name = str(context["problem_name"])
+    dim = int(context["dim"])
+    type_instance = int(context["type_instance"])
+    interact_dir = experiment_dir
+    no_interact_dir = experiment_dir / "no_interact"
+    summary_files = sorted(interact_dir.glob(f"{problem_name}_*_best_summary.txt"))
     if not summary_files:
         raise FileNotFoundError(f"No summary files found in {interact_dir}")
 
@@ -491,8 +570,8 @@ def plot_kernel_interact_vs_no_interact() -> None:
     kernels = sorted(set(kernels))
 
     for kernel in kernels:
-        interact_path = interact_dir / f"QUBO_{kernel}_best_metrics.csv"
-        no_interact_path = no_interact_dir / f"QUBO_{kernel}_best_metrics.csv"
+        interact_path = interact_dir / f"{problem_name}_{kernel}_best_metrics.csv"
+        no_interact_path = no_interact_dir / f"{problem_name}_{kernel}_best_metrics.csv"
         if not interact_path.exists() or not no_interact_path.exists():
             missing = []
             if not interact_path.exists():
@@ -528,7 +607,9 @@ def plot_kernel_interact_vs_no_interact() -> None:
         ax.set_ylabel("Average score", fontsize=10)
         ax.legend(frameon=False, fontsize=9)
         style_axes(ax, grid_axis="both")
-        output_path = KERNELS_COMPARE_DIR / f"qubo_dim256_t4_{kernel}_score_interact_vs_no_interact.png"
+        output_path = output_dir / (
+            f"{problem_name.lower()}_dim{dim}_t{type_instance}_{kernel}_score_interact_vs_no_interact.png"
+        )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         fig.tight_layout()
         fig.savefig(output_path)
@@ -537,9 +618,10 @@ def plot_kernel_interact_vs_no_interact() -> None:
 
 
 def main() -> None:
-    plot_comparison()
-    plot_kernel_comparison()
-    plot_kernel_interact_vs_no_interact()
+    context = _build_instance_context()
+    plot_comparison(context)
+    plot_kernel_comparison(context)
+    plot_kernel_interact_vs_no_interact(context)
 
 
 if __name__ == "__main__":
