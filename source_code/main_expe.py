@@ -28,6 +28,7 @@ KERNELS = ["rbf", "pk", "hk", "jsd"]
 #KERNELS = [ "pk", "hk", "jsd"]
 #KERNELS = ["rbf"]
 NO_INTERACT_VALUES = [True, False]
+NO_INTERACT_KERNEL = "hk"
 
 PROBLEMS = [
     dict(name="NK", dim=128, type_instance=4)
@@ -391,6 +392,8 @@ def main():
         # initialize with existing best (to avoid overwriting better past runs)
         for k in KERNELS:
             for no_interact in NO_INTERACT_VALUES:
+                if no_interact and k != NO_INTERACT_KERNEL:
+                    continue
                 existing = _load_existing_best(
                     outdir,
                     problem_ctx["type_problem"],
@@ -409,6 +412,8 @@ def main():
             for advantage, M, lambda_, no_interact in itertools.product(
                 ADVANTAGES, M_VALUES, LAMBDA_VALUES, NO_INTERACT_VALUES
             ):
+                if no_interact and kernel_name != NO_INTERACT_KERNEL:
+                    continue
                 if lambda_ == 1 and advantage != "normalizedfitness":
                     continue
                 if lambda_ != 1 and advantage == "normalizedfitness":

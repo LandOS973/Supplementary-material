@@ -74,6 +74,39 @@ def _ask_yes_no(prompt, default=False):
     return answer in ("y", "yes", "o", "oui")
 
 
+def _find_best_kernel_summary(summary_dir, type_problem):
+    best_kernel = None
+    best_cfg = None
+    best_score = None
+    maximize = type_problem in ("NK", "BLOCK")
+    try:
+        summary_files = list(Path(summary_dir).glob(f"{type_problem}_*_best_summary.txt"))
+    except OSError:
+        summary_files = []
+    for path in summary_files:
+        cfg = _parse_summary_config(path)
+        if not cfg:
+            continue
+        kernel = cfg.get("kernel")
+        avg_score = cfg.get("avg_score")
+        if kernel is None or avg_score is None:
+            continue
+        if best_score is None:
+            best_score = avg_score
+            best_kernel = str(kernel).lower()
+            best_cfg = cfg
+            continue
+        if maximize and avg_score > best_score:
+            best_score = avg_score
+            best_kernel = str(kernel).lower()
+            best_cfg = cfg
+        elif not maximize and avg_score < best_score:
+            best_score = avg_score
+            best_kernel = str(kernel).lower()
+            best_cfg = cfg
+    return best_kernel, best_cfg
+
+
 def _ask_int(prompt, default=None):
     suffix = f" [defaut: {default}]: " if default is not None else ": "
     answer = input(prompt + suffix).strip()
@@ -181,21 +214,20 @@ def main(cfg: DictConfig):
     epsilon_override = None
     gamma_override = None
     bandwith_override = None
+    used_best_config = False
     if ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments?", default=False):
+        used_best_config = True
         budget = _ask_int("Budget a utiliser", default=budget) or budget
-        chosen_kernel = input(f"Choisir kernel (rbf/pk/hk/jsd) [defaut: {kernel_name}]: ").strip().lower()
-        if chosen_kernel:
-            kernel_name = chosen_kernel
         no_interact = _ask_yes_no(f"Mode no_interact? (actuel: {no_interact})", default=no_interact)
         instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
         summary_dir = os.path.join(repo_root, "results", "experiments", instance_name)
         if no_interact:
             summary_dir = os.path.join(summary_dir, "no_interact")
-        summary_path = os.path.join(summary_dir, f"{type_problem}_{kernel_name}_best_summary.txt")
-        best_cfg = _parse_summary_config(summary_path)
-        if best_cfg is None:
-            print(f"[WARN] Fichier introuvable: {summary_path}. On garde la config actuelle.")
+        best_kernel, best_cfg = _find_best_kernel_summary(summary_dir, type_problem)
+        if best_cfg is None or best_kernel is None:
+            print(f"[WARN] Aucun resume valide dans {summary_dir}. On garde la config actuelle.")
         else:
+            kernel_name = best_kernel
             advantage_cfg = best_cfg.get("advantage", advantage_cfg)
             M = int(best_cfg.get("m", M))
             lambda_ = int(best_cfg.get("lambda", lambda_))
@@ -337,9 +369,9 @@ def main(cfg: DictConfig):
             device,
             verbose,
             enable_visualization=visualization_enabled,
-            return_history=write_budget_results,
+            return_history=write_budget_results and used_best_config,
         )
-        if write_budget_results:
+        if write_budget_results and used_best_config:
             list_scores, history = result
         else:
             list_scores = result
@@ -349,8 +381,8 @@ def main(cfg: DictConfig):
                                                budget, lambda_,
                                                vectorIndex_th, tensor_matrix_locus,
                                                tensor_matrix_contrib, device, verbose,
-                                               return_history=write_budget_results)
-        if write_budget_results:
+                                               return_history=write_budget_results and used_best_config)
+        if write_budget_results and used_best_config:
             list_scores, history = result
         else:
             list_scores = result
@@ -367,9 +399,9 @@ def main(cfg: DictConfig):
             verbose,
             enable_visualization=visualization_enabled,
             dummy_blocks=dummy_blocks,
-            return_history=write_budget_results,
+            return_history=write_budget_results and used_best_config,
         )
-        if write_budget_results:
+        if write_budget_results and used_best_config:
             list_scores, history = result
         else:
             list_scores = result
@@ -378,7 +410,7 @@ def main(cfg: DictConfig):
     average_test_score = np.mean(list_scores)
 
     print("average_test_score : " + str(average_test_score))
-    if write_budget_results:
+    if write_budget_results and used_best_config:
         instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
         budget_dir = os.path.join(repo_root, "results", "experiments", instance_name, str(budget))
         filename = "no_interact.csv" if no_interact else "interact.csv"
