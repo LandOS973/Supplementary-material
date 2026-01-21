@@ -1,13 +1,16 @@
 Problem: NK
 Kernel: pk
 Advantage: peragentrankweighted
-M: 5
-lambda: 20
-epsilon_svgd: 0.03
-gamma: 0.001
+M: 3
+lambda: 25
+epsilon_svgd: 0.8
+gamma: 0.05
 bandwith_kernel: None
-avg_score: 0.7558048963546753
+no_interact: False
+avg_score: 0.7560765147209167
+median_score: 0.7542948722839355
+std_score: 0.012547772377729416
+percentiles: 2%=0.7326318621635437, 5%=0.7343178987503052, 10%=0.7401013970375061, 25%=0.7472613453865051, 50%=0.7542948722839355, 75%=0.7675328254699707, 90%=0.7728161811828613, 95%=0.7737919688224792, 98%=0.7790151238441467
 ranking_best_algo: PPO-EDA
 ranking_best_score: 0.7603765
 ranking_my_rank: 2/505 (99.8%)
-no_interact: false

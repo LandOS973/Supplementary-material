@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 
 echo "Job démarré sur $(hostname) à $(date)"
 echo "Run main_expe"
