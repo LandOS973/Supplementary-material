@@ -21,6 +21,8 @@ from utils.main_utils import rank_vs_global_ranking
 # ============
 EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1, 0.5, 0.8]
 GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01, 0.05]
+DECAY_START_RATIO_GRID = [0.6, 0.7, 0.8, 0.9]
+DECAY_MIN_FACTOR_GRID = [0.05, 0.1, 0.2, 0.3]
 M_VALUES = [20, 15 ,10, 5, 3, 1]
 LAMBDA_VALUES = [7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
@@ -131,7 +133,19 @@ def _load_instances(problem_cfg, device):
     raise ValueError(f"Unsupported problem {name}")
 
 
-def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact):
+def _run_once(
+    problem_ctx,
+    kernel_name,
+    advantage,
+    M,
+    lambda_,
+    epsilon_svgd,
+    gamma,
+    decay_start_ratio,
+    decay_min_factor,
+    bandwith_kernel,
+    no_interact,
+):
     device = DEFAULTS["device"]
 
     # kernel configuration
@@ -151,6 +165,8 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
         epsilon_svgd=epsilon_svgd,
         enable_visualization=DEFAULTS["visualization"],
         svgd_gamma=gamma,
+        decay_start_ratio=decay_start_ratio,
+        decay_min_factor=decay_min_factor,
         advantage_cfg=advantage,
         kernel_config=kernel_config,
         no_interact=no_interact,
@@ -242,6 +258,8 @@ def _run_once(problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gam
         lambda_=lambda_,
         epsilon_svgd=epsilon_svgd,
         gamma=gamma,
+        decay_start_ratio=decay_start_ratio,
+        decay_min_factor=decay_min_factor,
         bandwith_kernel=bandwith_kernel,
         no_interact=no_interact,
         avg_score=avg_score,
@@ -317,6 +335,8 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         f.write(f"lambda: {meta['lambda_']}\n")
         f.write(f"epsilon_svgd: {meta['epsilon_svgd']}\n")
         f.write(f"gamma: {meta['gamma']}\n")
+        f.write(f"decay_start_ratio: {meta['decay_start_ratio']}\n")
+        f.write(f"decay_min_factor: {meta['decay_min_factor']}\n")
         f.write(f"bandwith_kernel: {meta['bandwith_kernel']}\n")
         f.write(f"no_interact: {meta['no_interact']}\n")
         f.write(f"avg_score: {meta['avg_score']}\n")
@@ -420,10 +440,23 @@ def main():
                     continue
                 for epsilon_svgd in epsilon_list:
                     for gamma in gamma_list:
-                        bandwith_kernel = None
-                        expanded.append(
-                            (kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact)
-                        )
+                        for decay_start_ratio in DECAY_START_RATIO_GRID:
+                            for decay_min_factor in DECAY_MIN_FACTOR_GRID:
+                                bandwith_kernel = None
+                                expanded.append(
+                                    (
+                                        kernel_name,
+                                        advantage,
+                                        M,
+                                        lambda_,
+                                        epsilon_svgd,
+                                        gamma,
+                                        decay_start_ratio,
+                                        decay_min_factor,
+                                        bandwith_kernel,
+                                        no_interact,
+                                    )
+                                )
 
         total_runs = len(expanded)
         print(
@@ -431,19 +464,40 @@ def main():
             f"total runs: {total_runs}"
         )
 
-        for idx, (kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact) in enumerate(
-            expanded, 1
-        ):
+        for idx, (
+            kernel_name,
+            advantage,
+            M,
+            lambda_,
+            epsilon_svgd,
+            gamma,
+            decay_start_ratio,
+            decay_min_factor,
+            bandwith_kernel,
+            no_interact,
+        ) in enumerate(expanded, 1):
             t0 = time.time()
             bandwith_kernel_str = f"{bandwith_kernel}" if bandwith_kernel is not None else "n/a"
             print(
                 f"▶ Run {idx}/{total_runs} | problem={problem_ctx['type_problem']} t={problem_ctx['type_instance']} | "
                 f"kernel={kernel_name} (bandwith_kernel={bandwith_kernel_str}) | "
                 f"adv={advantage} | M={M} | lambda={lambda_} | "
-                f"epsilon_svgd={epsilon_svgd} | gamma={gamma} | no_interact={no_interact}"
+                f"epsilon_svgd={epsilon_svgd} | gamma={gamma} | "
+                f"decay_start_ratio={decay_start_ratio} | decay_min_factor={decay_min_factor} | "
+                f"no_interact={no_interact}"
             )
             avg_score, history, meta = _run_once(
-                problem_ctx, kernel_name, advantage, M, lambda_, epsilon_svgd, gamma, bandwith_kernel, no_interact
+                problem_ctx,
+                kernel_name,
+                advantage,
+                M,
+                lambda_,
+                epsilon_svgd,
+                gamma,
+                decay_start_ratio,
+                decay_min_factor,
+                bandwith_kernel,
+                no_interact,
             )
             dt = time.time() - t0
             print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")

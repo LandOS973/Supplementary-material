@@ -214,6 +214,7 @@ def main(cfg: DictConfig):
     epsilon_override = None
     gamma_override = None
     bandwith_override = None
+    best_cfg = None
     if ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments? (DEFAULT FALSE)", default=False):
         budget = _ask_int("Budget a utiliser", default=budget) or budget
         no_interact = _ask_yes_no(f"Mode no_interact? (actuel: {no_interact})", default=no_interact)
@@ -256,13 +257,32 @@ def main(cfg: DictConfig):
         or kernel_gamma
         or 10.0
     )
+    decay_start_ratio = float(
+        agent_val("decay_start_ratio")
+        or cfg.get("decay_start_ratio")
+        or 0.8
+    )
+    decay_min_factor = float(
+        agent_val("min_factor")
+        or agent_val("decay_min_factor")
+        or cfg.get("min_factor")
+        or cfg.get("decay_min_factor")
+        or 0.1
+    )
+    if best_cfg:
+        if best_cfg.get("decay_start_ratio") is not None:
+            decay_start_ratio = float(best_cfg.get("decay_start_ratio"))
+        if best_cfg.get("min_factor") is not None:
+            decay_min_factor = float(best_cfg.get("min_factor"))
+        elif best_cfg.get("decay_min_factor") is not None:
+            decay_min_factor = float(best_cfg.get("decay_min_factor"))
     bandwith_kernel_suffix = ""
     if kernel_name in ("pk", "rbf"):
         bandwith_kernel_suffix = f", bandwith_kernel: {kernel_bandwith_kernel}"
     print(
         f"Using REINFORCE update. Number of agents: {M} with epsilon_svgd: {epsilon_svgd}, "
         f"λ: {lambda_}, svgd_gamma: {svgd_gamma}, advantage={advantage_cfg}, "
-        f"kernel={kernel_name}{bandwith_kernel_suffix}, no_interact={no_interact}, bandwith_kernel: {kernel_bandwith_kernel}"
+        f"kernel={kernel_name}{bandwith_kernel_suffix}, no_interact={no_interact}, bandwith_kernel: {kernel_bandwith_kernel}, decay_start_ratio: {decay_start_ratio}, decay_min_factor: {decay_min_factor}"
     )
 
     torch.manual_seed(seed)
@@ -352,6 +372,8 @@ def main(cfg: DictConfig):
         epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
         svgd_gamma=svgd_gamma,
+        decay_start_ratio=decay_start_ratio,
+        decay_min_factor=decay_min_factor,
         advantage_cfg=advantage_cfg,
         kernel_config=kernel_cfg,
         no_interact=no_interact,
@@ -417,6 +439,8 @@ def main(cfg: DictConfig):
             epsilon_svgd=epsilon_svgd,
             lambda_=lambda_,
             gamma=svgd_gamma,
+            decay_start_ratio=decay_start_ratio,
+            decay_min_factor=decay_min_factor,
             kernel=kernel_name,
             advantage=advantage_cfg,
             M=M,
