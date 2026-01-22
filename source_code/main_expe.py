@@ -24,10 +24,10 @@ GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01, 0.05]
 M_VALUES = [20, 15 ,10, 5, 3, 1]
 LAMBDA_VALUES = [7, 10, 15, 20, 25]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
-KERNELS = ["rbf", "pk", "hk", "jsd"]
+#KERNELS = ["rbf", "pk", "hk", "jsd"]
 #KERNELS = [ "pk", "hk", "jsd"]
-#KERNELS = ["rbf"]
-NO_INTERACT_VALUES = [True, False]
+KERNELS = ["rbf"]
+NO_INTERACT_VALUES = [False]
 NO_INTERACT_KERNEL = "hk"
 
 PROBLEMS = [
