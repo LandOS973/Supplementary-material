@@ -2,15 +2,17 @@ Problem: QUBO
 Kernel: rbf
 Advantage: peragentrankweighted
 M: 3
-lambda: 25
-epsilon_svgd: 0.01
-gamma: 0.0005
+lambda: 10
+epsilon_svgd: 0.1
+gamma: 0.01
+decay_start_ratio: 0.5
+decay_min_factor: 0.05
 bandwith_kernel: None
 no_interact: False
-avg_score: -1610.9200439453125
-median_score: -1599.0
-std_score: 66.6904296875
-percentiles: 2%=-1764.280029296875, 5%=-1731.050048828125, 10%=-1706.0999755859375, 25%=-1647.75, 50%=-1599.0, 75%=-1564.0, 90%=-1532.800048828125, 95%=-1517.0, 98%=-1508.719970703125
+avg_score: -1634.800048828125
+median_score: -1625.0
+std_score: 59.097713470458984
+percentiles: 2%=-1749.3599853515625, 5%=-1730.4000244140625, 10%=-1724.0999755859375, 25%=-1678.5, 50%=-1625.0, 75%=-1593.0, 90%=-1565.0, 95%=-1542.7000732421875, 98%=-1528.9599609375
 ranking_best_algo: PPO-EDA
 ranking_best_score: 1697.68
 ranking_my_rank: 2/505 (99.8%)
