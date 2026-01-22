@@ -63,7 +63,7 @@ def _build_instance_context() -> dict[str, Path | str | int]:
         "my_data_path": experiment_dir / f"{problem_name}_{DEFAULT_KERNEL}_best_metrics.csv",
         "output_path": output_path,
         "kernels_output_dir": output_dir / "Kernels",
-        "kernels_compare_dir": output_dir / "Kernels_interact_vs_no_interact",
+        "interact_vs_no_interact_dir": output_dir / "10000",
     }
 
 
@@ -150,7 +150,19 @@ def sort_by_x(x_vals: List[float], y_vals: List[float]) -> Tuple[List[float], Li
     return [p[0] for p in pairs], [p[1] for p in pairs]
 
 
-def find_competitor_files(algo: str) -> Tuple[List[Path], bool]:
+def sort_by_x_with_std(
+    x_vals: List[float], y_vals: List[float], std_vals: List[float]
+) -> Tuple[List[float], List[float], List[float]]:
+    pairs = sorted(zip(x_vals, y_vals, std_vals), key=lambda pair: pair[0])
+    return [p[0] for p in pairs], [p[1] for p in pairs], [p[2] for p in pairs]
+
+
+def find_competitor_files(
+    algo: str,
+    dim: int,
+    type_instance: int,
+    problem_name: str | None = None,
+) -> Tuple[List[Path], bool]:
     csv_path = COMPETITOR_DIR / f"{algo}.csv"
     if csv_path.exists():
         return [csv_path], False
@@ -159,19 +171,30 @@ def find_competitor_files(algo: str) -> Tuple[List[Path], bool]:
     if not algo_dir.exists():
         raise FileNotFoundError(f"Missing competitor directory: {algo_dir}")
 
+    if problem_name:
+        normalized = problem_name.upper()
+        if normalized in ("QUBO", "UBQP"):
+            problem_variants = ["UBQP", "QUBO", "qubo", "ubqp"]
+        else:
+            problem_variants = [normalized, normalized.lower()]
+    else:
+        problem_variants = ["UBQP", "QUBO", "qubo", "ubqp"]
+
     candidate_files: List[Path] = []
-    for problem in ("UBQP", "QUBO", "qubo", "ubqp"):
-        candidate_dir = algo_dir / problem / "256" / "4"
+    for problem in problem_variants:
+        candidate_dir = algo_dir / problem / str(dim) / str(type_instance)
         if candidate_dir.exists():
             candidate_files.extend(candidate_dir.glob("*.txt"))
 
     if not candidate_files:
-        patterns = (
-            f"**/results_nevergrad_{algo}_UBQP_256_4_*.txt",
-            f"**/results_nevergrad_{algo}_QUBO_256_4_*.txt",
-            f"**/*{algo}*UBQP*256*4*.txt",
-            f"**/*{algo}*QUBO*256*4*.txt",
-        )
+        patterns: List[str] = []
+        for problem in problem_variants:
+            patterns.extend(
+                (
+                    f"**/results_nevergrad_{algo}_{problem}_{dim}_{type_instance}_*.txt",
+                    f"**/*{algo}*{problem}*{dim}*{type_instance}*.txt",
+                )
+            )
         for pattern in patterns:
             candidate_files.extend(algo_dir.glob(pattern))
 
@@ -229,7 +252,7 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
 
     for algo in algos:
         try:
-            paths, has_header = find_competitor_files(algo)
+            paths, has_header = find_competitor_files(algo, dim, type_instance, problem_name)
         except FileNotFoundError as exc:
             print(f"[WARN] {exc}. Skipping.")
             continue
@@ -320,10 +343,39 @@ def find_best_kernel_summary(summary_dir: Path, problem_name: str) -> str:
             best_score = avg_score
             best_kernel = kernel
     return best_kernel
-    try:
-        return float(value)
-    except ValueError:
-        return None
+
+
+def list_kernels_from_metrics(metrics_dir: Path, problem_name: str) -> List[str]:
+    prefix = f"{problem_name}_"
+    suffix = "_best_metrics"
+    kernels: List[str] = []
+    for path in metrics_dir.glob(f"{problem_name}_*_best_metrics.csv"):
+        stem = path.stem
+        if not stem.startswith(prefix) or not stem.endswith(suffix):
+            continue
+        kernel = stem[len(prefix) : -len(suffix)]
+        if kernel:
+            kernels.append(kernel)
+    return sorted(set(kernels))
+
+
+def select_best_kernel_from_summaries(
+    summary_dir: Path, problem_name: str, kernels: Iterable[str]
+) -> str | None:
+    best_kernel = None
+    best_score = None
+    for kernel in kernels:
+        summary_path = summary_dir / f"{problem_name}_{kernel}_best_summary.txt"
+        if not summary_path.exists():
+            continue
+        data = parse_summary_file(summary_path)
+        avg_score = parse_float(data.get("avg_score"))
+        if avg_score is None:
+            continue
+        if best_score is None or avg_score < best_score:
+            best_score = avg_score
+            best_kernel = kernel
+    return best_kernel
 
 
 def compute_metric_means(path: Path, fields: Iterable[str]) -> dict[str, float]:
@@ -371,11 +423,83 @@ def load_metric_series(path: Path, x_field: str, y_field: str) -> Tuple[List[flo
     return sort_by_x(x_vals, y_vals)
 
 
+def load_metric_series_with_std(
+    path: Path, x_field: str, mean_field: str = "mean", std_field: str = "std"
+) -> Tuple[List[float], List[float], List[float]]:
+    x_vals: List[float] = []
+    mean_vals: List[float] = []
+    std_vals: List[float] = []
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            x_val = parse_float(row.get(x_field))
+            mean_val = parse_float(row.get(mean_field))
+            std_val = parse_float(row.get(std_field))
+            if x_val is None or mean_val is None or std_val is None:
+                continue
+            x_vals.append(x_val)
+            mean_vals.append(mean_val)
+            std_vals.append(std_val)
+    if not x_vals:
+        raise ValueError(f"No data for {mean_field}/{std_field} in {path}")
+    return sort_by_x_with_std(x_vals, mean_vals, std_vals)
+
+
 def style_axes(ax, grid_axis: str = "y") -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.tick_params(axis="both", labelsize=9, width=0.6, length=3)
     ax.grid(True, axis=grid_axis, linestyle="--", linewidth=0.5, alpha=0.4)
+
+
+def plot_interact_vs_no_interact_series(
+    x_int: List[float],
+    y_int: List[float],
+    x_no: List[float],
+    y_no: List[float],
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    *,
+    std_int: List[float] | None = None,
+    std_no: List[float] | None = None,
+) -> None:
+    fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
+    ax.plot(
+        x_int,
+        y_int,
+        label="interact",
+        color="#1f77b4",
+        linewidth=1.4,
+        alpha=0.95,
+    )
+    ax.plot(
+        x_no,
+        y_no,
+        label="no_interact",
+        color="#ff7f0e",
+        linewidth=1.4,
+        linestyle="--",
+        alpha=0.95,
+    )
+    if std_int is not None:
+        lower = [y - s for y, s in zip(y_int, std_int)]
+        upper = [y + s for y, s in zip(y_int, std_int)]
+        ax.fill_between(x_int, lower, upper, color="#1f77b4", alpha=0.2, linewidth=0.0)
+    if std_no is not None:
+        lower = [y - s for y, s in zip(y_no, std_no)]
+        upper = [y + s for y, s in zip(y_no, std_no)]
+        ax.fill_between(x_no, lower, upper, color="#ff7f0e", alpha=0.2, linewidth=0.0)
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("Evaluations", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.legend(frameon=False, fontsize=9)
+    style_axes(ax, grid_axis="both")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
 
 
 def plot_kernel_bar(
@@ -567,74 +691,70 @@ def plot_kernel_comparison(context: dict[str, Path | str | int]) -> None:
 
 def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) -> None:
     experiment_dir = Path(context["experiment_dir"])
-    output_dir = Path(context["kernels_compare_dir"])
+    output_dir = Path(context["interact_vs_no_interact_dir"])
     problem_name = str(context["problem_name"])
     dim = int(context["dim"])
     type_instance = int(context["type_instance"])
     interact_dir = experiment_dir
     no_interact_dir = experiment_dir / "no_interact"
-    summary_files = sorted(interact_dir.glob(f"{problem_name}_*_best_summary.txt"))
-    if not summary_files:
-        raise FileNotFoundError(f"No summary files found in {interact_dir}")
+    no_interact_kernels = list_kernels_from_metrics(no_interact_dir, problem_name)
+    if not no_interact_kernels:
+        print(f"[WARN] No no_interact metrics found in {no_interact_dir}.")
+        return
 
-    kernels: List[str] = []
-    for path in summary_files:
-        data = parse_summary_file(path)
-        kernel = data.get("Kernel")
-        if kernel:
-            kernels.append(kernel)
-    kernels = sorted(set(kernels))
+    no_interact_kernel = select_best_kernel_from_summaries(
+        no_interact_dir, problem_name, no_interact_kernels
+    )
+    if no_interact_kernel is None:
+        no_interact_kernel = no_interact_kernels[0]
 
-    for kernel in kernels:
-        interact_path = interact_dir / f"{problem_name}_{kernel}_best_metrics.csv"
-        no_interact_path = no_interact_dir / f"{problem_name}_{kernel}_best_metrics.csv"
-        if not interact_path.exists() or not no_interact_path.exists():
-            missing = []
-            if not interact_path.exists():
-                missing.append(str(interact_path))
-            if not no_interact_path.exists():
-                missing.append(str(no_interact_path))
-            print(f"Skipping {kernel}: missing metrics file(s): {', '.join(missing)}")
-            continue
+    best_kernel = find_best_kernel_summary(interact_dir, problem_name)
 
-        try:
-            x_int, y_int = load_metric_series(interact_path, x_field="step", y_field="mean")
-            x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field="mean")
-        except ValueError as exc:
-            print(f"[WARN] {exc}. Skipping {kernel}.")
-            continue
+    interact_path = interact_dir / f"{problem_name}_{best_kernel}_best_metrics.csv"
+    no_interact_path = no_interact_dir / f"{problem_name}_{no_interact_kernel}_best_metrics.csv"
+    if not interact_path.exists() or not no_interact_path.exists():
+        missing = []
+        if not interact_path.exists():
+            missing.append(str(interact_path))
+        if not no_interact_path.exists():
+            missing.append(str(no_interact_path))
+        raise FileNotFoundError(f"Missing metrics file(s): {', '.join(missing)}")
 
-        fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
-        ax.plot(
-            x_int,
-            y_int,
-            label="interact",
-            color="#1f77b4",
-            linewidth=1.4,
-            alpha=0.95,
-        )
-        ax.plot(
-            x_no,
-            y_no,
-            label="no_interact",
-            color="#ff7f0e",
-            linewidth=1.4,
-            linestyle="--",
-            alpha=0.95,
-        )
-        ax.set_title(f"Average Score: interact vs no_interact ({kernel})", fontsize=12)
-        ax.set_xlabel("Evaluations", fontsize=10)
-        ax.set_ylabel("Average score", fontsize=10)
-        ax.legend(frameon=False, fontsize=9)
-        style_axes(ax, grid_axis="both")
-        output_path = output_dir / (
-            f"{problem_name.lower()}_dim{dim}_t{type_instance}_{kernel}_score_interact_vs_no_interact.png"
-        )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.tight_layout()
-        fig.savefig(output_path)
-        plt.close(fig)
-        print(f"Saved plot to {output_path}")
+    x_int, y_int, std_int = load_metric_series_with_std(interact_path, x_field="step")
+    x_no, y_no, std_no = load_metric_series_with_std(no_interact_path, x_field="step")
+
+    title = (
+        f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=10000)"
+    )
+    plot_interact_vs_no_interact_series(
+        x_int,
+        y_int,
+        x_no,
+        y_no,
+        title=title,
+        ylabel="Average score",
+        output_path=output_dir / "avg_score_interact_vs_no_interact.png",
+    )
+    plot_interact_vs_no_interact_series(
+        x_int,
+        y_int,
+        x_no,
+        y_no,
+        title=title,
+        ylabel="Average score",
+        output_path=output_dir / "avg_score_interact_vs_no_interact_std.png",
+        std_int=std_int,
+        std_no=std_no,
+    )
+    plot_interact_vs_no_interact_series(
+        x_int,
+        std_int,
+        x_no,
+        std_no,
+        title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+        ylabel="Std",
+        output_path=output_dir / "std_interact_vs_no_interact.png",
+    )
 
 
 def main() -> None:
