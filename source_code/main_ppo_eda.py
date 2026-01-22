@@ -214,9 +214,7 @@ def main(cfg: DictConfig):
     epsilon_override = None
     gamma_override = None
     bandwith_override = None
-    used_best_config = False
-    if ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments?", default=False):
-        used_best_config = True
+    if ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments? (DEFAULT FALSE)", default=False):
         budget = _ask_int("Budget a utiliser", default=budget) or budget
         no_interact = _ask_yes_no(f"Mode no_interact? (actuel: {no_interact})", default=no_interact)
         instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
@@ -234,6 +232,9 @@ def main(cfg: DictConfig):
             epsilon_override = best_cfg.get("epsilon_svgd")
             gamma_override = best_cfg.get("gamma")
             bandwith_override = best_cfg.get("bandwith_kernel")
+    write_budget_results = _ask_yes_no(
+        "Enregistrer l'historique dans results/experiments? (DEFAULT FALSE)", default=False
+    )
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
     if bandwith_override is not None:
         kernel_cfg["bandwith_kernel"] = bandwith_override
@@ -272,8 +273,6 @@ def main(cfg: DictConfig):
 
     write_logs = bool(cfg.get('write_logs', False))
     pathResult = None
-    write_budget_results = budget != 10000
-
     block_size = None
     dummy_blocks = 0
     total_lambda = lambda_ * M if typeStrategy == "PPO-EDA" else lambda_
@@ -369,9 +368,9 @@ def main(cfg: DictConfig):
             device,
             verbose,
             enable_visualization=visualization_enabled,
-            return_history=write_budget_results and used_best_config,
+            return_history=write_budget_results,
         )
-        if write_budget_results and used_best_config:
+        if write_budget_results:
             list_scores, history = result
         else:
             list_scores = result
@@ -381,8 +380,8 @@ def main(cfg: DictConfig):
                                                budget, lambda_,
                                                vectorIndex_th, tensor_matrix_locus,
                                                tensor_matrix_contrib, device, verbose,
-                                               return_history=write_budget_results and used_best_config)
-        if write_budget_results and used_best_config:
+                                               return_history=write_budget_results)
+        if write_budget_results:
             list_scores, history = result
         else:
             list_scores = result
@@ -399,9 +398,9 @@ def main(cfg: DictConfig):
             verbose,
             enable_visualization=visualization_enabled,
             dummy_blocks=dummy_blocks,
-            return_history=write_budget_results and used_best_config,
+            return_history=write_budget_results,
         )
-        if write_budget_results and used_best_config:
+        if write_budget_results:
             list_scores, history = result
         else:
             list_scores = result
@@ -410,7 +409,7 @@ def main(cfg: DictConfig):
     average_test_score = np.mean(list_scores)
 
     print("average_test_score : " + str(average_test_score))
-    if write_budget_results and used_best_config:
+    if write_budget_results:
         instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
         budget_dir = os.path.join(repo_root, "results", "experiments", instance_name, str(budget))
         filename = "no_interact.csv" if no_interact else "interact.csv"
