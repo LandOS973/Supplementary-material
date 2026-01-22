@@ -19,7 +19,7 @@ COMPETITOR_DIR = Path("/home/landos/Downloads/resultAlgos/results_nevergrad_fina
 
 def _load_problem_config() -> tuple[str, int, int]:
     config_path = ROOT / "config" / "config.yaml"
-    problem_name = "NK"
+    problem_name = "QUBO"
     dim = 128
     type_instance = 4
     try:
