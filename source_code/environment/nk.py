@@ -259,6 +259,8 @@ def get_Score_trajectoriesNK_cuda(
         bestScore = torch.where(current_score > bestScore, current_score,  bestScore)
 
 
+        if hasattr(strategy, "decay_svgd_gamma"):
+            strategy.decay_svgd_gamma(epoch, nb_iterations)
         strategy.updateDistribution(tensor_solution, tensor_score)
 
         scores_np = bestScore.detach().cpu().numpy() / N

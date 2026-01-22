@@ -126,7 +126,9 @@ def get_Score_trajectoriesQUBO_cuda(
             
             
         bestScore = torch.where(current_score > bestScore, current_score,  bestScore)
-        strategy.updateDistribution( tensor_solution, tensor_score)
+        if hasattr(strategy, "decay_svgd_gamma"):
+            strategy.decay_svgd_gamma(epoch, nb_iterations)
+        strategy.updateDistribution(tensor_solution, tensor_score)
 
         scores_np = -bestScore.detach().cpu().numpy()
         score_mean_history.append(float(np.mean(scores_np)))

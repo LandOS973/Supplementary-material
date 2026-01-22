@@ -54,6 +54,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.no_interact = bool(no_interact)
         self.dim_variables = dim_variables
         self.svgd_gamma = float(svgd_gamma)
+        self.svgd_gamma_base = self.svgd_gamma
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
@@ -240,6 +241,26 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         with torch.no_grad():
             self.theta += self.epsilon_svgd * phi
+
+    def decay_svgd_gamma(
+        self,
+        current_iter: int,
+        total_iters: int,
+        decay_start_ratio: float = 0.7,
+        min_factor: float = 0.1,
+    ) -> None:
+        if self.no_interact or self.M <= 1:
+            return
+        progress = (current_iter + 1) / float(total_iters)
+        if progress < decay_start_ratio:
+            return
+        else:
+            t = (progress - decay_start_ratio) / (1.0 - decay_start_ratio)
+            factor = 1.0 - t * (1.0 - min_factor)
+
+        target_gamma = self.svgd_gamma_base * factor
+        if target_gamma > 0:
+            self.svgd.gamma = float(target_gamma)
 
     # =======================
     #   Visualisation
