@@ -26,14 +26,14 @@ GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01]
 DECAY_START_RATIO_GRID = [0.3,0.4,0.5, 0.6]
 DECAY_MIN_FACTOR_GRID = [0 ,0.05, 0.1, 0.2]
 #M_VALUES = [20, 15 ,10, 5, 3, 1]
-M_VALUES = [15 ,10, 5, 3]
+M_VALUES = [5, 3]
 #LAMBDA_VALUES = [7, 10, 15, 20, 25]
 LAMBDA_VALUES = [7, 10, 20, 25, 30]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
 #KERNELS = [ "pk", "hk", "jsd"]
-KERNELS = ["hk"]
-NO_INTERACT_VALUES = [True]
+KERNELS = ["rbf"]
+NO_INTERACT_VALUES = [False]
 NO_INTERACT_KERNEL = "hk"
 
 PROBLEMS = [
