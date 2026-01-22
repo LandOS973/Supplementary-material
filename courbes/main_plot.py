@@ -35,8 +35,16 @@ def _load_problem_config() -> tuple[str, int, int]:
         problem_path = ROOT / "config" / "problem" / f"{problem_key}.yaml"
         problem_cfg = OmegaConf.load(problem_path)
         problem_name = str(problem_cfg.get("name") or problem_cfg.get("type_problem") or problem_name)
-        dim = int(problem_cfg.get("dim") or problem_cfg.get("n") or dim)
-        type_instance = int(problem_cfg.get("type_instance") or problem_cfg.get("k") or type_instance)
+        dim_value = problem_cfg.get("dim")
+        if dim_value is None:
+            dim_value = problem_cfg.get("n")
+        if dim_value is not None:
+            dim = int(dim_value)
+        type_value = problem_cfg.get("type_instance")
+        if type_value is None:
+            type_value = problem_cfg.get("k")
+        if type_value is not None:
+            type_instance = int(type_value)
     except OSError:
         pass
     return problem_name, dim, type_instance
@@ -425,24 +433,36 @@ def load_metric_series(path: Path, x_field: str, y_field: str) -> Tuple[List[flo
 
 def load_metric_series_with_std(
     path: Path, x_field: str, mean_field: str = "mean", std_field: str = "std"
-) -> Tuple[List[float], List[float], List[float]]:
+) -> Tuple[List[float], List[float], List[float] | None]:
     x_vals: List[float] = []
     mean_vals: List[float] = []
     std_vals: List[float] = []
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle)
+        fieldnames = reader.fieldnames or []
+        mean_key = mean_field if mean_field in fieldnames else "best_fitness"
+        if mean_key not in fieldnames:
+            mean_key = mean_field
+        std_key = std_field if std_field in fieldnames else None
         for row in reader:
             x_val = parse_float(row.get(x_field))
-            mean_val = parse_float(row.get(mean_field))
-            std_val = parse_float(row.get(std_field))
-            if x_val is None or mean_val is None or std_val is None:
+            mean_val = parse_float(row.get(mean_key))
+            std_val = parse_float(row.get(std_key)) if std_key else None
+            if x_val is None or mean_val is None:
                 continue
             x_vals.append(x_val)
             mean_vals.append(mean_val)
-            std_vals.append(std_val)
+            if std_key and std_val is not None:
+                std_vals.append(std_val)
     if not x_vals:
-        raise ValueError(f"No data for {mean_field}/{std_field} in {path}")
-    return sort_by_x_with_std(x_vals, mean_vals, std_vals)
+        raise ValueError(f"No data for {mean_key} in {path}")
+    if std_key:
+        if not std_vals:
+            raise ValueError(f"No data for {std_key} in {path}")
+        x_vals, mean_vals, std_vals = sort_by_x_with_std(x_vals, mean_vals, std_vals)
+        return x_vals, mean_vals, std_vals
+    x_vals, mean_vals = sort_by_x(x_vals, mean_vals)
+    return x_vals, mean_vals, None
 
 
 def style_axes(ax, grid_axis: str = "y") -> None:
@@ -735,26 +755,29 @@ def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) ->
         ylabel="Average score",
         output_path=output_dir / "avg_score_interact_vs_no_interact.png",
     )
-    plot_interact_vs_no_interact_series(
-        x_int,
-        y_int,
-        x_no,
-        y_no,
-        title=title,
-        ylabel="Average score",
-        output_path=output_dir / "avg_score_interact_vs_no_interact_std.png",
-        std_int=std_int,
-        std_no=std_no,
-    )
-    plot_interact_vs_no_interact_series(
-        x_int,
-        std_int,
-        x_no,
-        std_no,
-        title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=10000)",
-        ylabel="Std",
-        output_path=output_dir / "std_interact_vs_no_interact.png",
-    )
+    if std_int is not None and std_no is not None:
+        plot_interact_vs_no_interact_series(
+            x_int,
+            y_int,
+            x_no,
+            y_no,
+            title=title,
+            ylabel="Average score",
+            output_path=output_dir / "avg_score_interact_vs_no_interact_std.png",
+            std_int=std_int,
+            std_no=std_no,
+        )
+        plot_interact_vs_no_interact_series(
+            x_int,
+            std_int,
+            x_no,
+            std_no,
+            title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            ylabel="Std",
+            output_path=output_dir / "std_interact_vs_no_interact.png",
+        )
+    else:
+        print(f"[WARN] Missing std column in {interact_path} or {no_interact_path}.")
 
 
 def main() -> None:

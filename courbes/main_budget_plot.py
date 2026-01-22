@@ -34,8 +34,16 @@ def _load_problem_config(problem_override: str | None = None) -> tuple[str, int,
         problem_path = ROOT / "config" / "problem" / f"{problem_key}.yaml"
         problem_cfg = OmegaConf.load(problem_path)
         problem_name = str(problem_cfg.get("name") or problem_cfg.get("type_problem") or problem_name)
-        dim = int(problem_cfg.get("dim") or problem_cfg.get("n") or dim)
-        type_instance = int(problem_cfg.get("type_instance") or problem_cfg.get("k") or type_instance)
+        dim_value = problem_cfg.get("dim")
+        if dim_value is None:
+            dim_value = problem_cfg.get("n")
+        if dim_value is not None:
+            dim = int(dim_value)
+        type_value = problem_cfg.get("type_instance")
+        if type_value is None:
+            type_value = problem_cfg.get("k")
+        if type_value is not None:
+            type_instance = int(type_value)
     except OSError:
         pass
     return problem_name, dim, type_instance
