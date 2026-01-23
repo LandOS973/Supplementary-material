@@ -3,14 +3,16 @@ Kernel: rbf
 Advantage: peragentrankweighted
 M: 10
 lambda: 10
-epsilon_svgd: 0.007
-gamma: 0.0001
+epsilon_svgd: 0.03
+gamma: 0.0005
+decay_start_ratio: 0.5
+decay_min_factor: 0
 bandwith_kernel: None
 no_interact: False
-avg_score: -953.47998046875
-median_score: -956.0
-std_score: 57.75629425048828
-percentiles: 2%=-1070.0, 5%=-1049.449951171875, 10%=-1031.0999755859375, 25%=-993.25, 50%=-956.0, 75%=-908.75, 90%=-874.7999877929688, 95%=-855.0, 98%=-848.8800048828125
+avg_score: -965.260009765625
+median_score: -971.0
+std_score: 59.2158088684082
+percentiles: 2%=-1070.0400390625, 5%=-1058.300048828125, 10%=-1037.4000244140625, 25%=-1010.0, 50%=-971.0, 75%=-926.0, 90%=-878.5999755859375, 95%=-860.8500366210938, 98%=-846.8399658203125
 ranking_best_algo: CMApara
 ranking_best_score: 964.9
-ranking_my_rank: 3/505 (99.6%)
+ranking_my_rank: 1/505 (100.0%)
