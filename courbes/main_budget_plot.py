@@ -196,6 +196,59 @@ def _plot_metric_pair_values(
     print(f"Saved plot to {output_path}")
 
 
+def _plot_metric_triplet(
+    normal_path: Path,
+    decay_path: Path,
+    no_interact_path: Path,
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    *,
+    metric_field: str,
+) -> None:
+    x_norm, y_norm = load_metric_series(normal_path, x_field="step", y_field=metric_field)
+    x_decay, y_decay = load_metric_series(decay_path, x_field="step", y_field=metric_field)
+    x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field=metric_field)
+
+    fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
+    ax.plot(
+        x_norm,
+        y_norm,
+        label="NORMAL",
+        color="#1f77b4",
+        linewidth=1.4,
+        alpha=0.95,
+    )
+    ax.plot(
+        x_decay,
+        y_decay,
+        label="DECAY",
+        color="#2ca02c",
+        linewidth=1.4,
+        linestyle="--",
+        alpha=0.95,
+    )
+    ax.plot(
+        x_no,
+        y_no,
+        label="NO_INTERACT",
+        color="#ff7f0e",
+        linewidth=1.4,
+        linestyle=":",
+        alpha=0.95,
+    )
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("Evaluations", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.legend(frameon=False, fontsize=9)
+    style_axes(ax, grid_axis="both")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
+
 def _plot_metric_pair(
     left_path: Path,
     right_path: Path,
@@ -408,6 +461,35 @@ def main() -> None:
                     )
                 else:
                     print(f"[WARN] Missing std column in {interact_path} or {decay_path}.")
+
+        if no_interact_path.exists() and decay_path.exists():
+            _plot_metric_triplet(
+                interact_path,
+                decay_path,
+                no_interact_path,
+                title=f"Average Score: NORMAL vs DECAY vs NO_INTERACT ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                ylabel="Average score",
+                output_path=budget_output_dir / "avg_score_normal_vs_decay_vs_no_interact.png",
+                metric_field="mean",
+            )
+            _plot_metric_triplet(
+                interact_path,
+                decay_path,
+                no_interact_path,
+                title=f"Average Entropy: NORMAL vs DECAY vs NO_INTERACT ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                ylabel="Average entropy",
+                output_path=budget_output_dir / "entropy_normal_vs_decay_vs_no_interact.png",
+                metric_field="avg_entropy",
+            )
+            _plot_metric_triplet(
+                interact_path,
+                decay_path,
+                no_interact_path,
+                title=f"Average Hamming: NORMAL vs DECAY vs NO_INTERACT ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                ylabel="Average hamming",
+                output_path=budget_output_dir / "hamming_normal_vs_decay_vs_no_interact.png",
+                metric_field="avg_hamming",
+            )
 
 
 if __name__ == "__main__":
