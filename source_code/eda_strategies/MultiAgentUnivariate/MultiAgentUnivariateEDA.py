@@ -36,6 +36,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         svgd_gamma=10.0,
         decay_start_ratio=0.8,
         decay_min_factor=0.1,
+        decay_enabled=False,
         advantage_cfg=None,
         kernel_config=None,
     ):
@@ -58,6 +59,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.svgd_gamma = float(svgd_gamma)
         self.decay_start_ratio = float(decay_start_ratio)
         self.decay_min_factor = float(decay_min_factor)
+        self.decay_enabled = bool(decay_enabled)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
@@ -246,7 +248,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             self.theta += self.epsilon_svgd * phi
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
-        if self.no_interact or self.M <= 1:
+        if not self.decay_enabled or self.no_interact or self.M <= 1:
             return
         progress = (current_iter + 1) / float(total_iters)
         start = self.decay_start_ratio
