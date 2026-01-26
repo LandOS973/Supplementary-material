@@ -118,9 +118,13 @@ def _plot_interact_vs_no_interact(
     output_path: Path,
     *,
     metric_field: str,
+    square_values: bool = False,
 ) -> None:
     x_int, y_int = load_metric_series(interact_path, x_field="step", y_field=metric_field)
     x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field=metric_field)
+    if square_values:
+        y_int = [val * val for val in y_int]
+        y_no = [val * val for val in y_no]
 
     fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
     ax.plot(
@@ -140,6 +144,54 @@ def _plot_interact_vs_no_interact(
         linestyle="--",
         alpha=0.95,
     )
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("Evaluations", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.legend(frameon=False, fontsize=9)
+    style_axes(ax, grid_axis="both")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
+
+def _plot_mean_with_variance_band(
+    interact_path: Path,
+    no_interact_path: Path,
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    *,
+    mean_field: str,
+    std_field: str,
+    std_scale: float = 1.0,
+) -> None:
+    x_int, y_int = load_metric_series(interact_path, x_field="step", y_field=mean_field)
+    x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field=mean_field)
+    x_int_std, y_int_std = load_metric_series(interact_path, x_field="step", y_field=std_field)
+    x_no_std, y_no_std = load_metric_series(no_interact_path, x_field="step", y_field=std_field)
+
+    if x_int != x_int_std or x_no != x_no_std:
+        print(f"[WARN] Steps mismatch for variance band in {output_path}. Skipping.")
+        return
+
+    std_int = [val * std_scale for val in y_int_std]
+    std_no = [val * std_scale for val in y_no_std]
+    lower_int = [m - s for m, s in zip(y_int, std_int)]
+    upper_int = [m + s for m, s in zip(y_int, std_int)]
+    lower_no = [m - s for m, s in zip(y_no, std_no)]
+    upper_no = [m + s for m, s in zip(y_no, std_no)]
+
+    fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
+    ax.plot(x_int, y_int, label="interact", color="#1f77b4", linewidth=1.4, alpha=0.95)
+    ax.fill_between(x_int, lower_int, upper_int, color="#1f77b4", alpha=0.25, linewidth=0)
+    ax.plot(x_int, lower_int, color="#1f77b4", alpha=0.35, linewidth=0.6)
+    ax.plot(x_int, upper_int, color="#1f77b4", alpha=0.35, linewidth=0.6)
+    ax.plot(x_no, y_no, label="no_interact", color="#ff7f0e", linewidth=1.4, linestyle="--", alpha=0.95)
+    ax.fill_between(x_no, lower_no, upper_no, color="#ff7f0e", alpha=0.25, linewidth=0)
+    ax.plot(x_no, lower_no, color="#ff7f0e", alpha=0.35, linewidth=0.6, linestyle="--")
+    ax.plot(x_no, upper_no, color="#ff7f0e", alpha=0.35, linewidth=0.6, linestyle="--")
     ax.set_title(title, fontsize=12)
     ax.set_xlabel("Evaluations", fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
@@ -215,6 +267,25 @@ def main() -> None:
             ylabel="Average hamming",
             output_path=budget_output_dir / "hamming_interact_vs_no_interact.png",
             metric_field="avg_hamming",
+        )
+        _plot_interact_vs_no_interact(
+            interact_path,
+            no_interact_path,
+            title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+            ylabel="Std",
+            output_path=budget_output_dir / "std_interact_vs_no_interact.png",
+            metric_field="std",
+            square_values=False,
+        )
+        _plot_mean_with_variance_band(
+            interact_path,
+            no_interact_path,
+            title=f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+            ylabel="Average score",
+            output_path=budget_output_dir / "avg_score_with_std_band.png",
+            mean_field="mean",
+            std_field="std",
+            std_scale=1.0,
         )
 
 
