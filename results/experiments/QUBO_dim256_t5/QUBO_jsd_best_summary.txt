@@ -1,18 +1,18 @@
 Problem: QUBO
 Kernel: jsd
 Advantage: peragentrankweighted
-M: 7
-lambda: 7
-epsilon_svgd: 0.01
-gamma: 0.0005
+M: 3
+lambda: 10
+epsilon_svgd: 0.007
+gamma: 0.001
 decay_start_ratio: 0.2
-decay_min_factor: 0.05
+decay_min_factor: 0.1
 bandwith_kernel: None
 no_interact: False
-avg_score: -2586.47998046875
-median_score: -2587.0
-std_score: 130.77694702148438
-percentiles: 2%=-2843.159912109375, 5%=-2795.64990234375, 10%=-2760.300048828125, 25%=-2687.0, 50%=-2587.0, 75%=-2495.75, 90%=-2419.900146484375, 95%=-2372.0, 98%=-2347.43994140625
+avg_score: -2625.5400390625
+median_score: -2632.5
+std_score: 115.08773803710938
+percentiles: 2%=-2837.02001953125, 5%=-2827.14990234375, 10%=-2783.199951171875, 25%=-2703.5, 50%=-2632.5, 75%=-2542.75, 90%=-2476.5, 95%=-2411.699951171875, 98%=-2393.679931640625
 ranking_best_algo: PPO-EDA
 ranking_best_score: 2730.14
-ranking_my_rank: 13/505 (97.6%)
+ranking_my_rank: 2/505 (99.8%)
