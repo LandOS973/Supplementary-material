@@ -1,0 +1,16 @@
+name: ppo_env
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pytorch
+  - torchvision
+  - pytorch-cuda=11.8
+  - tqdm
+  - nevergrad
+  - matplotlib
+  - hydra-core
+  - omegaconf

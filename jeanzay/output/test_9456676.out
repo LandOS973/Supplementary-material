@@ -1,0 +1,17 @@
+Run main_ppo_eda
+[2026-01-05 15:23:54,376][HYDRA] Launching 1 jobs locally
+[2026-01-05 15:23:54,377][HYDRA] 	#0 : visualization=False
+running on device: cuda:0
+Running with problem type: QUBO
+Running with dim=128, type_instance=5
+Error executing job with overrides: ['visualization=False']
+Traceback (most recent call last):
+  File "/home/t.lan@univ-angers.fr/Supplementary-material/nautilus/../source_code/main_ppo_eda.py", line 69, in main
+    kernel_cfg = _load_kernel_config(kernel_name, repo_root)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/t.lan@univ-angers.fr/Supplementary-material/nautilus/../source_code/main_ppo_eda.py", line 25, in _load_kernel_config
+    raise FileNotFoundError(
+FileNotFoundError: Kernel config 'pk' introuvable dans /home/t.lan@univ-angers.fr/Supplementary-material/config/kernel. Kernels disponibles: hk, ppk, rbf
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+srun: error: gnode5: task 0: Exited with exit code 1
