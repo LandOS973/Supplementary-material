@@ -1,16 +1,16 @@
 Problem: QUBO
 Kernel: pk
 Advantage: peragentrankweighted
-M: 2
-lambda: 10
-epsilon_svgd: 0.007
-gamma: 0.001
+M: 3
+lambda: 15
+epsilon_svgd: 0.01
+gamma: 0.0005
 bandwith_kernel: None
 no_interact: False
-avg_score: -1295.300048828125
-median_score: -1301.5
-std_score: 60.8773307800293
-percentiles: 2%=-1401.1600341796875, 5%=-1391.0999755859375, 10%=-1375.300048828125, 25%=-1339.5, 50%=-1301.5, 75%=-1248.25, 90%=-1220.800048828125, 95%=-1192.949951171875, 98%=-1185.5400390625
+avg_score: -1299.5799560546875
+median_score: -1300.0
+std_score: 59.768917083740234
+percentiles: 2%=-1402.1400146484375, 5%=-1388.050048828125, 10%=-1372.0999755859375, 25%=-1343.5, 50%=-1300.0, 75%=-1256.5, 90%=-1232.800048828125, 95%=-1222.75, 98%=-1183.959716796875
 ranking_best_algo: PPO-EDA
 ranking_best_score: 1367.72
 ranking_my_rank: 3/505 (99.6%)
