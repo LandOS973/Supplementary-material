@@ -204,6 +204,7 @@ def main(cfg: DictConfig):
     visualization_enabled = bool(cfg.get('visualization', True))
     advantage_cfg = agent_val("advantage") or cfg.get('advantage') or "baseline"
     no_interact = bool(agent_val("no_interact") or cfg.get("no_interact") or False)
+    decay_enabled = bool(agent_val("decay") or cfg.get("decay") or False)
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
     M = int(agent_val("M") or cfg.get('M') or 1)
@@ -214,9 +215,29 @@ def main(cfg: DictConfig):
     epsilon_override = None
     gamma_override = None
     bandwith_override = None
-    if ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments? (DEFAULT FALSE)", default=False):
+    best_cfg = None
+    if decay_enabled:
+        no_interact = False
+        instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
+        summary_dir = os.path.join(repo_root, "results", "experiments", instance_name)
+        best_kernel, best_cfg = _find_best_kernel_summary(summary_dir, type_problem)
+        if best_cfg is None or best_kernel is None:
+            print(f"[WARN] Aucun resume valide dans {summary_dir}. On garde la config actuelle.")
+        else:
+            kernel_name = best_kernel
+            advantage_cfg = best_cfg.get("advantage", advantage_cfg)
+            M = int(best_cfg.get("m", M))
+            lambda_ = int(best_cfg.get("lambda", lambda_))
+            epsilon_override = best_cfg.get("epsilon_svgd")
+            gamma_override = best_cfg.get("gamma")
+            bandwith_override = best_cfg.get("bandwith_kernel")
+    elif ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments? (DEFAULT FALSE)", default=False):
         budget = _ask_int("Budget a utiliser", default=budget) or budget
-        no_interact = _ask_yes_no(f"Mode no_interact? (actuel: {no_interact})", default=no_interact)
+        decay_enabled = _ask_yes_no(f"Mode decay? (actuel: {decay_enabled})", default=decay_enabled)
+        if decay_enabled:
+            no_interact = False
+        else:
+            no_interact = _ask_yes_no(f"Mode no_interact? (actuel: {no_interact})", default=no_interact)
         instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
         summary_dir = os.path.join(repo_root, "results", "experiments", instance_name)
         if no_interact:
@@ -256,13 +277,34 @@ def main(cfg: DictConfig):
         or kernel_gamma
         or 10.0
     )
+    decay_default_start_ratio = 0.0 if decay_enabled else 0.8
+    decay_default_min_factor = 0.05 if decay_enabled else 0.1
+    decay_start_ratio = float(
+        agent_val("decay_start_ratio")
+        or cfg.get("decay_start_ratio")
+        or decay_default_start_ratio
+    )
+    decay_min_factor = float(
+        agent_val("min_factor")
+        or agent_val("decay_min_factor")
+        or cfg.get("min_factor")
+        or cfg.get("decay_min_factor")
+        or decay_default_min_factor
+    )
+    if best_cfg:
+        if best_cfg.get("decay_start_ratio") is not None:
+            decay_start_ratio = float(best_cfg.get("decay_start_ratio"))
+        if best_cfg.get("min_factor") is not None:
+            decay_min_factor = float(best_cfg.get("min_factor"))
+        elif best_cfg.get("decay_min_factor") is not None:
+            decay_min_factor = float(best_cfg.get("decay_min_factor"))
     bandwith_kernel_suffix = ""
     if kernel_name in ("pk", "rbf"):
         bandwith_kernel_suffix = f", bandwith_kernel: {kernel_bandwith_kernel}"
     print(
         f"Using REINFORCE update. Number of agents: {M} with epsilon_svgd: {epsilon_svgd}, "
         f"λ: {lambda_}, svgd_gamma: {svgd_gamma}, advantage={advantage_cfg}, "
-        f"kernel={kernel_name}{bandwith_kernel_suffix}, no_interact={no_interact}, bandwith_kernel: {kernel_bandwith_kernel}"
+        f"kernel={kernel_name}{bandwith_kernel_suffix}, no_interact={no_interact}, bandwith_kernel: {kernel_bandwith_kernel}, decay_start_ratio: {decay_start_ratio}, decay_min_factor: {decay_min_factor}"
     )
 
     torch.manual_seed(seed)
@@ -352,6 +394,9 @@ def main(cfg: DictConfig):
         epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
         svgd_gamma=svgd_gamma,
+        decay_start_ratio=decay_start_ratio,
+        decay_min_factor=decay_min_factor,
+        decay_enabled=decay_enabled,
         advantage_cfg=advantage_cfg,
         kernel_config=kernel_cfg,
         no_interact=no_interact,
@@ -412,11 +457,17 @@ def main(cfg: DictConfig):
     if write_budget_results:
         instance_name = f"{type_problem}_dim{dim}_t{type_instance}"
         budget_dir = os.path.join(repo_root, "results", "experiments", instance_name, str(budget))
-        filename = "no_interact.csv" if no_interact else "interact.csv"
+        if decay_enabled:
+            filename = "decay.csv"
+        else:
+            filename = "no_interact.csv" if no_interact else "interact.csv"
         meta = dict(
             epsilon_svgd=epsilon_svgd,
             lambda_=lambda_,
             gamma=svgd_gamma,
+            decay_start_ratio=decay_start_ratio,
+            decay_min_factor=decay_min_factor,
+            decay_enabled=decay_enabled,
             kernel=kernel_name,
             advantage=advantage_cfg,
             M=M,

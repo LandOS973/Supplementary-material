@@ -6,8 +6,9 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import re
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 from omegaconf import DictConfig, OmegaConf
@@ -51,6 +52,12 @@ def _load_problem_config(problem_override: str | None = None) -> tuple[str, int,
 
 def _build_instance_context(problem_override: str | None = None) -> dict[str, Path | str | int]:
     problem_name, dim, type_instance = _load_problem_config(problem_override)
+    return _build_instance_context_from_values(problem_name, dim, type_instance)
+
+
+def _build_instance_context_from_values(
+    problem_name: str, dim: int, type_instance: int
+) -> dict[str, Path | str | int]:
     experiment_dir = ROOT / "results" / "experiments" / f"{problem_name}_dim{dim}_t{type_instance}"
     if problem_name.upper() == "QUBO":
         instance_name = f"UBQP_{dim}_{type_instance}"
@@ -103,6 +110,39 @@ def load_metric_series(path: Path, x_field: str, y_field: str) -> Tuple[List[flo
     return _sort_by_x(x_vals, y_vals)
 
 
+def load_metric_series_with_std(
+    path: Path, x_field: str, mean_field: str = "mean", std_field: str = "std"
+) -> Tuple[List[float], List[float], List[float] | None]:
+    x_vals: List[float] = []
+    mean_vals: List[float] = []
+    std_vals: List[float] = []
+    reader = _read_csv_without_comments(path)
+    fieldnames = reader.fieldnames or []
+    mean_key = mean_field if mean_field in fieldnames else "best_fitness"
+    if mean_key not in fieldnames:
+        mean_key = mean_field
+    std_key = std_field if std_field in fieldnames else None
+    for row in reader:
+        x_val = _parse_float(row.get(x_field))
+        mean_val = _parse_float(row.get(mean_key))
+        std_val = _parse_float(row.get(std_key)) if std_key else None
+        if x_val is None or mean_val is None:
+            continue
+        x_vals.append(x_val)
+        mean_vals.append(mean_val)
+        if std_key and std_val is not None:
+            std_vals.append(std_val)
+    if not x_vals:
+        raise ValueError(f"No data for {mean_key} in {path}")
+    if std_key:
+        if not std_vals:
+            raise ValueError(f"No data for {std_key} in {path}")
+        pairs = sorted(zip(x_vals, mean_vals, std_vals), key=lambda pair: pair[0])
+        return [p[0] for p in pairs], [p[1] for p in pairs], [p[2] for p in pairs]
+    x_vals, mean_vals = _sort_by_x(x_vals, mean_vals)
+    return x_vals, mean_vals, None
+
+
 def style_axes(ax, grid_axis: str = "y") -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -110,8 +150,62 @@ def style_axes(ax, grid_axis: str = "y") -> None:
     ax.grid(True, axis=grid_axis, linestyle="--", linewidth=0.5, alpha=0.4)
 
 
-def _plot_interact_vs_no_interact(
-    interact_path: Path,
+def _plot_metric_pair_values(
+    x_left: List[float],
+    y_left: List[float],
+    x_right: List[float],
+    y_right: List[float],
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    *,
+    left_label: str,
+    right_label: str,
+    right_linestyle: str = "--",
+    std_left: List[float] | None = None,
+    std_right: List[float] | None = None,
+) -> None:
+    fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
+    ax.plot(
+        x_left,
+        y_left,
+        label=left_label,
+        color="#1f77b4",
+        linewidth=1.4,
+        alpha=0.95,
+    )
+    ax.plot(
+        x_right,
+        y_right,
+        label=right_label,
+        color="#ff7f0e",
+        linewidth=1.4,
+        linestyle=right_linestyle,
+        alpha=0.95,
+    )
+    if std_left is not None:
+        lower = [y - s for y, s in zip(y_left, std_left)]
+        upper = [y + s for y, s in zip(y_left, std_left)]
+        ax.fill_between(x_left, lower, upper, color="#1f77b4", alpha=0.2, linewidth=0.0)
+    if std_right is not None:
+        lower = [y - s for y, s in zip(y_right, std_right)]
+        upper = [y + s for y, s in zip(y_right, std_right)]
+        ax.fill_between(x_right, lower, upper, color="#ff7f0e", alpha=0.2, linewidth=0.0)
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("Evaluations", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.legend(frameon=False, fontsize=9)
+    style_axes(ax, grid_axis="both")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
+
+def _plot_metric_triplet(
+    normal_path: Path,
+    decay_path: Path,
     no_interact_path: Path,
     title: str,
     ylabel: str,
@@ -120,7 +214,8 @@ def _plot_interact_vs_no_interact(
     metric_field: str,
     square_values: bool = False,
 ) -> None:
-    x_int, y_int = load_metric_series(interact_path, x_field="step", y_field=metric_field)
+    x_norm, y_norm = load_metric_series(normal_path, x_field="step", y_field=metric_field)
+    x_decay, y_decay = load_metric_series(decay_path, x_field="step", y_field=metric_field)
     x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field=metric_field)
     if square_values:
         y_int = [val * val for val in y_int]
@@ -128,20 +223,74 @@ def _plot_interact_vs_no_interact(
 
     fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
     ax.plot(
-        x_int,
-        y_int,
-        label="interact",
+        x_norm,
+        y_norm,
+        label="NORMAL",
         color="#1f77b4",
         linewidth=1.4,
         alpha=0.95,
     )
     ax.plot(
-        x_no,
-        y_no,
-        label="no_interact",
-        color="#ff7f0e",
+        x_decay,
+        y_decay,
+        label="DECAY",
+        color="#2ca02c",
         linewidth=1.4,
         linestyle="--",
+        alpha=0.95,
+    )
+    ax.plot(
+        x_no,
+        y_no,
+        label="NO_INTERACT",
+        color="#ff7f0e",
+        linewidth=1.4,
+        linestyle=":",
+        alpha=0.95,
+    )
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("Evaluations", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.legend(frameon=False, fontsize=9)
+    style_axes(ax, grid_axis="both")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
+
+def _plot_metric_pair(
+    left_path: Path,
+    right_path: Path,
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    *,
+    metric_field: str,
+    left_label: str,
+    right_label: str,
+    right_linestyle: str = "--",
+) -> None:
+    x_left, y_left = load_metric_series(left_path, x_field="step", y_field=metric_field)
+    x_right, y_right = load_metric_series(right_path, x_field="step", y_field=metric_field)
+
+    fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
+    ax.plot(
+        x_left,
+        y_left,
+        label=left_label,
+        color="#1f77b4",
+        linewidth=1.4,
+        alpha=0.95,
+    )
+    ax.plot(
+        x_right,
+        y_right,
+        label=right_label,
+        color="#ff7f0e",
+        linewidth=1.4,
+        linestyle=right_linestyle,
         alpha=0.95,
     )
     ax.set_title(title, fontsize=12)
@@ -214,79 +363,224 @@ def _iter_budget_dirs(experiment_dir: Path) -> List[Path]:
     return sorted(budgets, key=lambda p: int(p.name))
 
 
+def _discover_budget_instances() -> List[dict[str, Path | str | int]]:
+    exp_root = ROOT / "results" / "experiments"
+    if not exp_root.exists():
+        return []
+    contexts: List[dict[str, Path | str | int]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for entry in exp_root.iterdir():
+        if not entry.is_dir():
+            continue
+        match = re.match(r"^(?P<name>.+)_dim(?P<dim>\d+)_t(?P<t>\d+)$", entry.name)
+        if not match:
+            continue
+        if not _iter_budget_dirs(entry):
+            continue
+        name = match.group("name")
+        dim = int(match.group("dim"))
+        type_instance = int(match.group("t"))
+        key = (name, dim, type_instance)
+        if key in seen:
+            continue
+        seen.add(key)
+        contexts.append(_build_instance_context_from_values(name, dim, type_instance))
+    return sorted(contexts, key=lambda ctx: (str(ctx["problem_name"]), int(ctx["dim"]), int(ctx["type_instance"])))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plot interact vs no_interact curves for each budget.")
     parser.add_argument("--problem", type=str, default=None, help="Problem config name (ex: qubo, nk, blockwise).")
     args = parser.parse_args()
 
-    context = _build_instance_context(args.problem)
-    experiment_dir = Path(context["experiment_dir"])
-    output_dir = Path(context["output_dir"])
-    problem_name = str(context["problem_name"])
-    dim = int(context["dim"])
-    type_instance = int(context["type_instance"])
+    contexts = _discover_budget_instances()
+    if not contexts:
+        contexts = [_build_instance_context(args.problem)]
 
-    budget_dirs = _iter_budget_dirs(experiment_dir)
-    if not budget_dirs:
-        raise FileNotFoundError(f"No budget directories found in {experiment_dir}")
+    for context in contexts:
+        instance_name = context["instance_name"]
+        print(f"[INFO] Plotting budgets for instance: {instance_name}")
+        experiment_dir = Path(context["experiment_dir"])
+        output_dir = Path(context["output_dir"])
+        problem_name = str(context["problem_name"])
+        dim = int(context["dim"])
+        type_instance = int(context["type_instance"])
 
-    for budget_dir in budget_dirs:
-        budget = budget_dir.name
-        interact_path = budget_dir / "interact.csv"
-        no_interact_path = budget_dir / "no_interact.csv"
-        if not interact_path.exists() or not no_interact_path.exists():
-            missing = []
-            if not interact_path.exists():
-                missing.append(str(interact_path))
-            if not no_interact_path.exists():
-                missing.append(str(no_interact_path))
-            print(f"Skipping budget {budget}: missing file(s): {', '.join(missing)}")
+        budget_dirs = _iter_budget_dirs(experiment_dir)
+        if not budget_dirs:
+            print(f"[WARN] No budget directories found in {experiment_dir}.")
             continue
 
-        budget_output_dir = output_dir / budget
-        _plot_interact_vs_no_interact(
-            interact_path,
-            no_interact_path,
-            title=f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
-            ylabel="Average score",
-            output_path=budget_output_dir / "avg_score_interact_vs_no_interact.png",
-            metric_field="mean",
-        )
-        _plot_interact_vs_no_interact(
-            interact_path,
-            no_interact_path,
-            title=f"Average Entropy: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
-            ylabel="Average entropy",
-            output_path=budget_output_dir / "entropy_interact_vs_no_interact.png",
-            metric_field="avg_entropy",
-        )
-        _plot_interact_vs_no_interact(
-            interact_path,
-            no_interact_path,
-            title=f"Average Hamming: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
-            ylabel="Average hamming",
-            output_path=budget_output_dir / "hamming_interact_vs_no_interact.png",
-            metric_field="avg_hamming",
-        )
-        _plot_interact_vs_no_interact(
-            interact_path,
-            no_interact_path,
-            title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
-            ylabel="Std",
-            output_path=budget_output_dir / "std_interact_vs_no_interact.png",
-            metric_field="std",
-            square_values=False,
-        )
-        _plot_mean_with_variance_band(
-            interact_path,
-            no_interact_path,
-            title=f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
-            ylabel="Average score",
-            output_path=budget_output_dir / "avg_score_with_std_band.png",
-            mean_field="mean",
-            std_field="std",
-            std_scale=1.0,
-        )
+        for budget_dir in budget_dirs:
+            budget = budget_dir.name
+            interact_path = budget_dir / "interact.csv"
+            no_interact_path = budget_dir / "no_interact.csv"
+            if not interact_path.exists():
+                print(f"Skipping budget {budget}: missing file: {interact_path}")
+                continue
+
+            budget_output_dir = output_dir / budget
+            if no_interact_path.exists():
+                _plot_metric_pair(
+                    interact_path,
+                    no_interact_path,
+                    title=f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average score",
+                    output_path=budget_output_dir / "avg_score_interact_vs_no_interact.png",
+                    metric_field="mean",
+                    left_label="interact",
+                    right_label="no_interact",
+                )
+                _plot_metric_pair(
+                    interact_path,
+                    no_interact_path,
+                    title=f"Average Entropy: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average entropy",
+                    output_path=budget_output_dir / "entropy_interact_vs_no_interact.png",
+                    metric_field="avg_entropy",
+                    left_label="interact",
+                    right_label="no_interact",
+                )
+                _plot_metric_pair(
+                    interact_path,
+                    no_interact_path,
+                    title=f"Average Hamming: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average hamming",
+                    output_path=budget_output_dir / "hamming_interact_vs_no_interact.png",
+                    metric_field="avg_hamming",
+                    left_label="interact",
+                    right_label="no_interact",
+                )
+                try:
+                    x_int, y_int, std_int = load_metric_series_with_std(interact_path, x_field="step")
+                    x_no, y_no, std_no = load_metric_series_with_std(no_interact_path, x_field="step")
+                except ValueError as exc:
+                    print(f"[WARN] {exc}.")
+                else:
+                    if std_int is not None and std_no is not None:
+                        _plot_metric_pair_values(
+                            x_int,
+                            y_int,
+                            x_no,
+                            y_no,
+                            title=f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                            ylabel="Average score",
+                            output_path=budget_output_dir / "avg_score_interact_vs_no_interact_std.png",
+                            left_label="interact",
+                            right_label="no_interact",
+                            std_left=std_int,
+                            std_right=std_no,
+                        )
+                        _plot_metric_pair_values(
+                            x_int,
+                            std_int,
+                            x_no,
+                            std_no,
+                            title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                            ylabel="Std",
+                            output_path=budget_output_dir / "std_interact_vs_no_interact.png",
+                            left_label="interact",
+                            right_label="no_interact",
+                        )
+                    else:
+                        print(f"[WARN] Missing std column in {interact_path} or {no_interact_path}.")
+            else:
+                print(f"Skipping interact vs no_interact for budget {budget}: missing file {no_interact_path}")
+
+            decay_path = budget_dir / "decay.csv"
+            if decay_path.exists():
+                _plot_metric_pair(
+                    interact_path,
+                    decay_path,
+                    title=f"Average Score: NORMAL vs DECAY ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average score",
+                    output_path=budget_output_dir / "avg_score_interact_vs_decay.png",
+                    metric_field="mean",
+                    left_label="NORMAL",
+                    right_label="DECAY",
+                )
+                _plot_metric_pair(
+                    interact_path,
+                    decay_path,
+                    title=f"Average Entropy: NORMAL vs DECAY ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average entropy",
+                    output_path=budget_output_dir / "entropy_interact_vs_decay.png",
+                    metric_field="avg_entropy",
+                    left_label="NORMAL",
+                    right_label="DECAY",
+                )
+                _plot_metric_pair(
+                    interact_path,
+                    decay_path,
+                    title=f"Average Hamming: NORMAL vs DECAY ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average hamming",
+                    output_path=budget_output_dir / "hamming_interact_vs_decay.png",
+                    metric_field="avg_hamming",
+                    left_label="NORMAL",
+                    right_label="DECAY",
+                )
+                try:
+                    x_int, y_int, std_int = load_metric_series_with_std(interact_path, x_field="step")
+                    x_dec, y_dec, std_dec = load_metric_series_with_std(decay_path, x_field="step")
+                except ValueError as exc:
+                    print(f"[WARN] {exc}.")
+                else:
+                    if std_int is not None and std_dec is not None:
+                        _plot_metric_pair_values(
+                            x_int,
+                            y_int,
+                            x_dec,
+                            y_dec,
+                            title=f"Average Score: NORMAL vs DECAY ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                            ylabel="Average score",
+                            output_path=budget_output_dir / "avg_score_interact_vs_decay_std.png",
+                            left_label="NORMAL",
+                            right_label="DECAY",
+                            std_left=std_int,
+                            std_right=std_dec,
+                        )
+                        _plot_metric_pair_values(
+                            x_int,
+                            std_int,
+                            x_dec,
+                            std_dec,
+                            title=f"Std: NORMAL vs DECAY ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                            ylabel="Std",
+                            output_path=budget_output_dir / "std_interact_vs_decay.png",
+                            left_label="NORMAL",
+                            right_label="DECAY",
+                        )
+                    else:
+                        print(f"[WARN] Missing std column in {interact_path} or {decay_path}.")
+
+            if no_interact_path.exists() and decay_path.exists():
+                _plot_metric_triplet(
+                    interact_path,
+                    decay_path,
+                    no_interact_path,
+                    title=f"Average Score: NORMAL vs DECAY vs NO_INTERACT ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average score",
+                    output_path=budget_output_dir / "avg_score_normal_vs_decay_vs_no_interact.png",
+                    metric_field="mean",
+                )
+                _plot_metric_triplet(
+                    interact_path,
+                    decay_path,
+                    no_interact_path,
+                    title=f"Average Entropy: NORMAL vs DECAY vs NO_INTERACT ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average entropy",
+                    output_path=budget_output_dir / "entropy_normal_vs_decay_vs_no_interact.png",
+                    metric_field="avg_entropy",
+                )
+                _plot_metric_triplet(
+                    interact_path,
+                    decay_path,
+                    no_interact_path,
+                    title=f"Average Hamming: NORMAL vs DECAY vs NO_INTERACT ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average hamming",
+                    output_path=budget_output_dir / "hamming_normal_vs_decay_vs_no_interact.png",
+                    metric_field="avg_hamming",
+                )
 
 
 if __name__ == "__main__":

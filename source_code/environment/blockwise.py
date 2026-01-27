@@ -121,6 +121,8 @@ def get_Score_trajectoriesBLOCK_cuda(
             bestGlobalSolution = torch.where(tmp_current_score > tmp_bestScore, best_current_solution, bestGlobalSolution)
 
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
+        if hasattr(strategy, "decay_svgd_gamma"):
+            strategy.decay_svgd_gamma(epoch, nb_iterations)
         strategy.updateDistribution(tensor_solution, tensor_score)
 
         scores_np = bestScore.detach().cpu().numpy()

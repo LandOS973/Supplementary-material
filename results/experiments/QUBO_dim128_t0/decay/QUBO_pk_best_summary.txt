@@ -1,0 +1,18 @@
+Problem: QUBO
+Kernel: pk
+Advantage: peragentrankweighted
+M: 5
+lambda: 15
+epsilon_svgd: 0.03
+gamma: 0.001
+decay_start_ratio: 0.2
+decay_min_factor: 0.05
+bandwith_kernel: None
+no_interact: False
+avg_score: -585.3800048828125
+median_score: -586.5
+std_score: 25.057048797607422
+percentiles: 2%=-633.1199951171875, 5%=-621.0, 10%=-617.0, 25%=-603.25, 50%=-586.5, 75%=-568.25, 90%=-553.0, 95%=-546.8499755859375, 98%=-536.8800048828125
+ranking_best_algo: PPO-EDA
+ranking_best_score: 593.64
+ranking_my_rank: 6/504 (99.0%)

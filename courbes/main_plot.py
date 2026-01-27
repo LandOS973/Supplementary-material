@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 from itertools import cycle
+import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
@@ -14,7 +15,28 @@ from omegaconf import DictConfig, OmegaConf
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_KERNEL = "rbf"
-COMPETITOR_DIR = Path("/home/landos/Downloads/resultAlgos/results_nevergrad_final")
+COMPETITOR_DIRS = [
+    Path("/home/landos/Downloads/resultAlgos/results_nevergrad_final"),
+    Path("/home/landos/Downloads/resultAlgos/results_EDAs_final"),
+]
+
+
+def _is_maximization_problem(problem_name: str) -> bool:
+    return problem_name.upper() in ("NK", "BLOCK")
+
+
+def _normalize_score_sign(problem_name: str, values: List[float]) -> List[float]:
+    if not values:
+        return values
+    maximize = _is_maximization_problem(problem_name)
+    if maximize:
+        if max(values) <= 0:
+            return [-val for val in values]
+        return values
+    # minimization problems (QUBO/UBQP): scores expected to be negative
+    if min(values) >= 0:
+        return [-val for val in values]
+    return values
 
 
 def _load_problem_config() -> tuple[str, int, int]:
@@ -72,7 +94,56 @@ def _build_instance_context() -> dict[str, Path | str | int]:
         "output_path": output_path,
         "kernels_output_dir": output_dir / "Kernels",
         "interact_vs_no_interact_dir": output_dir / "10000",
+        "decay_vs_normal_dir": output_dir / "decay",
     }
+
+
+def _build_instance_context_from_values(problem_name: str, dim: int, type_instance: int) -> dict[str, Path | str | int]:
+    experiment_dir = ROOT / "results" / "experiments" / f"{problem_name}_dim{dim}_t{type_instance}"
+    if problem_name.upper() == "QUBO":
+        instance_name = f"UBQP_{dim}_{type_instance}"
+        ranking_path = ROOT / "additional_results" / "global_ranking" / f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+    else:
+        instance_name = f"{problem_name}_{dim}_{type_instance}"
+        ranking_path = ROOT / "additional_results" / "global_ranking" / f"{problem_name}_N_{dim}_K_{type_instance}_ranks.csv"
+    output_dir = ROOT / "courbes" / instance_name
+    output_path = output_dir / f"comparison_{problem_name.lower()}_{dim}_t{type_instance}.png"
+    return {
+        "problem_name": problem_name,
+        "dim": dim,
+        "type_instance": type_instance,
+        "instance_name": instance_name,
+        "ranking_path": ranking_path,
+        "experiment_dir": experiment_dir,
+        "my_data_path": experiment_dir / f"{problem_name}_{DEFAULT_KERNEL}_best_metrics.csv",
+        "output_path": output_path,
+        "kernels_output_dir": output_dir / "Kernels",
+        "interact_vs_no_interact_dir": output_dir / "10000",
+        "decay_vs_normal_dir": output_dir / "decay",
+    }
+
+
+def _discover_experiment_instances() -> List[dict[str, Path | str | int]]:
+    exp_root = ROOT / "results" / "experiments"
+    if not exp_root.exists():
+        return []
+    contexts: List[dict[str, Path | str | int]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for entry in exp_root.iterdir():
+        if not entry.is_dir():
+            continue
+        match = re.match(r"^(?P<name>.+)_dim(?P<dim>\d+)_t(?P<t>\d+)$", entry.name)
+        if not match:
+            continue
+        name = match.group("name")
+        dim = int(match.group("dim"))
+        type_instance = int(match.group("t"))
+        key = (name, dim, type_instance)
+        if key in seen:
+            continue
+        seen.add(key)
+        contexts.append(_build_instance_context_from_values(name, dim, type_instance))
+    return sorted(contexts, key=lambda ctx: (str(ctx["problem_name"]), int(ctx["dim"]), int(ctx["type_instance"])))
 
 
 def load_top_algorithms(
@@ -171,13 +242,20 @@ def find_competitor_files(
     type_instance: int,
     problem_name: str | None = None,
 ) -> Tuple[List[Path], bool]:
-    csv_path = COMPETITOR_DIR / f"{algo}.csv"
-    if csv_path.exists():
-        return [csv_path], False
+    for root in COMPETITOR_DIRS:
+        csv_path = root / f"{algo}.csv"
+        if csv_path.exists():
+            return [csv_path], False
 
-    algo_dir = COMPETITOR_DIR / algo
-    if not algo_dir.exists():
-        raise FileNotFoundError(f"Missing competitor directory: {algo_dir}")
+    algo_dir = None
+    for root in COMPETITOR_DIRS:
+        candidate = root / algo
+        if candidate.exists():
+            algo_dir = candidate
+            break
+    if algo_dir is None:
+        roots = ", ".join(str(root) for root in COMPETITOR_DIRS)
+        raise FileNotFoundError(f"Missing competitor directory for {algo} in {roots}")
 
     if problem_name:
         normalized = problem_name.upper()
@@ -273,6 +351,7 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
                 )
         else:
             x_vals, y_vals = load_xy_from_csv(paths[0], has_header=False)
+        y_vals = _normalize_score_sign(problem_name, y_vals)
         ax.plot(
             x_vals,
             y_vals,
@@ -292,6 +371,7 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
     if not my_filtered:
         raise ValueError("No reinforce svgd data at step >= 100")
     my_x, my_y = zip(*my_filtered)
+    my_y = _normalize_score_sign(problem_name, list(my_y))
     ax.plot(
         my_x,
         my_y,
@@ -311,6 +391,88 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(Path(output_path))
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
+
+def plot_comparison_decay(context: dict[str, Path | str | int]) -> None:
+    ranking_path = context["ranking_path"]
+    experiment_dir = Path(context["experiment_dir"])
+    decay_dir = experiment_dir / "decay"
+    if not decay_dir.exists():
+        print(f"[WARN] No decay directory found in {decay_dir}.")
+        return
+    output_dir = Path(context["decay_vs_normal_dir"])
+    problem_name = str(context["problem_name"])
+    dim = int(context["dim"])
+    type_instance = int(context["type_instance"])
+
+    algos = load_top_algorithms(Path(ranking_path), limit=10, skip=("PPO-EDA",))
+    best_kernel = find_best_kernel_summary(decay_dir, problem_name)
+    best_metrics_path = decay_dir / f"{problem_name}_{best_kernel}_best_metrics.csv"
+    if not best_metrics_path.exists():
+        raise FileNotFoundError(f"Missing decay metrics file {best_metrics_path}")
+
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=160)
+    color_cycle = cycle(plt.cm.tab20.colors)
+
+    for algo in algos:
+        try:
+            paths, has_header = find_competitor_files(algo, dim, type_instance, problem_name)
+        except FileNotFoundError as exc:
+            print(f"[WARN] {exc}. Skipping.")
+            continue
+        if has_header:
+            if len(paths) > 1:
+                x_vals, y_vals = load_mean_across_runs(paths)
+            else:
+                x_vals, y_vals = load_xy_from_csv(
+                    paths[0], has_header=True, x_key="runtime", y_key="mean"
+                )
+        else:
+            x_vals, y_vals = load_xy_from_csv(paths[0], has_header=False)
+        y_vals = _normalize_score_sign(problem_name, y_vals)
+        ax.plot(
+            x_vals,
+            y_vals,
+            label=algo,
+            color=next(color_cycle),
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.8,
+            zorder=2,
+            antialiased=True,
+        )
+
+    my_x, my_y = load_xy_from_csv(
+        best_metrics_path, has_header=True, x_key="step", y_key="best_fitness"
+    )
+    my_filtered = [(x, y) for x, y in zip(my_x, my_y) if x >= 100]
+    if not my_filtered:
+        raise ValueError("No reinforce svgd decay data at step >= 100")
+    my_x, my_y = zip(*my_filtered)
+    my_y = _normalize_score_sign(problem_name, list(my_y))
+    ax.plot(
+        my_x,
+        my_y,
+        label=f"reinforce svgd decay ({best_kernel})",
+        color="red",
+        linewidth=2.0,
+        zorder=3,
+        antialiased=True,
+    )
+
+    ax.set_title(f"Comparison (decay) on {problem_name} (N={dim}, K={type_instance})")
+    ax.set_xlabel("Evaluations")
+    ax.set_ylabel("Average score")
+    ax.legend(fontsize=8, ncol=2, frameon=False)
+    ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.5)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"comparison_{problem_name.lower()}_{dim}_t{type_instance}_decay.png"
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
     print(f"Saved plot to {output_path}")
 
 
@@ -334,11 +496,15 @@ def parse_float(value: str | None) -> float | None:
         return None
 
 
-def find_best_kernel_summary(summary_dir: Path, problem_name: str) -> str:
+def find_best_kernel_summary(
+    summary_dir: Path, problem_name: str, maximize: bool | None = None
+) -> str:
     summary_files = sorted(summary_dir.glob(f"{problem_name}_*_best_summary.txt"))
     if not summary_files:
         return DEFAULT_KERNEL
 
+    if maximize is None:
+        maximize = _is_maximization_problem(problem_name)
     best_kernel = DEFAULT_KERNEL
     best_score = None
     for path in summary_files:
@@ -347,7 +513,14 @@ def find_best_kernel_summary(summary_dir: Path, problem_name: str) -> str:
         avg_score = parse_float(data.get("avg_score"))
         if kernel is None or avg_score is None:
             continue
-        if best_score is None or avg_score < best_score:
+        if best_score is None:
+            best_score = avg_score
+            best_kernel = kernel
+            continue
+        if maximize and avg_score > best_score:
+            best_score = avg_score
+            best_kernel = kernel
+        elif not maximize and avg_score < best_score:
             best_score = avg_score
             best_kernel = kernel
     return best_kernel
@@ -368,10 +541,15 @@ def list_kernels_from_metrics(metrics_dir: Path, problem_name: str) -> List[str]
 
 
 def select_best_kernel_from_summaries(
-    summary_dir: Path, problem_name: str, kernels: Iterable[str]
+    summary_dir: Path,
+    problem_name: str,
+    kernels: Iterable[str],
+    maximize: bool | None = None,
 ) -> str | None:
     best_kernel = None
     best_score = None
+    if maximize is None:
+        maximize = _is_maximization_problem(problem_name)
     for kernel in kernels:
         summary_path = summary_dir / f"{problem_name}_{kernel}_best_summary.txt"
         if not summary_path.exists():
@@ -380,7 +558,14 @@ def select_best_kernel_from_summaries(
         avg_score = parse_float(data.get("avg_score"))
         if avg_score is None:
             continue
-        if best_score is None or avg_score < best_score:
+        if best_score is None:
+            best_score = avg_score
+            best_kernel = kernel
+            continue
+        if maximize and avg_score > best_score:
+            best_score = avg_score
+            best_kernel = kernel
+        elif not maximize and avg_score < best_score:
             best_score = avg_score
             best_kernel = kernel
     return best_kernel
@@ -432,28 +617,39 @@ def load_metric_series(path: Path, x_field: str, y_field: str) -> Tuple[List[flo
 
 
 def load_metric_series_with_std(
-    path: Path, x_field: str, mean_field: str = "mean", std_field: str = "std"
+    path: Path,
+    x_field: str,
+    mean_field: str = "mean",
+    std_field: str = "std",
+    maximize: bool | None = None,
 ) -> Tuple[List[float], List[float], List[float] | None]:
     x_vals: List[float] = []
     mean_vals: List[float] = []
     std_vals: List[float] = []
+    rows: List[dict[str, str]] = []
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle)
         fieldnames = reader.fieldnames or []
-        mean_key = mean_field if mean_field in fieldnames else "best_fitness"
-        if mean_key not in fieldnames:
-            mean_key = mean_field
-        std_key = std_field if std_field in fieldnames else None
-        for row in reader:
-            x_val = parse_float(row.get(x_field))
-            mean_val = parse_float(row.get(mean_key))
-            std_val = parse_float(row.get(std_key)) if std_key else None
-            if x_val is None or mean_val is None:
-                continue
-            x_vals.append(x_val)
-            mean_vals.append(mean_val)
-            if std_key and std_val is not None:
-                std_vals.append(std_val)
+        rows = list(reader)
+    mean_key = mean_field if mean_field in fieldnames else "best_fitness"
+    if mean_key not in fieldnames:
+        mean_key = mean_field
+    std_key = std_field if std_field in fieldnames else None
+    invert_best_fitness = False
+    if mean_key == "best_fitness" and maximize is True:
+        invert_best_fitness = True
+    for row in rows:
+        x_val = parse_float(row.get(x_field))
+        mean_val = parse_float(row.get(mean_key))
+        std_val = parse_float(row.get(std_key)) if std_key else None
+        if x_val is None or mean_val is None:
+            continue
+        if invert_best_fitness:
+            mean_val = -mean_val
+        x_vals.append(x_val)
+        mean_vals.append(mean_val)
+        if std_key and std_val is not None:
+            std_vals.append(std_val)
     if not x_vals:
         raise ValueError(f"No data for {mean_key} in {path}")
     if std_key:
@@ -510,6 +706,60 @@ def plot_interact_vs_no_interact_series(
         lower = [y - s for y, s in zip(y_no, std_no)]
         upper = [y + s for y, s in zip(y_no, std_no)]
         ax.fill_between(x_no, lower, upper, color="#ff7f0e", alpha=0.2, linewidth=0.0)
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("Evaluations", fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.legend(frameon=False, fontsize=9)
+    style_axes(ax, grid_axis="both")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
+
+def plot_pair_series(
+    x_a: List[float],
+    y_a: List[float],
+    x_b: List[float],
+    y_b: List[float],
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    label_a: str,
+    label_b: str,
+    color_a: str,
+    color_b: str,
+    *,
+    std_a: List[float] | None = None,
+    std_b: List[float] | None = None,
+) -> None:
+    fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)
+    ax.plot(
+        x_a,
+        y_a,
+        label=label_a,
+        color=color_a,
+        linewidth=1.4,
+        alpha=0.95,
+    )
+    ax.plot(
+        x_b,
+        y_b,
+        label=label_b,
+        color=color_b,
+        linewidth=1.4,
+        linestyle="--",
+        alpha=0.95,
+    )
+    if std_a is not None:
+        lower = [y - s for y, s in zip(y_a, std_a)]
+        upper = [y + s for y, s in zip(y_a, std_a)]
+        ax.fill_between(x_a, lower, upper, color=color_a, alpha=0.2, linewidth=0.0)
+    if std_b is not None:
+        lower = [y - s for y, s in zip(y_b, std_b)]
+        upper = [y + s for y, s in zip(y_b, std_b)]
+        ax.fill_between(x_b, lower, upper, color=color_b, alpha=0.2, linewidth=0.0)
     ax.set_title(title, fontsize=12)
     ax.set_xlabel("Evaluations", fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
@@ -740,8 +990,13 @@ def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) ->
             missing.append(str(no_interact_path))
         raise FileNotFoundError(f"Missing metrics file(s): {', '.join(missing)}")
 
-    x_int, y_int, std_int = load_metric_series_with_std(interact_path, x_field="step")
-    x_no, y_no, std_no = load_metric_series_with_std(no_interact_path, x_field="step")
+    maximize = _is_maximization_problem(problem_name)
+    x_int, y_int, std_int = load_metric_series_with_std(
+        interact_path, x_field="step", maximize=maximize
+    )
+    x_no, y_no, std_no = load_metric_series_with_std(
+        no_interact_path, x_field="step", maximize=maximize
+    )
 
     title = (
         f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=10000)"
@@ -780,11 +1035,160 @@ def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) ->
         print(f"[WARN] Missing std column in {interact_path} or {no_interact_path}.")
 
 
+def plot_decay_comparison(context: dict[str, Path | str | int]) -> None:
+    experiment_dir = Path(context["experiment_dir"])
+    decay_dir = experiment_dir / "decay"
+    if not decay_dir.exists():
+        print(f"[WARN] No decay directory found in {decay_dir}.")
+        return
+
+    output_dir = Path(context["decay_vs_normal_dir"])
+    problem_name = str(context["problem_name"])
+    dim = int(context["dim"])
+    type_instance = int(context["type_instance"])
+
+    best_kernel_normal = find_best_kernel_summary(experiment_dir, problem_name)
+    best_kernel_decay = find_best_kernel_summary(decay_dir, problem_name)
+
+    normal_path = experiment_dir / f"{problem_name}_{best_kernel_normal}_best_metrics.csv"
+    decay_path = decay_dir / f"{problem_name}_{best_kernel_decay}_best_metrics.csv"
+    if not normal_path.exists() or not decay_path.exists():
+        missing = []
+        if not normal_path.exists():
+            missing.append(str(normal_path))
+        if not decay_path.exists():
+            missing.append(str(decay_path))
+        raise FileNotFoundError(f"Missing metrics file(s): {', '.join(missing)}")
+
+    maximize = _is_maximization_problem(problem_name)
+    x_norm, y_norm, std_norm = load_metric_series_with_std(
+        normal_path, x_field="step", maximize=maximize
+    )
+    x_decay, y_decay, std_decay = load_metric_series_with_std(
+        decay_path, x_field="step", maximize=maximize
+    )
+
+    title = (
+        f"Average Score: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)"
+    )
+    label_norm = f"normal ({best_kernel_normal})"
+    label_decay = f"decay ({best_kernel_decay})"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    plot_pair_series(
+        x_norm,
+        y_norm,
+        x_decay,
+        y_decay,
+        title=title,
+        ylabel="Average score",
+        output_path=output_dir / "avg_score_normal_vs_decay.png",
+        label_a=label_norm,
+        label_b=label_decay,
+        color_a="#2ca02c",
+        color_b="#d62728",
+    )
+
+    if std_norm is not None and std_decay is not None:
+        plot_pair_series(
+            x_norm,
+            y_norm,
+            x_decay,
+            y_decay,
+            title=title,
+            ylabel="Average score",
+            output_path=output_dir / "avg_score_normal_vs_decay_std.png",
+            label_a=label_norm,
+            label_b=label_decay,
+            color_a="#2ca02c",
+            color_b="#d62728",
+            std_a=std_norm,
+            std_b=std_decay,
+        )
+        plot_pair_series(
+            x_norm,
+            std_norm,
+            x_decay,
+            std_decay,
+            title=f"Std: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            ylabel="Std",
+            output_path=output_dir / "std_normal_vs_decay.png",
+            label_a=label_norm,
+            label_b=label_decay,
+            color_a="#2ca02c",
+            color_b="#d62728",
+        )
+    else:
+        print(f"[WARN] Missing std column in {normal_path} or {decay_path}.")
+
+    try:
+        x_norm_h, y_norm_h = load_metric_series(normal_path, x_field="step", y_field="avg_hamming")
+        x_decay_h, y_decay_h = load_metric_series(decay_path, x_field="step", y_field="avg_hamming")
+    except ValueError as exc:
+        print(f"[WARN] {exc}.")
+    else:
+        plot_pair_series(
+            x_norm_h,
+            y_norm_h,
+            x_decay_h,
+            y_decay_h,
+            title=f"Average Hamming: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            ylabel="Average hamming",
+            output_path=output_dir / "hamming_normal_vs_decay.png",
+            label_a=label_norm,
+            label_b=label_decay,
+            color_a="#2ca02c",
+            color_b="#d62728",
+        )
+
+    try:
+        x_norm_l1, y_norm_l1 = load_metric_series(normal_path, x_field="step", y_field="avg_l1")
+        x_decay_l1, y_decay_l1 = load_metric_series(decay_path, x_field="step", y_field="avg_l1")
+    except ValueError as exc:
+        print(f"[WARN] {exc}.")
+    else:
+        plot_pair_series(
+            x_norm_l1,
+            y_norm_l1,
+            x_decay_l1,
+            y_decay_l1,
+            title=f"Average L1: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            ylabel="Average L1",
+            output_path=output_dir / "l1_normal_vs_decay.png",
+            label_a=label_norm,
+            label_b=label_decay,
+            color_a="#2ca02c",
+            color_b="#d62728",
+        )
+
+
 def main() -> None:
-    context = _build_instance_context()
-    plot_comparison(context)
-    plot_kernel_comparison(context)
-    plot_kernel_interact_vs_no_interact(context)
+    contexts = _discover_experiment_instances()
+    if not contexts:
+        contexts = [_build_instance_context()]
+    for context in contexts:
+        instance_name = context["instance_name"]
+        print(f"[INFO] Plotting instance: {instance_name}")
+        try:
+            plot_comparison(context)
+        except Exception as exc:
+            print(f"[WARN] comparison failed for {instance_name}: {exc}")
+        try:
+            plot_comparison_decay(context)
+        except Exception as exc:
+            print(f"[WARN] comparison_decay failed for {instance_name}: {exc}")
+        try:
+            plot_kernel_comparison(context)
+        except Exception as exc:
+            print(f"[WARN] kernel comparison failed for {instance_name}: {exc}")
+        try:
+            plot_kernel_interact_vs_no_interact(context)
+        except Exception as exc:
+            print(f"[WARN] interact_vs_no_interact failed for {instance_name}: {exc}")
+        try:
+            plot_decay_comparison(context)
+        except Exception as exc:
+            print(f"[WARN] decay comparison failed for {instance_name}: {exc}")
 
 
 if __name__ == "__main__":
