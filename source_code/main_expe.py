@@ -23,9 +23,9 @@ from utils.main_utils import rank_vs_global_ranking
 EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1,0.3]
 #GAMMA_GRID = [ 0.0005 ,0.001, 0.01, 0.05]
 GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01]
-M_VALUES = [10, 5, 3]
+M_VALUES = [20 ,15 ,10, 5, 3]
 #M_VALUES = [15 ,10, 7, 3]
-LAMBDA_VALUES = [7, 10, 15, 20, 28]
+LAMBDA_VALUES = [7, 10, 15, 20, 24, 30]
 #LAMBDA_VALUES = [7, 10, 20, 25, 30]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
@@ -35,8 +35,7 @@ NO_INTERACT_VALUES = [False, True]
 NO_INTERACT_KERNEL = "rbf"
 
 PROBLEMS = [
-    dict(name="QUBO", dim=128, type_instance=3),
-    dict(name="QUBO", dim=256, type_instance=5)
+    dict(name="QUBO", dim=256, type_instance=1)
 ]
 
 DEFAULTS = dict(

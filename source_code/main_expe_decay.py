@@ -18,8 +18,8 @@ from utils.main_utils import rank_vs_global_ranking
 from main_ppo_eda import _find_best_kernel_summary, _load_kernel_config
 
 
-DECAY_START_RATIO_GRID = [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7]
-DECAY_MIN_FACTOR_GRID = [0.01, 0.05, 0.1, 0.25, 0.4]
+DECAY_START_RATIO_GRID = [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.8]
+DECAY_MIN_FACTOR_GRID = [0.0001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
 
 PROBLEMS = [
     dict(name="QUBO", dim=64, type_instance=1),
@@ -144,7 +144,7 @@ def _discover_instances(repo_root):
         if "decay" in summary_path.parts or "no_interact" in summary_path.parts:
             continue
         parent_name = summary_path.parent.name
-        match = re.match(r"^(?P<name>.+)_dim(?P<dim>\\d+)_t(?P<t>\\d+)$", parent_name)
+        match = re.match(r"^(?P<name>.+)_dim(?P<dim>\d+)_t(?P<t>\d+)$", parent_name)
         if not match:
             continue
         name = match.group("name")
@@ -387,6 +387,17 @@ def _get_problem_dir(out_dir, problem_name, dim, type_instance):
     return os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}", "decay")
 
 
+def _has_decay_results(out_dir, problem_name, dim, type_instance):
+    decay_dir = _get_problem_dir(out_dir, problem_name, dim, type_instance)
+    if not os.path.isdir(decay_dir):
+        return False
+    # Treat any existing summary as completed decay results.
+    if any(Path(decay_dir).glob("*_best_summary.txt")):
+        return True
+    # If the directory exists but is empty of summaries, keep it eligible.
+    return False
+
+
 def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name):
     summary_path = os.path.join(
         out_dir,
@@ -456,6 +467,11 @@ def _resolve_best_config(best_cfg, kernel_name, repo_root):
 def main():
     parser = argparse.ArgumentParser(description="Decay grid experiments (basee sur meilleure config normale).")
     parser.add_argument("--outdir", type=str, default=None, help="Repertoire ou ecrire les CSV et resumes.")
+    parser.add_argument(
+        "--include-existing-decay",
+        action="store_true",
+        help="Inclure les instances qui ont deja des resultats decay.",
+    )
     args, _ = parser.parse_known_args()
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -472,6 +488,14 @@ def main():
         problem_ctx = _load_instances(problem, DEFAULTS["device"])
         instance_name = f"{problem_ctx['type_problem']}_dim{problem_ctx['dim']}_t{problem_ctx['type_instance']}"
         summary_dir = os.path.join(repo_root, "results", "experiments", instance_name)
+        if not args.include_existing_decay and _has_decay_results(
+            outdir,
+            problem_ctx["type_problem"],
+            problem_ctx["dim"],
+            problem_ctx["type_instance"],
+        ):
+            print(f"[SKIP] {instance_name} deja present dans decay.")
+            continue
         best_kernel, best_cfg = _find_best_kernel_summary(summary_dir, problem_ctx["type_problem"])
         if best_kernel is None or best_cfg is None:
             print(f"[WARN] Aucun resume valide dans {summary_dir}. Skip.")
