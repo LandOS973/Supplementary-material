@@ -18,8 +18,8 @@ from utils.main_utils import rank_vs_global_ranking
 from main_ppo_eda import _find_best_kernel_summary, _load_kernel_config
 
 
-DECAY_START_RATIO_GRID = [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7]
-DECAY_MIN_FACTOR_GRID = [0.01, 0.05, 0.1, 0.25, 0.4]
+DECAY_START_RATIO_GRID = [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.8]
+DECAY_MIN_FACTOR_GRID = [0.0001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
 
 PROBLEMS = [
     dict(name="QUBO", dim=64, type_instance=1),
