@@ -20,16 +20,12 @@ from utils.main_utils import rank_vs_global_ranking
 #  Grilles
 # ============
 #EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1, 0.5, 0.8]
-EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1]
-GAMMA_GRID = [ 0.0005 ,0.001, 0.01, 0.05]
-#GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01]
-#DECAY_START_RATIO_GRID = [0.0, 0.2, 0.5, 0.7]
-DECAY_START_RATIO_GRID = [1]
-#DECAY_MIN_FACTOR_GRID = [0.05 , 0.1, 0.25]
-DECAY_MIN_FACTOR_GRID = [1]
-#M_VALUES = [20, 15 ,10, 5, 3]
-M_VALUES = [15 ,10, 7, 3]
-LAMBDA_VALUES = [7, 10, 15, 20]
+EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1,0.3]
+#GAMMA_GRID = [ 0.0005 ,0.001, 0.01, 0.05]
+GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01]
+M_VALUES = [20, 15 ,10, 5, 3]
+#M_VALUES = [15 ,10, 7, 3]
+LAMBDA_VALUES = [7, 10, 15, 20, 28]
 #LAMBDA_VALUES = [7, 10, 20, 25, 30]
 ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
@@ -62,19 +58,8 @@ def _is_better_score(problem_type: str, new_score: float, best_score: float) -> 
     return new_score < best_score
 
 
-def _is_decay_enabled(decay_start_ratio, decay_min_factor) -> bool:
-    try:
-        start_ratio = None if decay_start_ratio is None else float(decay_start_ratio)
-        min_factor = None if decay_min_factor is None else float(decay_min_factor)
-    except (TypeError, ValueError):
-        return False
-    return (start_ratio is not None and start_ratio < 1.0) or (min_factor is not None and min_factor < 1.0)
-
-
-def _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact, decay_enabled):
+def _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact):
     problem_dir = os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}")
-    if decay_enabled:
-        problem_dir = os.path.join(problem_dir, "decay")
     if no_interact:
         problem_dir = os.path.join(problem_dir, "no_interact")
     return problem_dir
@@ -165,8 +150,6 @@ def _run_once(
     lambda_,
     epsilon_svgd,
     gamma,
-    decay_start_ratio,
-    decay_min_factor,
     bandwith_kernel,
     no_interact,
 ):
@@ -189,8 +172,7 @@ def _run_once(
         epsilon_svgd=epsilon_svgd,
         enable_visualization=DEFAULTS["visualization"],
         svgd_gamma=gamma,
-        decay_start_ratio=decay_start_ratio,
-        decay_min_factor=decay_min_factor,
+        decay_enabled=False,
         advantage_cfg=advantage,
         kernel_config=kernel_config,
         no_interact=no_interact,
@@ -282,8 +264,6 @@ def _run_once(
         lambda_=lambda_,
         epsilon_svgd=epsilon_svgd,
         gamma=gamma,
-        decay_start_ratio=decay_start_ratio,
-        decay_min_factor=decay_min_factor,
         bandwith_kernel=bandwith_kernel,
         no_interact=no_interact,
         avg_score=avg_score,
@@ -359,8 +339,6 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         f.write(f"lambda: {meta['lambda_']}\n")
         f.write(f"epsilon_svgd: {meta['epsilon_svgd']}\n")
         f.write(f"gamma: {meta['gamma']}\n")
-        f.write(f"decay_start_ratio: {meta['decay_start_ratio']}\n")
-        f.write(f"decay_min_factor: {meta['decay_min_factor']}\n")
         f.write(f"bandwith_kernel: {meta['bandwith_kernel']}\n")
         f.write(f"no_interact: {meta['no_interact']}\n")
         f.write(f"avg_score: {meta['avg_score']}\n")
@@ -381,8 +359,8 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         else:
             f.write("ranking: unavailable\n")
 
-def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, no_interact, decay_enabled):
-    problem_dir = _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact, decay_enabled)
+def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, no_interact):
+    problem_dir = _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact)
     summary_path = os.path.join(problem_dir, f"{problem_name}_{kernel_name}_best_summary.txt")
     if not os.path.isfile(summary_path):
         return None
@@ -391,8 +369,6 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
             lines = f.readlines()
         avg_score = None
         mode_value = None
-        decay_start_ratio = None
-        decay_min_factor = None
         for line in lines:
             lowered = line.strip().lower()
             if lowered.startswith("no_interact"):
@@ -400,16 +376,6 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
                     mode_value = line.split(":", 1)[1].strip().lower()
                 except Exception:
                     mode_value = None
-            if lowered.startswith("decay_start_ratio"):
-                try:
-                    decay_start_ratio = float(line.split(":", 1)[1].strip())
-                except Exception:
-                    decay_start_ratio = None
-            if lowered.startswith("decay_min_factor"):
-                try:
-                    decay_min_factor = float(line.split(":", 1)[1].strip())
-                except Exception:
-                    decay_min_factor = None
             if lowered.startswith("avg_score"):
                 try:
                     avg_score = float(line.split(":", 1)[1].strip())
@@ -419,9 +385,6 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
             return None
         parsed_mode = mode_value in ("true", "1", "yes")
         if parsed_mode != bool(no_interact):
-            return None
-        parsed_decay = _is_decay_enabled(decay_start_ratio, decay_min_factor)
-        if parsed_decay != bool(decay_enabled):
             return None
         if avg_score is None:
             return None
@@ -442,13 +405,6 @@ def main():
     _set_seeds(DEFAULTS["seed"])
 
     best_per_problem_kernel = {}
-    decay_flags = {
-        _is_decay_enabled(decay_start_ratio, decay_min_factor)
-        for decay_start_ratio in DECAY_START_RATIO_GRID
-        for decay_min_factor in DECAY_MIN_FACTOR_GRID
-    }
-    if not decay_flags:
-        decay_flags = {False}
 
     start_all = time.time()
     for problem in PROBLEMS:
@@ -458,18 +414,16 @@ def main():
             for no_interact in NO_INTERACT_VALUES:
                 if no_interact and k != NO_INTERACT_KERNEL:
                     continue
-                for decay_enabled in decay_flags:
-                    existing = _load_existing_best(
-                        outdir,
-                        problem_ctx["type_problem"],
-                        problem_ctx["dim"],
-                        problem_ctx["type_instance"],
-                        k,
-                        no_interact,
-                        decay_enabled,
-                    )
-                    if existing:
-                        best_per_problem_kernel[(problem_ctx["type_problem"], k, no_interact, decay_enabled)] = existing
+                existing = _load_existing_best(
+                    outdir,
+                    problem_ctx["type_problem"],
+                    problem_ctx["dim"],
+                    problem_ctx["type_instance"],
+                    k,
+                    no_interact,
+                )
+                if existing:
+                    best_per_problem_kernel[(problem_ctx["type_problem"], k, no_interact)] = existing
 
         expanded = []
         for kernel_name in KERNELS:
@@ -486,23 +440,19 @@ def main():
                     continue
                 for epsilon_svgd in epsilon_list:
                     for gamma in gamma_list:
-                        for decay_start_ratio in DECAY_START_RATIO_GRID:
-                            for decay_min_factor in DECAY_MIN_FACTOR_GRID:
-                                bandwith_kernel = None
-                                expanded.append(
-                                    (
-                                        kernel_name,
-                                        advantage,
-                                        M,
-                                        lambda_,
-                                        epsilon_svgd,
-                                        gamma,
-                                        decay_start_ratio,
-                                        decay_min_factor,
-                                        bandwith_kernel,
-                                        no_interact,
-                                    )
-                                )
+                        bandwith_kernel = None
+                        expanded.append(
+                            (
+                                kernel_name,
+                                advantage,
+                                M,
+                                lambda_,
+                                epsilon_svgd,
+                                gamma,
+                                bandwith_kernel,
+                                no_interact,
+                            )
+                        )
 
         total_runs = len(expanded)
         print(
