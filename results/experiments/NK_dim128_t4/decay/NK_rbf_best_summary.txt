@@ -1,0 +1,18 @@
+Problem: NK
+Kernel: rbf
+Advantage: peragentrankweighted
+M: 5
+lambda: 20
+epsilon_svgd: 0.03
+gamma: 0.001
+decay_start_ratio: 0.4
+decay_min_factor: 0.25
+bandwith_kernel: None
+no_interact: False
+avg_score: 0.7582403421401978
+median_score: 0.7588106989860535
+std_score: 0.012198550626635551
+percentiles: 2%=0.7373515367507935, 5%=0.7384811043739319, 10%=0.742001473903656, 25%=0.7484890818595886, 50%=0.7588106989860535, 75%=0.767317533493042, 90%=0.7735106348991394, 95%=0.7775027751922607, 98%=0.7805154323577881
+ranking_best_algo: PPO-EDA
+ranking_best_score: 0.7603765
+ranking_my_rank: 2/505 (99.8%)
