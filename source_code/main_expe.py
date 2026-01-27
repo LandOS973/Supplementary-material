@@ -37,7 +37,7 @@ NO_INTERACT_VALUES = [False]
 NO_INTERACT_KERNEL = "hk"
 
 PROBLEMS = [
-    dict(name="QUBO", dim=256, type_instance=5)
+    dict(name="QUBO", dim=64, type_instance=0)
 ]
 
 DEFAULTS = dict(
@@ -58,6 +58,24 @@ def _is_better_score(problem_type: str, new_score: float, best_score: float) -> 
     if _is_maximization_problem(problem_type):
         return new_score > best_score
     return new_score < best_score
+
+
+def _is_decay_enabled(decay_start_ratio, decay_min_factor) -> bool:
+    try:
+        start_ratio = None if decay_start_ratio is None else float(decay_start_ratio)
+        min_factor = None if decay_min_factor is None else float(decay_min_factor)
+    except (TypeError, ValueError):
+        return False
+    return (start_ratio is not None and start_ratio < 1.0) or (min_factor is not None and min_factor < 1.0)
+
+
+def _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact, decay_enabled):
+    problem_dir = os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}")
+    if decay_enabled:
+        problem_dir = os.path.join(problem_dir, "decay")
+    if no_interact:
+        problem_dir = os.path.join(problem_dir, "no_interact")
+    return problem_dir
 
 
 def _set_seeds(seed: int):
@@ -361,10 +379,8 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         else:
             f.write("ranking: unavailable\n")
 
-def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, no_interact):
-    problem_dir = os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}")
-    if no_interact:
-        problem_dir = os.path.join(problem_dir, "no_interact")
+def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, no_interact, decay_enabled):
+    problem_dir = _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact, decay_enabled)
     summary_path = os.path.join(problem_dir, f"{problem_name}_{kernel_name}_best_summary.txt")
     if not os.path.isfile(summary_path):
         return None
@@ -373,6 +389,8 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
             lines = f.readlines()
         avg_score = None
         mode_value = None
+        decay_start_ratio = None
+        decay_min_factor = None
         for line in lines:
             lowered = line.strip().lower()
             if lowered.startswith("no_interact"):
@@ -380,6 +398,16 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
                     mode_value = line.split(":", 1)[1].strip().lower()
                 except Exception:
                     mode_value = None
+            if lowered.startswith("decay_start_ratio"):
+                try:
+                    decay_start_ratio = float(line.split(":", 1)[1].strip())
+                except Exception:
+                    decay_start_ratio = None
+            if lowered.startswith("decay_min_factor"):
+                try:
+                    decay_min_factor = float(line.split(":", 1)[1].strip())
+                except Exception:
+                    decay_min_factor = None
             if lowered.startswith("avg_score"):
                 try:
                     avg_score = float(line.split(":", 1)[1].strip())
@@ -389,6 +417,9 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, 
             return None
         parsed_mode = mode_value in ("true", "1", "yes")
         if parsed_mode != bool(no_interact):
+            return None
+        parsed_decay = _is_decay_enabled(decay_start_ratio, decay_min_factor)
+        if parsed_decay != bool(decay_enabled):
             return None
         if avg_score is None:
             return None
@@ -409,6 +440,13 @@ def main():
     _set_seeds(DEFAULTS["seed"])
 
     best_per_problem_kernel = {}
+    decay_flags = {
+        _is_decay_enabled(decay_start_ratio, decay_min_factor)
+        for decay_start_ratio in DECAY_START_RATIO_GRID
+        for decay_min_factor in DECAY_MIN_FACTOR_GRID
+    }
+    if not decay_flags:
+        decay_flags = {False}
 
     start_all = time.time()
     for problem in PROBLEMS:
@@ -418,16 +456,18 @@ def main():
             for no_interact in NO_INTERACT_VALUES:
                 if no_interact and k != NO_INTERACT_KERNEL:
                     continue
-                existing = _load_existing_best(
-                    outdir,
-                    problem_ctx["type_problem"],
-                    problem_ctx["dim"],
-                    problem_ctx["type_instance"],
-                    k,
-                    no_interact,
-                )
-                if existing:
-                    best_per_problem_kernel[(problem_ctx["type_problem"], k, no_interact)] = existing
+                for decay_enabled in decay_flags:
+                    existing = _load_existing_best(
+                        outdir,
+                        problem_ctx["type_problem"],
+                        problem_ctx["dim"],
+                        problem_ctx["type_instance"],
+                        k,
+                        no_interact,
+                        decay_enabled,
+                    )
+                    if existing:
+                        best_per_problem_kernel[(problem_ctx["type_problem"], k, no_interact, decay_enabled)] = existing
 
         expanded = []
         for kernel_name in KERNELS:
@@ -505,7 +545,8 @@ def main():
             )
             dt = time.time() - t0
             print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-            key = (problem_ctx["type_problem"], kernel_name, no_interact)
+            decay_enabled = _is_decay_enabled(decay_start_ratio, decay_min_factor)
+            key = (problem_ctx["type_problem"], kernel_name, no_interact, decay_enabled)
             current_best = best_per_problem_kernel.get(key)
             if current_best is None or _is_better_score(problem_ctx["type_problem"], avg_score, current_best["meta"]["avg_score"]):
                 best_per_problem_kernel[key] = {"history": history, "meta": meta}
@@ -517,12 +558,14 @@ def main():
                     meta["type_instance"],
                     avg_score,
                 )
-                problem_dir = os.path.join(
+                problem_dir = _get_problem_dir(
                     outdir,
-                    f"{meta['problem']}_dim{meta['dim']}_t{meta['type_instance']}",
+                    meta["problem"],
+                    meta["dim"],
+                    meta["type_instance"],
+                    no_interact,
+                    decay_enabled,
                 )
-                if no_interact:
-                    problem_dir = os.path.join(problem_dir, "no_interact")
                 _save_history_csv(
                     problem_dir,
                     meta["problem"],
