@@ -35,8 +35,7 @@ NO_INTERACT_VALUES = [False, True]
 NO_INTERACT_KERNEL = "rbf"
 
 PROBLEMS = [
-    dict(name="QUBO", dim=128, type_instance=3),
-    dict(name="QUBO", dim=256, type_instance=5)
+    dict(name="QUBO", dim=256, type_instance=3)
 ]
 
 DEFAULTS = dict(
