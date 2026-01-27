@@ -220,6 +220,16 @@ def _write_history_csv(out_dir: Path, filename: str, history: dict, meta: dict) 
             )
 
 
+def _should_skip_budget_file(budget_dir: Path, filename: str) -> bool:
+    target = budget_dir / filename
+    if not target.exists():
+        return False
+    try:
+        return target.stat().st_size > 0
+    except OSError:
+        return True
+
+
 def _discover_instances(repo_root: Path) -> List[dict]:
     exp_root = repo_root / "results" / "experiments"
     if not exp_root.exists():
@@ -453,6 +463,15 @@ def main() -> None:
             )
 
             for budget in DEFAULT_BUDGETS:
+                budget_dir = repo_root / "results" / "experiments" / instance_name / str(budget)
+                filename = (
+                    "decay.csv"
+                    if mode == "decay"
+                    else ("no_interact.csv" if mode == "no_interact" else "interact.csv")
+                )
+                if _should_skip_budget_file(budget_dir, filename):
+                    print(f"    [SKIP] budget={budget} {filename} deja present")
+                    continue
                 _set_seeds(DEFAULTS["seed"])
                 t0 = time.time()
                 scores, history = _run_once(problem_ctx, params, budget)
@@ -460,8 +479,6 @@ def main() -> None:
                 dt = time.time() - t0
                 print(f"    budget={budget} avg_score={avg_score:.6f} runtime={dt:.2f}s")
 
-                budget_dir = repo_root / "results" / "experiments" / instance_name / str(budget)
-                filename = "decay.csv" if mode == "decay" else ("no_interact.csv" if mode == "no_interact" else "interact.csv")
                 meta = dict(
                     epsilon_svgd=params["epsilon_svgd"],
                     lambda_=params["lambda_"],
