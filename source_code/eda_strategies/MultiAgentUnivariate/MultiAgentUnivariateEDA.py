@@ -248,7 +248,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             self.theta += self.epsilon_svgd * phi
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
-        if not self.decay_enabled or self.no_interact or self.M <= 1:
+        if not self.decay_enabled or self.no_interact or self.M <= 1 or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
             return
         progress = (current_iter + 1) / float(total_iters)
         start = self.decay_start_ratio
