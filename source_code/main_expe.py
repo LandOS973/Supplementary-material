@@ -23,7 +23,7 @@ from utils.main_utils import rank_vs_global_ranking
 EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1,0.3]
 #GAMMA_GRID = [ 0.0005 ,0.001, 0.01, 0.05]
 GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01]
-M_VALUES = [20, 15 ,10, 5, 3]
+M_VALUES = [10, 5, 3]
 #M_VALUES = [15 ,10, 7, 3]
 LAMBDA_VALUES = [7, 10, 15, 20, 28]
 #LAMBDA_VALUES = [7, 10, 20, 25, 30]
@@ -31,11 +31,12 @@ ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
 KERNELS = [ "pk", "rbf", "jsd"]
 #KERNELS = ["rbf"]
-NO_INTERACT_VALUES = [False]
-NO_INTERACT_KERNEL = "hk"
+NO_INTERACT_VALUES = [False, True]
+NO_INTERACT_KERNEL = "rbf"
 
 PROBLEMS = [
-    dict(name="QUBO", dim=128, type_instance=1)
+    dict(name="QUBO", dim=128, type_instance=3),
+    dict(name="QUBO", dim=256, type_instance=5)
 ]
 
 DEFAULTS = dict(
@@ -467,8 +468,6 @@ def main():
             lambda_,
             epsilon_svgd,
             gamma,
-            decay_start_ratio,
-            decay_min_factor,
             bandwith_kernel,
             no_interact,
         ) in enumerate(expanded, 1):
@@ -479,7 +478,6 @@ def main():
                 f"kernel={kernel_name} (bandwith_kernel={bandwith_kernel_str}) | "
                 f"adv={advantage} | M={M} | lambda={lambda_} | "
                 f"epsilon_svgd={epsilon_svgd} | gamma={gamma} | "
-                f"decay_start_ratio={decay_start_ratio} | decay_min_factor={decay_min_factor} | "
                 f"no_interact={no_interact}"
             )
             avg_score, history, meta = _run_once(
@@ -490,15 +488,12 @@ def main():
                 lambda_,
                 epsilon_svgd,
                 gamma,
-                decay_start_ratio,
-                decay_min_factor,
                 bandwith_kernel,
                 no_interact,
             )
             dt = time.time() - t0
             print(f"   ↳ avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-            decay_enabled = _is_decay_enabled(decay_start_ratio, decay_min_factor)
-            key = (problem_ctx["type_problem"], kernel_name, no_interact, decay_enabled)
+            key = (problem_ctx["type_problem"], kernel_name, no_interact)
             current_best = best_per_problem_kernel.get(key)
             if current_best is None or _is_better_score(problem_ctx["type_problem"], avg_score, current_best["meta"]["avg_score"]):
                 best_per_problem_kernel[key] = {"history": history, "meta": meta}
@@ -516,7 +511,6 @@ def main():
                     meta["dim"],
                     meta["type_instance"],
                     no_interact,
-                    decay_enabled,
                 )
                 _save_history_csv(
                     problem_dir,
