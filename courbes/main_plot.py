@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -672,6 +673,7 @@ def load_quantile_stats_at_final_step(
     median_field: str = "50%",
     q3_field: str = "75%",
     high_field: str = "98%",
+    mean_field: str = "mean",
 ) -> dict[str, float] | None:
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle, skipinitialspace=True)
@@ -703,6 +705,9 @@ def load_quantile_stats_at_final_step(
     }
     if any(value is None for value in values.values()):
         return None
+    mean_val = parse_float(last_row.get(mean_field))
+    if mean_val is not None:
+        values["mean"] = float(mean_val)
     return {key: float(value) for key, value in values.items()}
 
 
@@ -721,13 +726,16 @@ def normalize_box_stats(problem_name: str, stats: dict[str, float]) -> dict[str,
     normalized = _normalize_score_sign(problem_name, values)
     if normalized[0] > normalized[-1]:
         normalized = list(reversed(normalized))
-    return {
+    output = {
         "low": normalized[0],
         "q1": normalized[1],
         "med": normalized[2],
         "q3": normalized[3],
         "high": normalized[4],
     }
+    if "mean" in stats:
+        output["mean"] = _normalize_score_sign(problem_name, [stats["mean"]])[0]
+    return output
 
 
 def aggregate_quantile_stats(
@@ -748,7 +756,11 @@ def aggregate_quantile_stats(
         return None
 
     keys = ("low", "q1", "med", "q3", "high")
-    return {key: sum(item[key] for item in stats_list) / len(stats_list) for key in keys}
+    aggregated = {key: sum(item[key] for item in stats_list) / len(stats_list) for key in keys}
+    mean_values = [item["mean"] for item in stats_list if "mean" in item]
+    if mean_values:
+        aggregated["mean"] = sum(mean_values) / len(mean_values)
+    return aggregated
 
 
 def style_axes(ax, grid_axis: str = "y") -> None:
@@ -771,6 +783,7 @@ def plot_synthetic_boxplot(
 
     stats = []
     labels = []
+    mean_values: List[float | None] = []
     for label, spec in box_specs:
         stats.append({
             "label": label,
@@ -782,6 +795,7 @@ def plot_synthetic_boxplot(
             "fliers": [],
         })
         labels.append(label)
+        mean_values.append(spec.get("mean"))
 
     fig, ax = plt.subplots(figsize=(6.6, 4.6), dpi=180)
     default_palette = {
@@ -790,10 +804,12 @@ def plot_synthetic_boxplot(
         "NO_INTERACT": "#ff7f0e",
     }
     palette = palette or default_palette
+    box_width = 0.6
     artists = ax.bxp(
         stats,
         showfliers=False,
         patch_artist=True,
+        widths=box_width,
         boxprops={"linewidth": 1.0, "edgecolor": "#2f2f2f"},
         whiskerprops={"linewidth": 1.0, "color": "#2f2f2f"},
         capprops={"linewidth": 1.0, "color": "#2f2f2f"},
@@ -802,12 +818,28 @@ def plot_synthetic_boxplot(
     for box, label in zip(artists["boxes"], labels):
         box.set_facecolor(palette.get(label, "#9e9e9e"))
         box.set_alpha(0.5)
+    half_width = box_width / 2
+    for idx, mean_val in enumerate(mean_values, start=1):
+        if mean_val is None:
+            continue
+        ax.hlines(mean_val, idx - half_width, idx + half_width, colors="#d62728", linewidth=1.4)
     ax.set_title(title, fontsize=12)
     ax.set_ylabel(ylabel, fontsize=10)
+    ax.set_xticklabels(labels, rotation=30, ha="right")
+    ax.legend(
+        handles=[
+            Line2D([0], [0], color="#d62728", linewidth=1.4, label="mean"),
+            Line2D([0], [0], color="#111111", linewidth=1.2, label="median"),
+        ],
+        frameon=False,
+        fontsize=9,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+    )
     style_axes(ax, grid_axis="y")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(output_path)
+    fig.tight_layout(rect=(0, 0, 0.86, 1))
+    fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved plot to {output_path}")
 
@@ -1374,7 +1406,7 @@ def plot_top5_competitors_boxplot(context: dict[str, Path | str | int]) -> None:
     if not my_stats:
         print(f"[WARN] Missing quantiles in {my_metrics_path}. Skipping top-5 boxplot.")
         return
-    my_label = f"OURS ({best_kernel})"
+    my_label = f"reinforce SVGD ({best_kernel})"
     box_specs: List[tuple[str, dict[str, float]]] = [
         (my_label, normalize_box_stats(problem_name, my_stats))
     ]
@@ -1407,7 +1439,7 @@ def plot_top5_competitors_boxplot(context: dict[str, Path | str | int]) -> None:
         palette[label] = next(color_cycle)
 
     plot_synthetic_boxplot(
-        title=f"Final score distribution: ours vs top-5 ({problem_name} N={dim}, K={type_instance})",
+        title=f"Final score distribution top-5 ({problem_name} N={dim}, K={type_instance})",
         ylabel="Score",
         output_path=output_dir / "boxplot_final_score_vs_top5.png",
         box_specs=box_specs,
