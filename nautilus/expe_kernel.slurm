@@ -12,6 +12,7 @@ echo "Job démarré sur $(hostname) à $(date)"
 echo "Run main_expe"
 
 export PYTHONUNBUFFERED=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 PYTHON=/micromamba/$USER/envs/ppo_env/bin/python
 
 srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe.py
