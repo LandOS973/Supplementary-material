@@ -674,12 +674,17 @@ def load_quantile_stats_at_final_step(
     high_field: str = "98%",
 ) -> dict[str, float] | None:
     with path.open(newline="") as handle:
-        reader = csv.DictReader(handle)
-        fieldnames = set(reader.fieldnames or [])
+        reader = csv.DictReader(handle, skipinitialspace=True)
+        fieldnames = [name.strip() for name in (reader.fieldnames or []) if name]
         required = {x_field, low_field, q1_field, median_field, q3_field, high_field}
-        if not required.issubset(fieldnames):
+        if not required.issubset(set(fieldnames)):
             return None
-        rows = list(reader)
+        rows: List[dict[str, str]] = []
+        for row in reader:
+            cleaned = {key.strip(): value for key, value in row.items() if key}
+            if cleaned.get(x_field) is None:
+                continue
+            rows.append(cleaned)
 
     if not rows:
         return None
@@ -701,6 +706,51 @@ def load_quantile_stats_at_final_step(
     return {key: float(value) for key, value in values.items()}
 
 
+def infer_quantile_x_field(path: Path) -> str:
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle, skipinitialspace=True)
+        fieldnames = [name.strip() for name in (reader.fieldnames or []) if name]
+    for key in ("runtime", "step", "evaluations", "evaluation", "eval", "budget"):
+        if key in fieldnames:
+            return key
+    return "step"
+
+
+def normalize_box_stats(problem_name: str, stats: dict[str, float]) -> dict[str, float]:
+    values = [stats["low"], stats["q1"], stats["med"], stats["q3"], stats["high"]]
+    normalized = _normalize_score_sign(problem_name, values)
+    if normalized[0] > normalized[-1]:
+        normalized = list(reversed(normalized))
+    return {
+        "low": normalized[0],
+        "q1": normalized[1],
+        "med": normalized[2],
+        "q3": normalized[3],
+        "high": normalized[4],
+    }
+
+
+def aggregate_quantile_stats(
+    paths: List[Path],
+    *,
+    problem_name: str,
+    x_field: str | None = None,
+) -> dict[str, float] | None:
+    stats_list: List[dict[str, float]] = []
+    for path in paths:
+        field = x_field or infer_quantile_x_field(path)
+        stats = load_quantile_stats_at_final_step(path, x_field=field)
+        if not stats:
+            continue
+        stats_list.append(normalize_box_stats(problem_name, stats))
+
+    if not stats_list:
+        return None
+
+    keys = ("low", "q1", "med", "q3", "high")
+    return {key: sum(item[key] for item in stats_list) / len(stats_list) for key in keys}
+
+
 def style_axes(ax, grid_axis: str = "y") -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -713,6 +763,8 @@ def plot_synthetic_boxplot(
     ylabel: str,
     output_path: Path,
     box_specs: List[tuple[str, dict[str, float]]],
+    *,
+    palette: dict[str, str] | None = None,
 ) -> None:
     if not box_specs:
         return
@@ -732,11 +784,12 @@ def plot_synthetic_boxplot(
         labels.append(label)
 
     fig, ax = plt.subplots(figsize=(6.6, 4.6), dpi=180)
-    palette = {
+    default_palette = {
         "NORMAL": "#1f77b4",
         "DECAY": "#2ca02c",
         "NO_INTERACT": "#ff7f0e",
     }
+    palette = palette or default_palette
     artists = ax.bxp(
         stats,
         showfliers=False,
@@ -1303,6 +1356,65 @@ def plot_final_score_boxplot(context: dict[str, Path | str | int]) -> None:
     )
 
 
+def plot_top5_competitors_boxplot(context: dict[str, Path | str | int]) -> None:
+    ranking_path = context["ranking_path"]
+    experiment_dir = Path(context["experiment_dir"])
+    output_dir = Path(context["output_dir"])
+    problem_name = str(context["problem_name"])
+    dim = int(context["dim"])
+    type_instance = int(context["type_instance"])
+
+    best_kernel = find_best_kernel_summary(experiment_dir, problem_name)
+    my_metrics_path = experiment_dir / f"{problem_name}_{best_kernel}_best_metrics.csv"
+    if not my_metrics_path.exists():
+        print(f"[WARN] Missing metrics file {my_metrics_path}. Skipping top-5 boxplot.")
+        return
+
+    my_stats = load_quantile_stats_at_final_step(my_metrics_path, x_field="step")
+    if not my_stats:
+        print(f"[WARN] Missing quantiles in {my_metrics_path}. Skipping top-5 boxplot.")
+        return
+    my_label = f"OURS ({best_kernel})"
+    box_specs: List[tuple[str, dict[str, float]]] = [
+        (my_label, normalize_box_stats(problem_name, my_stats))
+    ]
+
+    algos = load_top_algorithms(Path(ranking_path), limit=5, skip=("PPO-EDA",))
+    for algo in algos:
+        try:
+            paths, has_header = find_competitor_files(algo, dim, type_instance, problem_name)
+        except FileNotFoundError as exc:
+            print(f"[WARN] {exc}. Skipping.")
+            continue
+        if not has_header:
+            print(f"[WARN] Missing quantile headers for {algo}. Skipping.")
+            continue
+        stats = aggregate_quantile_stats(paths, problem_name=problem_name)
+        if not stats:
+            print(f"[WARN] Missing quantiles for {algo}. Skipping.")
+            continue
+        box_specs.append((algo, stats))
+
+    if len(box_specs) <= 1:
+        print("[WARN] No competitor stats available for top-5 boxplot.")
+        return
+
+    palette: dict[str, str] = {my_label: "#2ca02c"}
+    color_cycle = cycle(plt.cm.tab20.colors)
+    for label, _ in box_specs:
+        if label == my_label:
+            continue
+        palette[label] = next(color_cycle)
+
+    plot_synthetic_boxplot(
+        title=f"Final score distribution: ours vs top-5 ({problem_name} N={dim}, K={type_instance})",
+        ylabel="Score",
+        output_path=output_dir / "boxplot_final_score_vs_top5.png",
+        box_specs=box_specs,
+        palette=palette,
+    )
+
+
 def main() -> None:
     contexts = _discover_experiment_instances()
     if not contexts:
@@ -1334,6 +1446,10 @@ def main() -> None:
             plot_final_score_boxplot(context)
         except Exception as exc:
             print(f"[WARN] final score boxplot failed for {instance_name}: {exc}")
+        try:
+            plot_top5_competitors_boxplot(context)
+        except Exception as exc:
+            print(f"[WARN] top-5 competitor boxplot failed for {instance_name}: {exc}")
 
 
 if __name__ == "__main__":
