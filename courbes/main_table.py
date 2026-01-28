@@ -160,15 +160,33 @@ def build_rows(methods: List[str]) -> tuple[List[List[str]], List[str]]:
 
         ranking_file = ranking_path(problem_name, dim, type_instance)
         ranking = load_ranking(ranking_file)
-        total = len(ranking) if ranking else None
-        rank_map: dict[str, tuple[int, float]] = {}
-        for idx, (name, score) in enumerate(ranking, start=1):
-            rank_map[name] = (idx, score)
+        ranking = [(name, score) for name, score in ranking if name != "PPO-EDA"]
 
         row: List[str] = [problem_name, str(dim), str(type_instance)]
 
         our_score = normalize_score(problem_name, avg_score)
-        row.extend([format_rank(my_rank, my_total), format_score(problem_name, our_score)])
+
+        decay_score = None
+        decay_dir = exp_dir / "decay"
+        if decay_dir.exists():
+            decay_summary = load_best_summary(decay_dir, problem_name)
+            if decay_summary:
+                decay_score = normalize_score(problem_name, parse_float(decay_summary.get("avg_score")))
+
+        combined = list(ranking)
+        if our_score is not None:
+            combined.append(("reinforce SVGD", our_score))
+        if decay_score is not None:
+            combined.append(("reinforce SVGD decay", decay_score))
+        combined.sort(key=lambda item: item[1], reverse=True)
+        total = len(combined) if combined else None
+        rank_map: dict[str, tuple[int, float]] = {}
+        for idx, (name, score) in enumerate(combined, start=1):
+            rank_map[name] = (idx, score)
+        our_rank = rank_map.get("reinforce SVGD", (None, None))[0]
+        decay_rank = rank_map.get("reinforce SVGD decay", (None, None))[0]
+        row.extend([format_rank(our_rank, total), format_score(problem_name, our_score)])
+        row.extend([format_rank(decay_rank, total), format_score(problem_name, decay_score)])
 
         for method in methods:
             rank_entry = rank_map.get(method)
@@ -181,13 +199,17 @@ def build_rows(methods: List[str]) -> tuple[List[List[str]], List[str]]:
         best_name = "—"
         best_rank = None
         best_score = None
-        for idx, (name, score) in enumerate(ranking, start=1):
-            if name == "PPO-EDA":
-                continue
-            best_name = name
-            best_rank = idx
-            best_score = score
-            break
+        if combined:
+            excluded = set(methods)
+            excluded.add("reinforce SVGD")
+            excluded.add("reinforce SVGD decay")
+            for idx, (name, score) in enumerate(combined, start=1):
+                if name in excluded:
+                    continue
+                best_name = name
+                best_rank = idx
+                best_score = score
+                break
 
         row.extend(
             [
@@ -198,7 +220,92 @@ def build_rows(methods: List[str]) -> tuple[List[List[str]], List[str]]:
         )
         rows.append(row)
 
-    return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (1 + len(methods)) + ["Name", "Rank", "Score"]
+    return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (2 + len(methods)) + ["Name", "Rank", "Score"]
+
+
+def write_csv(rows: List[List[str]], col_labels: List[str], output_csv: Path) -> None:
+    if not rows:
+        print("[WARN] No rows to write.")
+        return
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    with output_csv.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(col_labels)
+        writer.writerows(rows)
+    print(f"Saved table to {output_csv}")
+
+
+def write_excel(rows: List[List[str]], col_labels: List[str], output_xlsx: Path) -> None:
+    if not rows:
+        print("[WARN] No rows to write.")
+        return
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font
+    except ImportError:
+        print("[WARN] openpyxl is not installed. Install it or use --format csv.")
+        return
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "summary"
+
+    # Column groups (0-based indices)
+    # Instances: Pb, n, t -> cols 1-3
+    # Methods: reinforce SVGD, PBIL, MIMIC, BOA -> each has Rank/Score
+    # Best method (others): Name, Rank, Score -> last 3
+    n_cols = len(col_labels)
+    if n_cols != 16:
+        print("[WARN] Unexpected column count, Excel header merging may be off.")
+
+    # Header rows
+    ws.append([""] * n_cols)
+    ws.append([""] * n_cols)
+    ws.append(col_labels)
+
+    # Group headers (row 1)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
+    ws.cell(row=1, column=1, value="Instances")
+    ws.merge_cells(start_row=1, start_column=4, end_row=1, end_column=13)
+    ws.cell(row=1, column=4, value="Methods")
+    ws.merge_cells(start_row=1, start_column=14, end_row=1, end_column=16)
+    ws.cell(row=1, column=14, value="Best method (others)")
+
+    # Method headers (row 2)
+    ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=5)
+    ws.cell(row=2, column=4, value="reinforce SVGD")
+    ws.merge_cells(start_row=2, start_column=6, end_row=2, end_column=7)
+    ws.cell(row=2, column=6, value="reinforce SVGD decay")
+    ws.merge_cells(start_row=2, start_column=8, end_row=2, end_column=9)
+    ws.cell(row=2, column=8, value="PBIL")
+    ws.merge_cells(start_row=2, start_column=10, end_row=2, end_column=11)
+    ws.cell(row=2, column=10, value="MIMIC")
+    ws.merge_cells(start_row=2, start_column=12, end_row=2, end_column=13)
+    ws.cell(row=2, column=12, value="BOA")
+
+    # Data rows
+    for row in rows:
+        ws.append(row)
+
+    bold = Font(bold=True)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for row_idx in range(1, 4):
+        for col_idx in range(1, n_cols + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.font = bold
+            cell.alignment = center
+
+    for row_idx in range(4, 4 + len(rows)):
+        for col_idx in range(1, n_cols + 1):
+            ws.cell(row=row_idx, column=col_idx).alignment = center
+
+    col_widths = [8, 6, 6] + [9, 9] * 5 + [24, 9, 9]
+    for idx, width in enumerate(col_widths, start=1):
+        ws.column_dimensions[chr(64 + idx)].width = width
+
+    output_xlsx.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(output_xlsx)
+    print(f"Saved table to {output_xlsx}")
 
 
 def plot_table(rows: List[List[str]], col_labels: List[str], output_png: Path, output_pdf: Path) -> None:
@@ -207,23 +314,26 @@ def plot_table(rows: List[List[str]], col_labels: List[str], output_png: Path, o
         return
 
     n_rows = len(rows)
-    fig_height = 1.6 + 0.35 * n_rows
-    fig, ax = plt.subplots(figsize=(16, fig_height), dpi=220)
+    fig_height = max(8.0, 0.42 * (n_rows + 2))
+    fig, ax = plt.subplots(figsize=(18, fig_height), dpi=220)
     ax.axis("off")
+    ax.set_position([0.02, 0.02, 0.96, 0.96])
 
-    col_widths = [0.06, 0.04, 0.04] + [0.06, 0.06] * 4 + [0.18, 0.06, 0.06]
+    col_widths = [0.06, 0.04, 0.04] + [0.06, 0.06] * 5 + [0.24, 0.06, 0.06]
     total_width = sum(col_widths)
     col_widths = [w / total_width for w in col_widths]
 
+    n_cols = len(col_labels)
+    table_bbox = [0, 0, 1, 0.82]
     table = ax.table(
         cellText=rows,
         colLabels=col_labels,
         cellLoc="center",
         colLoc="center",
-        bbox=[0, 0, 1, 0.9],
+        bbox=table_bbox,
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(8)
+    table.set_fontsize(9)
 
     for col_idx, width in enumerate(col_widths):
         for row_idx in range(n_rows + 1):
@@ -231,29 +341,22 @@ def plot_table(rows: List[List[str]], col_labels: List[str], output_png: Path, o
             if cell:
                 cell.set_width(width)
 
-    for row_idx in range(n_rows + 1):
-        cell = table.get_celld().get((row_idx, 0))
-        if cell:
-            cell.set_height(0.9 / (n_rows + 1))
-
-    x_edges = [0.0]
-    for width in col_widths:
-        x_edges.append(x_edges[-1] + width)
-
-    def center_between(start: int, end: int) -> float:
-        return (x_edges[start] + x_edges[end]) / 2
-
-    ax.text(center_between(0, 3), 0.965, "Instances", ha="center", va="center", fontsize=10)
-    ax.text(center_between(3, 11), 0.965, "Methods", ha="center", va="center", fontsize=10)
-    ax.text(center_between(11, 14), 0.965, "Best method (others)", ha="center", va="center", fontsize=10)
-
-    method_labels = ["reinforce SVGD", "PBIL", "MIMIC", "BOA"]
-    method_spans = [(3, 5), (5, 7), (7, 9), (9, 11)]
-    for label, (start, end) in zip(method_labels, method_spans):
-        ax.text(center_between(start, end), 0.925, label, ha="center", va="center", fontsize=9)
-
-    ax.hlines(0.9, 0, 1, transform=ax.transAxes, color="#333333", linewidth=0.8)
-    ax.hlines(0.0, 0, 1, transform=ax.transAxes, color="#333333", linewidth=0.8)
+    line_counts: List[int] = [1]
+    for row in rows:
+        max_lines = 1
+        for value in row:
+            max_lines = max(max_lines, str(value).count("\n") + 1)
+        line_counts.append(max_lines)
+    total_lines = sum(line_counts)
+    bbox_height = table_bbox[3]
+    for row_idx, line_count in enumerate(line_counts):
+        row_height = bbox_height * (line_count / total_lines)
+        for col_idx in range(n_cols):
+            cell = table.get_celld().get((row_idx, col_idx))
+            if cell:
+                cell.set_height(row_height)
+                if row_idx == 0:
+                    cell.get_text().set_fontweight("bold")
 
     rows_problem = [row[0] for row in rows]
     for idx in range(1, n_rows):
@@ -262,10 +365,57 @@ def plot_table(rows: List[List[str]], col_labels: List[str], output_png: Path, o
             if cell:
                 ax.hlines(cell.get_y(), 0, 1, transform=ax.transAxes, color="#666666", linewidth=0.6)
 
+    x_edges = [0.0]
+    for width in col_widths:
+        x_edges.append(x_edges[-1] + width)
+
+    def center_between(start: int, end: int) -> float:
+        return (x_edges[start] + x_edges[end]) / 2
+
+    header_bottom = table_bbox[1] + table_bbox[3]
+    header2_h = 0.06
+    header1_h = 0.07
+    header2_y = header_bottom
+    header1_y = header_bottom + header2_h
+
+    def draw_header_cell(x0: float, x1: float, y0: float, h: float, text: str, fontsize: int) -> None:
+        rect = plt.Rectangle(
+            (x0, y0),
+            x1 - x0,
+            h,
+            fill=False,
+            linewidth=0.8,
+            edgecolor="#333333",
+            transform=ax.transAxes,
+        )
+        ax.add_patch(rect)
+        if text:
+            ax.text(
+                (x0 + x1) / 2,
+                y0 + h / 2,
+                text,
+                ha="center",
+                va="center",
+                fontsize=fontsize,
+                transform=ax.transAxes,
+            )
+
+    draw_header_cell(x_edges[0], x_edges[3], header1_y, header1_h, "Instances", 11)
+    draw_header_cell(x_edges[3], x_edges[13], header1_y, header1_h, "Methods", 11)
+    draw_header_cell(x_edges[13], x_edges[16], header1_y, header1_h, "Best method (others)", 11)
+
+    draw_header_cell(x_edges[0], x_edges[3], header2_y, header2_h, "", 9)
+    method_labels = ["reinforce SVGD", "reinforce SVGD decay", "PBIL", "MIMIC", "BOA"]
+    method_spans = [(3, 5), (5, 7), (7, 9), (9, 11), (11, 13)]
+    for label, (start, end) in zip(method_labels, method_spans):
+        draw_header_cell(x_edges[start], x_edges[end], header2_y, header2_h, label, 9)
+    draw_header_cell(x_edges[13], x_edges[16], header2_y, header2_h, "", 9)
+
+    ax.hlines(header_bottom, 0, 1, transform=ax.transAxes, color="#333333", linewidth=0.8)
+
     output_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(output_png, bbox_inches="tight")
-    fig.savefig(output_pdf, bbox_inches="tight")
+    fig.savefig(output_png)
+    fig.savefig(output_pdf)
     plt.close(fig)
     print(f"Saved table to {output_png} and {output_pdf}")
 
@@ -274,11 +424,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate summary table for all instances.")
     parser.add_argument("--png", type=Path, default=ROOT / "courbes" / "summary_table.png")
     parser.add_argument("--pdf", type=Path, default=ROOT / "courbes" / "summary_table.pdf")
+    parser.add_argument("--csv", type=Path, default=ROOT / "courbes" / "summary_table.csv")
+    parser.add_argument("--xlsx", type=Path, default=ROOT / "courbes" / "summary_table.xlsx")
+    parser.add_argument("--format", choices=("all", "csv", "image", "excel"), default="all")
     args = parser.parse_args()
 
     methods = ["PBIL", "MIMIC", "BOA"]
     rows, col_labels = build_rows(methods)
-    plot_table(rows, col_labels, args.png, args.pdf)
+    if args.format in ("all", "csv"):
+        write_csv(rows, col_labels, args.csv)
+    if args.format in ("all", "image"):
+        plot_table(rows, col_labels, args.png, args.pdf)
+    if args.format in ("all", "excel"):
+        write_excel(rows, col_labels, args.xlsx)
 
 
 if __name__ == "__main__":
