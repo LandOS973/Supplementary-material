@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -152,6 +153,7 @@ def load_quantile_stats_at_final_step(
     median_field: str = "50%",
     q3_field: str = "75%",
     high_field: str = "98%",
+    mean_field: str = "mean",
 ) -> dict[str, float] | None:
     reader = _read_csv_without_comments(path)
     fieldnames = set(reader.fieldnames or [])
@@ -181,6 +183,9 @@ def load_quantile_stats_at_final_step(
     }
     if any(val is None for val in values.values()):
         return None
+    mean_val = _parse_float(last_row.get(mean_field))
+    if mean_val is not None:
+        values["mean"] = float(mean_val)
     return {key: float(val) for key, val in values.items()}
 
 
@@ -312,6 +317,7 @@ def _plot_synthetic_boxplot(
 
     stats = []
     labels = []
+    mean_values: List[float | None] = []
     for label, spec in box_specs:
         stats.append({
             "label": label,
@@ -323,6 +329,7 @@ def _plot_synthetic_boxplot(
             "fliers": [],
         })
         labels.append(label)
+        mean_values.append(spec.get("mean"))
 
     fig, ax = plt.subplots(figsize=(6.6, 4.6), dpi=180)
     palette = {
@@ -330,10 +337,12 @@ def _plot_synthetic_boxplot(
         "DECAY": "#2ca02c",
         "NO_INTERACT": "#ff7f0e",
     }
+    box_width = 0.6
     artists = ax.bxp(
         stats,
         showfliers=False,
         patch_artist=True,
+        widths=box_width,
         boxprops={"linewidth": 1.0, "edgecolor": "#2f2f2f"},
         whiskerprops={"linewidth": 1.0, "color": "#2f2f2f"},
         capprops={"linewidth": 1.0, "color": "#2f2f2f"},
@@ -342,12 +351,28 @@ def _plot_synthetic_boxplot(
     for box, label in zip(artists["boxes"], labels):
         box.set_facecolor(palette.get(label, "#9e9e9e"))
         box.set_alpha(0.5)
+    half_width = box_width / 2
+    for idx, mean_val in enumerate(mean_values, start=1):
+        if mean_val is None:
+            continue
+        ax.hlines(mean_val, idx - half_width, idx + half_width, colors="#d62728", linewidth=1.4)
     ax.set_title(title, fontsize=12)
     ax.set_ylabel(ylabel, fontsize=10)
+    ax.set_xticklabels(labels, rotation=30, ha="right")
+    ax.legend(
+        handles=[
+            Line2D([0], [0], color="#d62728", linewidth=1.4, label="mean"),
+            Line2D([0], [0], color="#111111", linewidth=1.2, label="median"),
+        ],
+        frameon=False,
+        fontsize=9,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+    )
     style_axes(ax, grid_axis="y")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(output_path)
+    fig.tight_layout(rect=(0, 0, 0.86, 1))
+    fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved plot to {output_path}")
 
