@@ -90,6 +90,7 @@ def _build_instance_context() -> dict[str, Path | str | int]:
         "instance_name": instance_name,
         "ranking_path": ranking_path,
         "experiment_dir": experiment_dir,
+        "output_dir": output_dir,
         "my_data_path": experiment_dir / f"{problem_name}_{DEFAULT_KERNEL}_best_metrics.csv",
         "output_path": output_path,
         "kernels_output_dir": output_dir / "Kernels",
@@ -115,6 +116,7 @@ def _build_instance_context_from_values(problem_name: str, dim: int, type_instan
         "instance_name": instance_name,
         "ranking_path": ranking_path,
         "experiment_dir": experiment_dir,
+        "output_dir": output_dir,
         "my_data_path": experiment_dir / f"{problem_name}_{DEFAULT_KERNEL}_best_metrics.csv",
         "output_path": output_path,
         "kernels_output_dir": output_dir / "Kernels",
@@ -661,11 +663,100 @@ def load_metric_series_with_std(
     return x_vals, mean_vals, None
 
 
+def load_quantile_stats_at_final_step(
+    path: Path,
+    *,
+    x_field: str = "step",
+    low_field: str = "2%",
+    q1_field: str = "25%",
+    median_field: str = "50%",
+    q3_field: str = "75%",
+    high_field: str = "98%",
+) -> dict[str, float] | None:
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = set(reader.fieldnames or [])
+        required = {x_field, low_field, q1_field, median_field, q3_field, high_field}
+        if not required.issubset(fieldnames):
+            return None
+        rows = list(reader)
+
+    if not rows:
+        return None
+
+    def _step_value(row: dict[str, str]) -> float:
+        value = parse_float(row.get(x_field))
+        return value if value is not None else float("-inf")
+
+    last_row = max(rows, key=_step_value)
+    values = {
+        "low": parse_float(last_row.get(low_field)),
+        "q1": parse_float(last_row.get(q1_field)),
+        "med": parse_float(last_row.get(median_field)),
+        "q3": parse_float(last_row.get(q3_field)),
+        "high": parse_float(last_row.get(high_field)),
+    }
+    if any(value is None for value in values.values()):
+        return None
+    return {key: float(value) for key, value in values.items()}
+
+
 def style_axes(ax, grid_axis: str = "y") -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.tick_params(axis="both", labelsize=9, width=0.6, length=3)
     ax.grid(True, axis=grid_axis, linestyle="--", linewidth=0.5, alpha=0.4)
+
+
+def plot_synthetic_boxplot(
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    box_specs: List[tuple[str, dict[str, float]]],
+) -> None:
+    if not box_specs:
+        return
+
+    stats = []
+    labels = []
+    for label, spec in box_specs:
+        stats.append({
+            "label": label,
+            "whislo": spec["low"],
+            "q1": spec["q1"],
+            "med": spec["med"],
+            "q3": spec["q3"],
+            "whishi": spec["high"],
+            "fliers": [],
+        })
+        labels.append(label)
+
+    fig, ax = plt.subplots(figsize=(6.6, 4.6), dpi=180)
+    palette = {
+        "NORMAL": "#1f77b4",
+        "DECAY": "#2ca02c",
+        "NO_INTERACT": "#ff7f0e",
+    }
+    artists = ax.bxp(
+        stats,
+        showfliers=False,
+        patch_artist=True,
+        boxprops={"linewidth": 1.0, "edgecolor": "#2f2f2f"},
+        whiskerprops={"linewidth": 1.0, "color": "#2f2f2f"},
+        capprops={"linewidth": 1.0, "color": "#2f2f2f"},
+        medianprops={"linewidth": 1.2, "color": "#111111"},
+    )
+    for box, label in zip(artists["boxes"], labels):
+        box.set_facecolor(palette.get(label, "#9e9e9e"))
+        box.set_alpha(0.5)
+    ax.set_title(title, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=10)
+    style_axes(ax, grid_axis="y")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
 
 
 def plot_interact_vs_no_interact_series(
@@ -1162,6 +1253,56 @@ def plot_decay_comparison(context: dict[str, Path | str | int]) -> None:
         )
 
 
+def plot_final_score_boxplot(context: dict[str, Path | str | int]) -> None:
+    experiment_dir = Path(context["experiment_dir"])
+    output_dir = Path(context["output_dir"])
+    problem_name = str(context["problem_name"])
+    dim = int(context["dim"])
+    type_instance = int(context["type_instance"])
+
+    normal_kernel = find_best_kernel_summary(experiment_dir, problem_name)
+    normal_path = experiment_dir / f"{problem_name}_{normal_kernel}_best_metrics.csv"
+
+    decay_dir = experiment_dir / "decay"
+    decay_path = None
+    if decay_dir.exists():
+        decay_kernel = find_best_kernel_summary(decay_dir, problem_name)
+        decay_path = decay_dir / f"{problem_name}_{decay_kernel}_best_metrics.csv"
+
+    no_interact_dir = experiment_dir / "no_interact"
+    no_interact_path = None
+    if no_interact_dir.exists():
+        no_interact_kernels = list_kernels_from_metrics(no_interact_dir, problem_name)
+        if no_interact_kernels:
+            no_interact_kernel = select_best_kernel_from_summaries(
+                no_interact_dir, problem_name, no_interact_kernels
+            )
+            if no_interact_kernel is None:
+                no_interact_kernel = no_interact_kernels[0]
+            no_interact_path = no_interact_dir / f"{problem_name}_{no_interact_kernel}_best_metrics.csv"
+
+    box_specs: List[tuple[str, dict[str, float]]] = []
+    if normal_path.exists():
+        stats = load_quantile_stats_at_final_step(normal_path)
+        if stats:
+            box_specs.append(("NORMAL", stats))
+    if decay_path and decay_path.exists():
+        stats = load_quantile_stats_at_final_step(decay_path)
+        if stats:
+            box_specs.append(("DECAY", stats))
+    if no_interact_path and no_interact_path.exists():
+        stats = load_quantile_stats_at_final_step(no_interact_path)
+        if stats:
+            box_specs.append(("NO_INTERACT", stats))
+
+    plot_synthetic_boxplot(
+        title=f"Final score distribution ({problem_name} N={dim}, K={type_instance})",
+        ylabel="Score",
+        output_path=output_dir / "boxplot_final_score.png",
+        box_specs=box_specs,
+    )
+
+
 def main() -> None:
     contexts = _discover_experiment_instances()
     if not contexts:
@@ -1189,6 +1330,10 @@ def main() -> None:
             plot_decay_comparison(context)
         except Exception as exc:
             print(f"[WARN] decay comparison failed for {instance_name}: {exc}")
+        try:
+            plot_final_score_boxplot(context)
+        except Exception as exc:
+            print(f"[WARN] final score boxplot failed for {instance_name}: {exc}")
 
 
 if __name__ == "__main__":

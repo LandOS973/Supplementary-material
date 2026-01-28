@@ -143,6 +143,47 @@ def load_metric_series_with_std(
     return x_vals, mean_vals, None
 
 
+def load_quantile_stats_at_final_step(
+    path: Path,
+    *,
+    x_field: str = "step",
+    low_field: str = "2%",
+    q1_field: str = "25%",
+    median_field: str = "50%",
+    q3_field: str = "75%",
+    high_field: str = "98%",
+) -> dict[str, float] | None:
+    reader = _read_csv_without_comments(path)
+    fieldnames = set(reader.fieldnames or [])
+    required = {x_field, low_field, q1_field, median_field, q3_field, high_field}
+    if not required.issubset(fieldnames):
+        return None
+
+    rows: List[dict[str, str]] = []
+    for row in reader:
+        if row.get(x_field) is None:
+            continue
+        rows.append(row)
+    if not rows:
+        return None
+
+    def _step_value(r: dict[str, str]) -> float:
+        val = _parse_float(r.get(x_field))
+        return val if val is not None else float("-inf")
+
+    last_row = max(rows, key=_step_value)
+    values = {
+        "low": _parse_float(last_row.get(low_field)),
+        "q1": _parse_float(last_row.get(q1_field)),
+        "med": _parse_float(last_row.get(median_field)),
+        "q3": _parse_float(last_row.get(q3_field)),
+        "high": _parse_float(last_row.get(high_field)),
+    }
+    if any(val is None for val in values.values()):
+        return None
+    return {key: float(val) for key, val in values.items()}
+
+
 def style_axes(ax, grid_axis: str = "y") -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -253,6 +294,57 @@ def _plot_metric_triplet(
     ax.set_ylabel(ylabel, fontsize=10)
     ax.legend(frameon=False, fontsize=9)
     style_axes(ax, grid_axis="both")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
+
+
+def _plot_synthetic_boxplot(
+    title: str,
+    ylabel: str,
+    output_path: Path,
+    box_specs: List[tuple[str, dict[str, float]]],
+) -> None:
+    if not box_specs:
+        return
+
+    stats = []
+    labels = []
+    for label, spec in box_specs:
+        stats.append({
+            "label": label,
+            "whislo": spec["low"],
+            "q1": spec["q1"],
+            "med": spec["med"],
+            "q3": spec["q3"],
+            "whishi": spec["high"],
+            "fliers": [],
+        })
+        labels.append(label)
+
+    fig, ax = plt.subplots(figsize=(6.6, 4.6), dpi=180)
+    palette = {
+        "NORMAL": "#1f77b4",
+        "DECAY": "#2ca02c",
+        "NO_INTERACT": "#ff7f0e",
+    }
+    artists = ax.bxp(
+        stats,
+        showfliers=False,
+        patch_artist=True,
+        boxprops={"linewidth": 1.0, "edgecolor": "#2f2f2f"},
+        whiskerprops={"linewidth": 1.0, "color": "#2f2f2f"},
+        capprops={"linewidth": 1.0, "color": "#2f2f2f"},
+        medianprops={"linewidth": 1.2, "color": "#111111"},
+    )
+    for box, label in zip(artists["boxes"], labels):
+        box.set_facecolor(palette.get(label, "#9e9e9e"))
+        box.set_alpha(0.5)
+    ax.set_title(title, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=10)
+    style_axes(ax, grid_axis="y")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(output_path)
@@ -581,6 +673,24 @@ def main() -> None:
                     output_path=budget_output_dir / "hamming_normal_vs_decay_vs_no_interact.png",
                     metric_field="avg_hamming",
                 )
+
+            box_specs: List[tuple[str, dict[str, float]]] = []
+            normal_stats = load_quantile_stats_at_final_step(interact_path)
+            if normal_stats:
+                box_specs.append(("NORMAL", normal_stats))
+            decay_stats = load_quantile_stats_at_final_step(decay_path) if decay_path.exists() else None
+            if decay_stats:
+                box_specs.append(("DECAY", decay_stats))
+            no_stats = load_quantile_stats_at_final_step(no_interact_path) if no_interact_path.exists() else None
+            if no_stats:
+                box_specs.append(("NO_INTERACT", no_stats))
+
+            _plot_synthetic_boxplot(
+                title=f"Final score distribution ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                ylabel="Score",
+                output_path=budget_output_dir / "boxplot_final_score.png",
+                box_specs=box_specs,
+            )
 
 
 if __name__ == "__main__":

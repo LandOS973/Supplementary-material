@@ -20,7 +20,7 @@ from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 
 
-DEFAULT_BUDGETS = [20000, 30000]
+DEFAULT_BUDGETS = [20000, 30000,40000]
 DEFAULTS = dict(
     seed=0,
     nb_instances_test=10,
