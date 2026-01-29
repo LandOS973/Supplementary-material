@@ -235,7 +235,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         if self.no_interact or self.M <= 1:
             with torch.no_grad():
-                self.theta += self.epsilon_svgd * score
+                self.theta += self.epsilon_svgd * (1/self.svgd.gamma * score)
             return
 
         with torch.enable_grad():

@@ -1,16 +1,14 @@
 Problem: QUBO
 Kernel: rbf
 Advantage: peragentrankweighted
-M: 3
-lambda: 7
-epsilon_svgd: 0.3
-gamma: 5e-05
+M: 15
+lambda: 10
+epsilon_svgd: 0.1
+gamma: 0.001
 bandwith_kernel: None
 no_interact: True
-avg_score: -187.02000427246094
-median_score: -187.0
-std_score: 11.516925811767578
-percentiles: 2%=-212.02000427246094, 5%=-208.1999969482422, 10%=-202.1999969482422, 25%=-194.0, 50%=-187.0, 75%=-179.0, 90%=-173.0, 95%=-168.95001220703125, 98%=-167.9399871826172
-ranking_best_algo: Tabu
-ranking_best_score: 208.36000000000004
-ranking_my_rank: 264/505 (47.9%)
+avg_score: -133.22000122070312
+median_score: -132.5
+std_score: 12.618700981140137
+percentiles: 2%=-157.0399932861328, 5%=-155.0, 10%=-147.10000610351562, 25%=-140.0, 50%=-132.5, 75%=-127.0, 90%=-117.0, 95%=-114.80000305175781, 98%=-109.0
+ranking: unavailable
