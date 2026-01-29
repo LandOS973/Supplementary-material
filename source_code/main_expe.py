@@ -31,13 +31,12 @@ ADVANTAGES = ["peragentrankweighted", "normalizedfitness"]
 #KERNELS = ["rbf", "pk", "hk", "jsd"]
 KERNELS = [ "pk", "rbf", "jsd"]
 #KERNELS = ["rbf"]
-NO_INTERACT_VALUES = [False,True]
+NO_INTERACT_VALUES = [False]
 NO_INTERACT_KERNEL = "rbf"
 
 PROBLEMS = [
-    dict(name="NK", dim=64, type_instance=1),
-    dict(name="NK", dim=64, type_instance=2),
-    dict(name="QUBO", dim=128, type_instance=1),
+    dict(name="NK", dim=64, type_instance=8),
+    dict(name="QUBO", dim=128, type_instance=2),
 ]
 
 DEFAULTS = dict(
