@@ -16,4 +16,10 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 PYTHON=/micromamba/$USER/envs/ppo_env/bin/python
 
 srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe.py
+srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe_decay.py
+srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_ppo_eda_batch.py
+srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_budget_plot.py
+srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_plot.py
+srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_table.py
+
 echo "Job terminé à $(date)"

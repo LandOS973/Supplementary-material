@@ -20,7 +20,7 @@ from utils.main_utils import rank_vs_global_ranking
 #  Grilles
 # ============
 #EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1, 0.5, 0.8]
-EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1,0.3]
+EPSILON_SVGD_GRID = [0.007 ,0.01, 0.03, 0.1,0.3,0.8]
 #GAMMA_GRID = [ 0.0005 ,0.001, 0.01, 0.05]
 GAMMA_GRID = [0.00005, 0.0001, 0.0005 ,0.001, 0.01]
 M_VALUES = [15 ,10, 5, 3, 2, 1]
@@ -35,7 +35,9 @@ NO_INTERACT_VALUES = [False,True]
 NO_INTERACT_KERNEL = "rbf"
 
 PROBLEMS = [
-    dict(name="NK", dim=256, type_instance=4),
+    dict(name="NK", dim=64, type_instance=1),
+    dict(name="NK", dim=64, type_instance=2),
+    dict(name="QUBO", dim=128, type_instance=1),
 ]
 
 DEFAULTS = dict(
