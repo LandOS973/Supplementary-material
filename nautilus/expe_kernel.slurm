@@ -7,6 +7,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH --time=10:00:00
+#SBATCH --mail-user=thomas.landais@univ-angers.fr
+#SBATCH --mail-type=END,FAIL
 
 OUTFILE="/home/t.lan@univ-angers.fr/Supplementary-material/outputs/expe_${SLURM_JOB_ID}.out"
 
@@ -26,7 +28,4 @@ srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_plot
 srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_table.py
 
 echo "Job terminé à $(date)"
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/utils/notify_discord.py \
-  --message "✅ Job *expe* terminé — ID ${SLURM_JOB_ID} sur $(hostname) à $(date)" \
-  --tail-file "$OUTFILE" \
-  --tail-lines 5
+echo "Notification mail Slurm activée."
