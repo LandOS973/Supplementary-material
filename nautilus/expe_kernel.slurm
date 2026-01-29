@@ -23,9 +23,6 @@ srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_
 srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_no_interact_batch.py
 srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe_decay.py
 srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_ppo_eda_batch.py
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_budget_plot.py
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_plot.py
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/courbes/main_table.py
 
 echo "Job terminé à $(date)"
 echo "Notification mail Slurm activée."
