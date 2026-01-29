@@ -21,7 +21,6 @@ from main_ppo_eda_batch import (
 
 
 RUN_BUDGET = 10000
-CLEANUP_BUDGETS = [10000, 20000, 30000, 40000]
 
 
 def _compute_stats(scores: np.ndarray) -> Dict[str, float]:
@@ -141,19 +140,6 @@ def _write_no_interact_summary(out_dir: Path, problem_name: str, kernel_name: st
         f.write("ranking: unavailable\n")
 
 
-def _cleanup_budget_files(repo_root: Path, instance_name: str) -> None:
-    for budget in CLEANUP_BUDGETS:
-        budget_dir = repo_root / "results" / "experiments" / instance_name / str(budget)
-        target = budget_dir / "no_interact.csv"
-        if not target.exists():
-            continue
-        try:
-            target.unlink()
-            print(f"    [CLEAN] {target}")
-        except OSError:
-            print(f"    [WARN] impossible de supprimer {target}")
-
-
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     instances = _discover_instances(repo_root)
@@ -171,8 +157,13 @@ def main() -> None:
         instance_name = f"{problem_name}_dim{dim}_t{type_instance}"
         print(f"[INFO] Instance {instance_name}")
 
-        problem_ctx = _load_problem_context(inst)
         summary_dir = repo_root / "results" / "experiments" / instance_name
+        no_interact_dir = summary_dir / "no_interact"
+        if no_interact_dir.exists():
+            print(f"  [SKIP] {instance_name} deja present dans no_interact")
+            continue
+
+        problem_ctx = _load_problem_context(inst)
         best_kernel, best_cfg = _find_best_kernel_summary(summary_dir, problem_ctx["type_problem"])
         if best_kernel is None or best_cfg is None:
             print(f"[WARN] Pas de resume normal pour {instance_name} dans {summary_dir}")
@@ -191,7 +182,6 @@ def main() -> None:
         dt = time.time() - t0
         print(f"    avg_score={stats['avg_score']:.6f} runtime={dt:.2f}s")
 
-        no_interact_dir = summary_dir / "no_interact"
         _purge_no_interact_dir(no_interact_dir)
         meta = dict(
             advantage=params["advantage"],
@@ -204,8 +194,6 @@ def main() -> None:
             **stats,
         )
         _write_no_interact_summary(no_interact_dir, problem_ctx["type_problem"], params["kernel_name"], history, meta)
-
-        _cleanup_budget_files(repo_root, instance_name)
 
     print(f"[DONE] no_interact batch finished in {time.time() - start_all:.2f}s")
 
