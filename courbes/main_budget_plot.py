@@ -568,6 +568,16 @@ def main() -> None:
                     left_label="interact",
                     right_label="no_interact",
                 )
+                _plot_metric_pair(
+                    interact_path,
+                    no_interact_path,
+                    title=f"Average L1: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average L1",
+                    output_path=budget_output_dir / "l1_interact_vs_no_interact.png",
+                    metric_field="avg_l1",
+                    left_label="interact",
+                    right_label="no_interact",
+                )
                 try:
                     x_int, y_int, std_int = load_metric_series_with_std(interact_path, x_field="step")
                     x_no, y_no, std_no = load_metric_series_with_std(no_interact_path, x_field="step")
@@ -636,6 +646,16 @@ def main() -> None:
                     left_label="NORMAL",
                     right_label="DECAY",
                 )
+                _plot_metric_pair(
+                    interact_path,
+                    decay_path,
+                    title=f"Average L1: NORMAL vs DECAY ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average L1",
+                    output_path=budget_output_dir / "l1_interact_vs_decay.png",
+                    metric_field="avg_l1",
+                    left_label="NORMAL",
+                    right_label="DECAY",
+                )
                 try:
                     x_int, y_int, std_int = load_metric_series_with_std(interact_path, x_field="step")
                     x_dec, y_dec, std_dec = load_metric_series_with_std(decay_path, x_field="step")
@@ -697,6 +717,15 @@ def main() -> None:
                     ylabel="Average hamming",
                     output_path=budget_output_dir / "hamming_normal_vs_decay_vs_no_interact.png",
                     metric_field="avg_hamming",
+                )
+                _plot_metric_triplet(
+                    interact_path,
+                    decay_path,
+                    no_interact_path,
+                    title=f"Average L1: NORMAL vs DECAY vs NO_INTERACT ({problem_name} N={dim}, K={type_instance}, budget={budget})",
+                    ylabel="Average L1",
+                    output_path=budget_output_dir / "l1_normal_vs_decay_vs_no_interact.png",
+                    metric_field="avg_l1",
                 )
 
             box_specs: List[tuple[str, dict[str, float]]] = []
