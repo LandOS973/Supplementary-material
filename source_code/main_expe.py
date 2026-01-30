@@ -35,8 +35,7 @@ NO_INTERACT_VALUES = [False]
 NO_INTERACT_KERNEL = "rbf"
 
 PROBLEMS = [
-    dict(name="NK", dim=64, type_instance=8),
-    dict(name="QUBO", dim=128, type_instance=2),
+    dict(name="BLOCK", dim=2064, type_instance=16, dummy_blocks=1)
 ]
 
 DEFAULTS = dict(
@@ -59,8 +58,10 @@ def _is_better_score(problem_type: str, new_score: float, best_score: float) -> 
     return new_score < best_score
 
 
-def _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact):
+def _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact, dummy_blocks=0):
     problem_dir = os.path.join(out_dir, f"{problem_name}_dim{dim}_t{type_instance}")
+    if dummy_blocks:
+        problem_dir = os.path.join(problem_dir, f"dummy{dummy_blocks}")
     if no_interact:
         problem_dir = os.path.join(problem_dir, "no_interact")
     return problem_dir
@@ -123,6 +124,7 @@ def _load_instances(problem_cfg, device):
 
     if name == "BLOCK":
         block_size = type_instance
+        dummy_blocks = int(problem_cfg.get("dummy_blocks", 0))
         if block_size <= 0:
             raise ValueError(f"block_size must be positive, got {block_size}")
         if dim % block_size != 0:
@@ -132,6 +134,7 @@ def _load_instances(problem_cfg, device):
             dim=dim,
             type_instance=type_instance,
             block_size=block_size,
+            dummy_blocks=dummy_blocks,
             tensor_Q_test=None,
             dim_variables=None,
             D=None,
@@ -206,6 +209,7 @@ def _run_once(
             False,
             enable_visualization=False,
             return_history=True,
+            dummy_blocks=problem_ctx.get("dummy_blocks", 0),
         )
     else:
         total_lambda = strategy.lambda_
@@ -259,6 +263,7 @@ def _run_once(
         problem=problem_ctx["type_problem"],
         dim=problem_ctx["dim"],
         type_instance=problem_ctx["type_instance"],
+        dummy_blocks=problem_ctx.get("dummy_blocks", 0),
         kernel=kernel_name,
         advantage=advantage,
         M=M,
@@ -335,6 +340,8 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
     with open(summary_path, "w") as f:
         f.write(f"Problem: {problem_name}\n")
         f.write(f"Kernel: {kernel_name}\n")
+        if "dummy_blocks" in meta:
+            f.write(f"dummy_blocks: {meta['dummy_blocks']}\n")
         f.write(f"Advantage: {meta['advantage']}\n")
         f.write(f"M: {meta['M']}\n")
         f.write(f"lambda: {meta['lambda_']}\n")
@@ -360,8 +367,8 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         else:
             f.write("ranking: unavailable\n")
 
-def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, no_interact):
-    problem_dir = _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact)
+def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name, no_interact, dummy_blocks=0):
+    problem_dir = _get_problem_dir(out_dir, problem_name, dim, type_instance, no_interact, dummy_blocks)
     summary_path = os.path.join(problem_dir, f"{problem_name}_{kernel_name}_best_summary.txt")
     if not os.path.isfile(summary_path):
         return None
@@ -422,6 +429,7 @@ def main():
                     problem_ctx["type_instance"],
                     k,
                     no_interact,
+                    problem_ctx.get("dummy_blocks", 0),
                 )
                 if existing:
                     best_per_problem_kernel[(problem_ctx["type_problem"], k, no_interact)] = existing
@@ -511,6 +519,7 @@ def main():
                     meta["dim"],
                     meta["type_instance"],
                     no_interact,
+                    meta.get("dummy_blocks", 0),
                 )
                 _save_history_csv(
                     problem_dir,
