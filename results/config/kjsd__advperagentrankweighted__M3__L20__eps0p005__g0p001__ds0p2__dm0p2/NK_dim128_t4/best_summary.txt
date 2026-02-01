@@ -1,0 +1,20 @@
+ConfigName: kjsd__advperagentrankweighted__M3__L20__eps0p005__g0p001__ds0p2__dm0p2
+Problem: NK
+Kernel: jsd
+Advantage: peragentrankweighted
+M: 3
+lambda: 20
+epsilon_svgd: 0.005
+gamma: 0.001
+decay_start_ratio: 0.2
+decay_min_factor: 0.2
+bandwith_kernel: None
+no_interact: False
+avg_score: 0.7566052079200745
+median_score: 0.7564139366149902
+std_score: 0.012476116418838501
+percentiles: 2%=0.735431432723999, 5%=0.7385987043380737, 10%=0.739717960357666, 25%=0.7475944757461548, 50%=0.7564139366149902, 75%=0.7664345502853394, 90%=0.7733551859855652, 95%=0.7770237326622009, 98%=0.7798090577125549
+ranking_best_algo: Tabu
+ranking_best_score: 0.7470791764843752
+ranking_my_rank: 1/504 (100.0%)
+ranking_my_percent: 100.0

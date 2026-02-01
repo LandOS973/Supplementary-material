@@ -1,0 +1,20 @@
+ConfigName: kjsd__advperagentrankweighted__M3__L16__eps0p01__g0p003__ds0p2__dm0p05
+Problem: QUBO
+Kernel: jsd
+Advantage: peragentrankweighted
+M: 3
+lambda: 16
+epsilon_svgd: 0.01
+gamma: 0.003
+decay_start_ratio: 0.2
+decay_min_factor: 0.05
+bandwith_kernel: None
+no_interact: False
+avg_score: -1219.239990234375
+median_score: -1213.0
+std_score: 67.06863403320312
+percentiles: 2%=-1350.219970703125, 5%=-1335.25, 10%=-1304.5, 25%=-1259.75, 50%=-1213.0, 75%=-1175.75, 90%=-1135.0, 95%=-1124.0999755859375, 98%=-1092.260009765625
+ranking_best_algo: SVMMetaModelLogNormal
+ranking_best_score: 1233.7999999999997
+ranking_my_rank: 40/504 (92.3%)
+ranking_my_percent: 92.26190476190476

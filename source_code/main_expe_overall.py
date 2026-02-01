@@ -38,12 +38,12 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["jsd"],
         advantages=["peragentrankweighted"],
-        M_values=[5],
-        lambda_values=[24],
-        epsilon_svgd=[0.007],
-        gamma=[0.0005],
-        decay_start_ratio=[0.05],
-        decay_min_factor=[0.05],
+        M_values=[4,5,6],
+        lambda_values=[12,16,18,20,24,30],
+        epsilon_svgd=[0.005,0.007, 0.01],
+        gamma=[0.0005,0.0007, 0.001,0.003],
+        decay_start_ratio=[0.05, 0.1, 0.2],
+        decay_min_factor=[0.05, 0.2],
         bandwith_kernel=[None],
     )
 ]
@@ -65,9 +65,16 @@ SUMMARY_HEADERS = [
     "decay_min_factor",
     "mean_rank",
     "median_rank",
-    "mean_percent",
-    "min_percent",
+    "std_percent",
     "top1_count",
+    "top3_count",
+    "top5_count",
+    "top10_count",
+    "top_1_nk",
+    "top_1_qubo",
+    "win_rate_mean",
+    "mean_hamming_norm",
+    "mean_l1_norm",
     "n_instances",
     "n_ranked",
 ]
@@ -197,13 +204,10 @@ def _discover_qubo_instances(instances_root: Path, nb_instances: int):
 
     instances = []
     for (dim, t), indices in sorted(seen.items()):
-        max_contig = 0
-        for i in sorted(indices):
-            if i == max_contig:
-                max_contig += 1
-            else:
-                break
-        if max_contig < nb_instances:
+        idx_set = set(indices)
+        has_zero_based = all(i in idx_set for i in range(nb_instances))
+        has_one_based = all(i in idx_set for i in range(1, nb_instances + 1))
+        if not (has_zero_based or has_one_based):
             continue
         instances.append(dict(name="QUBO", dim=dim, type_instance=t))
     return instances
@@ -304,8 +308,11 @@ def _run_once(
     decay_start_ratio,
     decay_min_factor,
     bandwith_kernel,
+    device=None,
+    nb_restarts=None,
 ):
-    device = DEFAULTS["device"]
+    device = device or DEFAULTS["device"]
+    nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
 
     kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
     if kernel_name in ("rbf", "pk") and bandwith_kernel is not None:
@@ -336,7 +343,7 @@ def _run_once(
             strategy,
             problem_ctx["dim"],
             DEFAULTS["nb_instances_test"],
-            DEFAULTS["nb_restarts"],
+            nb_restarts,
             DEFAULTS["budget"],
             lambda_,
             problem_ctx["tensor_Q_test"],
@@ -350,7 +357,7 @@ def _run_once(
         tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
             problem_ctx["nk_base_path"],
             DEFAULTS["nb_instances_test"],
-            DEFAULTS["nb_restarts"],
+            nb_restarts,
             total_lambda,
             problem_ctx["dim"],
             problem_ctx["D"],
@@ -363,7 +370,7 @@ def _run_once(
             problem_ctx["type_instance"],
             problem_ctx["D"],
             DEFAULTS["nb_instances_test"],
-            DEFAULTS["nb_restarts"],
+            nb_restarts,
             DEFAULTS["budget"],
             total_lambda,
             problem_ctx["vectorIndex_th"],
@@ -495,7 +502,7 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None, c
             f"50%={meta['p50']}, 75%={meta['p75']}, 90%={meta['p90']}, 95%={meta['p95']}, 98%={meta['p98']}\n"
         )
         if ranking:
-            best_algo, best_score, my_rank, n_rank, my_pct = ranking
+            best_algo, best_score, my_rank, n_rank, my_pct = ranking[:5]
             if best_algo is not None and n_rank:
                 pct_str = f"{my_pct:.1f}%" if my_pct is not None else "n/a"
                 f.write(f"ranking_best_algo: {best_algo}\n")
@@ -604,17 +611,21 @@ def _rank_vs_global_ranking_excluding_ppo(
             return (-v) if flip_sign else v
 
         best_algo, best_score = max(entries, key=lambda t: t[1])
-
+        best_cmp = best_score
         my_cmp = to_cmp(my_score)
         count_gt = sum(1 for s in scores_only if s > my_cmp)
         my_rank = 1 + count_gt
         my_rank = min(max(1, my_rank), n)
         my_percentile = 100.0 * (n - my_rank + 1) / n if n > 0 else None
-
-        return best_algo, best_score, my_rank, n, my_percentile
+        return best_algo, best_score, my_rank, n, my_percentile, my_cmp, best_cmp
 
     except Exception:
-        return None, None, None, 0, None
+        return None, None, None, 0, None, None, None
+
+
+def _is_cuda_oom(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "cuda out of memory" in msg or "outofmemoryerror" in msg
 
 
 def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_root: str):
@@ -633,9 +644,16 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
             decay_min_factor=_round_float(params["decay_min_factor"]),
             mean_rank=None,
             median_rank=None,
-            mean_percent=None,
-            min_percent=None,
+            std_percent=None,
             top1_count=0,
+            top3_count=0,
+            top5_count=0,
+            top10_count=0,
+            top_1_nk=0,
+            top_1_qubo=0,
+            win_rate_mean=None,
+            mean_hamming_norm=None,
+            mean_l1_norm=None,
             n_instances=0,
             n_ranked=0,
         )
@@ -656,6 +674,13 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
                 summary_path = legacy
             else:
                 continue
+        metrics_path = child / "best_metrics.csv"
+        if not metrics_path.is_file():
+            legacy_metrics = child / f"{problem}_{params['kernel']}_best_metrics.csv"
+            if legacy_metrics.is_file():
+                metrics_path = legacy_metrics
+            else:
+                metrics_path = None
         cfg = _parse_summary_config(summary_path)
         avg_score = cfg.get("avg_score") if cfg else None
         if avg_score is None:
@@ -664,9 +689,32 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
             avg_score = float(avg_score)
         except Exception:
             continue
-        best_algo, best_score, my_rank, n_rank, my_pct = _rank_vs_global_ranking_excluding_ppo(
+        best_algo, best_score, my_rank, n_rank, my_pct, my_cmp, best_cmp = _rank_vs_global_ranking_excluding_ppo(
             repo_root, problem, dim, t, avg_score
         )
+        win_rate = None
+        if my_rank is not None and n_rank:
+            win_rate = (n_rank - my_rank) / n_rank
+        hamming_norm = None
+        l1_norm = None
+        if metrics_path is not None and metrics_path.is_file():
+            try:
+                with open(metrics_path, "r") as f:
+                    lines = [line.strip() for line in f.readlines() if line.strip()]
+                if len(lines) >= 2:
+                    header = lines[0].split(",")
+                    last = lines[-1].split(",")
+                    idx_ham = header.index("avg_hamming") if "avg_hamming" in header else None
+                    idx_l1 = header.index("avg_l1") if "avg_l1" in header else None
+                    if idx_ham is not None and idx_ham < len(last):
+                        hamming_val = float(last[idx_ham])
+                        hamming_norm = hamming_val / dim if hamming_val > 1 else hamming_val
+                    if idx_l1 is not None and idx_l1 < len(last):
+                        l1_val = float(last[idx_l1])
+                        l1_norm = l1_val / dim if l1_val > 1 else l1_val
+            except Exception:
+                hamming_norm = None
+                l1_norm = None
         rows.append(
             dict(
                 problem=problem,
@@ -676,22 +724,38 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
                 rank=my_rank,
                 percent=my_pct,
                 top1_count=1 if my_rank == 1 else 0,
+                top3_count=1 if my_rank is not None and my_rank <= 3 else 0,
+                top5_count=1 if my_rank is not None and my_rank <= 5 else 0,
+                top10_count=1 if my_rank is not None and my_rank <= 10 else 0,
                 ranking_best_algo=best_algo,
                 ranking_best_score=best_score,
                 n_rank=n_rank,
+                win_rate=win_rate,
+                hamming_norm=hamming_norm,
+                l1_norm=l1_norm,
             )
         )
 
     n_instances = len(rows)
     ranks = [r["rank"] for r in rows if r["rank"] is not None]
     percents = [r["percent"] for r in rows if r["percent"] is not None]
+    win_rates = [r["win_rate"] for r in rows if r.get("win_rate") is not None]
+    hamming_vals = [r["hamming_norm"] for r in rows if r.get("hamming_norm") is not None]
+    l1_vals = [r["l1_norm"] for r in rows if r.get("l1_norm") is not None]
     n_ranked = len(ranks)
 
     mean_rank = float(np.mean(ranks)) if ranks else None
     median_rank = float(np.median(ranks)) if ranks else None
-    mean_percent = float(np.mean(percents)) if percents else None
-    min_percent = float(np.min(percents)) if percents else None
+    std_percent = float(np.std(percents)) if len(percents) > 1 else 0.0 if percents else None
     top1_count = sum(1 for r in rows if r.get("top1_count"))
+    top3_count = sum(1 for r in rows if r.get("top3_count"))
+    top5_count = sum(1 for r in rows if r.get("top5_count"))
+    top10_count = sum(1 for r in rows if r.get("top10_count"))
+    top_1_nk = sum(1 for r in rows if r.get("top1_count") and r.get("problem") == "NK")
+    top_1_qubo = sum(1 for r in rows if r.get("top1_count") and r.get("problem") == "QUBO")
+    win_rate_mean = float(np.mean(win_rates)) if win_rates else None
+    mean_hamming_norm = float(np.mean(hamming_vals)) if hamming_vals else None
+    mean_l1_norm = float(np.mean(l1_vals)) if l1_vals else None
 
     return dict(
         config_name=config_name,
@@ -705,9 +769,16 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
         decay_min_factor=_round_float(params["decay_min_factor"]),
         mean_rank=mean_rank,
         median_rank=median_rank,
-        mean_percent=mean_percent,
-        min_percent=min_percent,
+        std_percent=std_percent,
         top1_count=top1_count,
+        top3_count=top3_count,
+        top5_count=top5_count,
+        top10_count=top10_count,
+        top_1_nk=top_1_nk,
+        top_1_qubo=top_1_qubo,
+        win_rate_mean=win_rate_mean,
+        mean_hamming_norm=mean_hamming_norm,
+        mean_l1_norm=mean_l1_norm,
         n_instances=n_instances,
         n_ranked=n_ranked,
     )
@@ -739,10 +810,12 @@ def _write_summary_sheet(ws, rows_dict):
     def sort_key(item):
         row = item[1]
         top1 = row.get("top1_count")
-        mean_pct = row.get("mean_percent")
+        mean_rank = row.get("mean_rank")
+        mean_hamming = row.get("mean_hamming_norm")
         top1_val = float(top1) if top1 is not None else -1.0
-        mean_pct_val = float(mean_pct) if mean_pct is not None else -1.0
-        return (-top1_val, -mean_pct_val, str(item[0]))
+        mean_rank_val = float(mean_rank) if mean_rank is not None else float("inf")
+        mean_hamming_val = float(mean_hamming) if mean_hamming is not None else -1.0
+        return (-top1_val, mean_rank_val, -mean_hamming_val, str(item[0]))
 
     for cfg_name, row in sorted(rows_dict.items(), key=sort_key):
         ws.append([row.get(h) for h in SUMMARY_HEADERS])
@@ -832,18 +905,38 @@ def main():
                 problem_ctx = _load_instances(inst, DEFAULTS["device"])
                 print(f"  -> run {inst_name}")
                 t0 = time.time()
-                avg_score, history, meta = _run_once(
-                    problem_ctx,
-                    params["kernel"],
-                    params["advantage"],
-                    params["M"],
-                    params["lambda_"],
-                    params["epsilon_svgd"],
-                    params["gamma"],
-                    params["decay_start_ratio"],
-                    params["decay_min_factor"],
-                    params.get("bandwith_kernel"),
-                )
+                nb_restarts = DEFAULTS["nb_restarts"]
+                success = False
+                while nb_restarts > 0 and not success:
+                    try:
+                        avg_score, history, meta = _run_once(
+                            problem_ctx,
+                            params["kernel"],
+                            params["advantage"],
+                            params["M"],
+                            params["lambda_"],
+                            params["epsilon_svgd"],
+                            params["gamma"],
+                            params["decay_start_ratio"],
+                            params["decay_min_factor"],
+                            params.get("bandwith_kernel"),
+                            device=DEFAULTS["device"],
+                            nb_restarts=nb_restarts,
+                        )
+                        success = True
+                    except (torch.OutOfMemoryError, RuntimeError) as exc:
+                        if not _is_cuda_oom(exc):
+                            raise
+                        nb_restarts -= 1
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        if nb_restarts > 0:
+                            print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
+                        else:
+                            print("     [OOM] nb_restarts=0, skip instance.")
+
+                if not success:
+                    continue
                 dt = time.time() - t0
                 print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
                 ranking = _rank_vs_global_ranking_excluding_ppo(
@@ -857,6 +950,8 @@ def main():
                     ranking=ranking,
                     config_name=config_name,
                 )
+                if ranking and ranking[2] == 1:
+                    print("     -> TOP 1")
                 _update_excel_summary(out_xlsx, config_name, params, config_dir, repo_root)
 
     print(f"[DONE] overall summary at {out_xlsx}")
