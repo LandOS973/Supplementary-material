@@ -1,0 +1,20 @@
+ConfigName: kjsd__advperagentrankweighted__M4__L8__eps0p02__g0p0005__ds0p05__dm0p05
+Problem: QUBO
+Kernel: jsd
+Advantage: peragentrankweighted
+M: 4
+lambda: 8
+epsilon_svgd: 0.02
+gamma: 0.0005
+decay_start_ratio: 0.05
+decay_min_factor: 0.05
+bandwith_kernel: None
+no_interact: False
+avg_score: -2590.280029296875
+median_score: -2580.5
+std_score: 126.07347106933594
+percentiles: 2%=-2822.0400390625, 5%=-2794.050048828125, 10%=-2766.300048828125, 25%=-2673.0, 50%=-2580.5, 75%=-2517.0, 90%=-2430.89990234375, 95%=-2389.64990234375, 98%=-2328.639892578125
+ranking_best_algo: DiscreteLengler2OnePlusOne
+ranking_best_score: 2617.04
+ranking_my_rank: 42/504 (91.9%)
+ranking_my_percent: 91.86507936507937

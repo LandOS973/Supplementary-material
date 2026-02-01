@@ -39,11 +39,11 @@ DEFAULT_GRIDS = [
         kernels=["jsd"],
         advantages=["peragentrankweighted"],
         M_values=[4,5,6],
-        lambda_values=[12,16,18,20,24,30],
-        epsilon_svgd=[0.005,0.007, 0.01],
-        gamma=[0.0005,0.0007, 0.001,0.003],
-        decay_start_ratio=[0.05, 0.1, 0.2],
-        decay_min_factor=[0.05, 0.2],
+        lambda_values=[8,10,12,24],
+        epsilon_svgd=[0.02,0.03],
+        gamma=[0.0005,0.0007,0.0003],
+        decay_start_ratio=[0.05, 0.2],
+        decay_min_factor=[0.05],
         bandwith_kernel=[None],
     )
 ]
