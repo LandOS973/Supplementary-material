@@ -272,6 +272,7 @@ def main():
     gap_lines = []
     wins_no = 0
     wins_int = 0
+    gap_values = []
     for inst in instances:
         inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
         normal_summary = Path(out_root) / inst_name / "best_summary.txt"
@@ -304,15 +305,24 @@ def main():
         gap_pct = (norm_norm - norm_no) / abs(norm_no) * 100.0
         if gap_pct > 0:
             wins_int += 1
+            verdict = "interact better"
         elif gap_pct < 0:
             wins_no += 1
-        gap_lines.append(f"{inst_name}: {gap_pct:.2f}% (positive => interact better)")
+            verdict = "no_interact better"
+        else:
+            verdict = "tie"
+        gap_values.append(gap_pct)
+        gap_lines.append(
+            f"{inst_name}: interact={norm_norm:.6f}, no_interact={norm_no:.6f}, gap={gap_pct:.2f}% ({verdict})"
+        )
 
     summary_path = Path(out_root) / "interact_vs_no_interact.txt"
     with open(summary_path, "w") as f:
         f.write("Interact vs No_Interact summary\n")
         f.write(f"wins_interact: {wins_int}\n")
         f.write(f"wins_no_interact: {wins_no}\n")
+        mean_gap = sum(gap_values) / len(gap_values) if gap_values else 0.0
+        f.write(f"mean_gap: {mean_gap:.2f}%\n")
         f.write("per_instance_gap:\n")
         for line in gap_lines:
             f.write(f"{line}\n")
