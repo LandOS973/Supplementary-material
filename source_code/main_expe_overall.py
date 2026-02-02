@@ -38,7 +38,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["jsd"],
         advantages=["peragentrankweighted"],
-        M_values=[6,8,10],
+        M_values=[10],
         lambda_values=[10,12,24,28],
         epsilon_svgd=[0.005,0.008],
         gamma=[0.0005],

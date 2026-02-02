@@ -9,6 +9,7 @@ from eda_strategies.MultiAgentUnivariate.SVGD.kernels.ppk import PPK
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.JSD import JSD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.PK import ProbabilityKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
+from eda_strategies.MultiAgentUnivariate.SVGD.kernels.no_interact import NoInteractKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
 
@@ -233,11 +234,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         theta = self.theta  # (B, M, N)
         score = self.last_theta_grad.detach()  # pas de rétroprop vers les agents
 
-        if self.no_interact or self.M <= 1:
-            with torch.no_grad():
-                self.theta += self.epsilon_svgd * (1/self.svgd.gamma * score)
-            return
-
         with torch.enable_grad():
             phi = self.svgd.phi(theta, score)  # (B, M, N)
             kernel_stats = self.svgd.get_last_kernel_stats()
@@ -296,6 +292,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
     def _build_svgd_kernel(self, kernel_name, kernel_params):
         kernel = kernel_name.lower()
+        if self.no_interact or kernel in ("no_interact", "no-interact", "identity", "none"):
+            return NoInteractKernel()
         if kernel in ("hk", "hamming", "hammingkernel"):
             return HammingKernel()
         if kernel == "ppk":
@@ -309,4 +307,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "jsd":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
             return JSD(bandwith_kernel=bandwith_kernel)
-        raise ValueError(f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk.")
+        raise ValueError(
+            f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk, jsd, no_interact."
+        )
