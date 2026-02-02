@@ -292,20 +292,16 @@ def main():
         def _normalize_score_sign_local(problem_name: str, values):
             if not values:
                 return values
-            maximize = problem_name.upper() in ("NK", "BLOCK")
-            if maximize:
-                if max(values) <= 0:
-                    return [-val for val in values]
-                return values
-            if min(values) >= 0:
+            # Always convert to "higher is better"
+            if problem_name.upper() in ("QUBO", "UBQP"):
                 return [-val for val in values]
             return values
 
         norm_norm = _normalize_score_sign_local(inst["name"], [normal_score])[0]
         norm_no = _normalize_score_sign_local(inst["name"], [no_score])[0]
-        if norm_norm == 0:
+        if norm_no == 0:
             continue
-        gap_pct = (norm_norm - norm_no) / abs(norm_norm) * 100.0
+        gap_pct = (norm_norm - norm_no) / abs(norm_no) * 100.0
         if gap_pct > 0:
             wins_int += 1
         elif gap_pct < 0:
