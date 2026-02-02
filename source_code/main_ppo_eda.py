@@ -231,6 +231,8 @@ def main(cfg: DictConfig):
             epsilon_override = best_cfg.get("epsilon_svgd")
             gamma_override = best_cfg.get("gamma")
             bandwith_override = best_cfg.get("bandwith_kernel")
+    if no_interact and kernel_name != "no_interact":
+        kernel_name = "no_interact"
     elif ask_best_config and _ask_yes_no("Recuperer la meilleure config depuis results/experiments? (DEFAULT FALSE)", default=False):
         budget = _ask_int("Budget a utiliser", default=budget) or budget
         decay_enabled = _ask_yes_no(f"Mode decay? (actuel: {decay_enabled})", default=decay_enabled)

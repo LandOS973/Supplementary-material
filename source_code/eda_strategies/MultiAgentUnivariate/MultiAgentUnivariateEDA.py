@@ -252,7 +252,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         if progress < start:
             return
-        else:
+        else: 
             t = (progress - start) / (1.0 - start)
             factor = 1.0 - t * (1.0 - min_factor)
 

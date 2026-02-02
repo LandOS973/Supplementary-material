@@ -38,7 +38,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["jsd"],
         advantages=["peragentrankweighted"],
-        M_values=[10],
+        M_values=[5],
         lambda_values=[10,12,24,28],
         epsilon_svgd=[0.005,0.008],
         gamma=[0.0005],
@@ -906,6 +906,9 @@ def main():
                 print(f"  -> run {inst_name}")
                 t0 = time.time()
                 nb_restarts = DEFAULTS["nb_restarts"]
+                if inst["name"] == "NK" and inst["dim"] >= 256 and inst["type_instance"] >= 8:
+                    nb_restarts = min(nb_restarts, 3)
+                    print(f"     [PRE] NK big instance, start nb_restarts={nb_restarts}")
                 success = False
                 while nb_restarts > 0 and not success:
                     try:
