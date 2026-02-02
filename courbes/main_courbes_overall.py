@@ -102,7 +102,7 @@ def _plot_comparison_vs_algos(instance, config_name: str, my_metrics: Path, outp
         ax.plot(
             my_x,
             my_y,
-            label=f"reinforce svgd ({config_name})",
+            label="reinforce svgd",
             color="green",
             linewidth=2.0,
             zorder=3,
