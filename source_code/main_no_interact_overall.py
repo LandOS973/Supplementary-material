@@ -268,6 +268,60 @@ def main():
         print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
         _save_history_csv(inst_dir, inst["name"], {"history": history, "meta": meta}, config_name=config_name)
 
+    # Build interact vs no_interact summary
+    gap_lines = []
+    wins_no = 0
+    wins_int = 0
+    for inst in instances:
+        inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+        normal_summary = Path(out_root) / inst_name / "best_summary.txt"
+        no_summary = Path(out_root) / inst_name / "no_interact" / "best_summary.txt"
+        if not normal_summary.exists() or not no_summary.exists():
+            continue
+        from main_expe_overall import _parse_summary_config
+        normal_cfg = _parse_summary_config(normal_summary)
+        no_cfg = _parse_summary_config(no_summary)
+        if not normal_cfg or not no_cfg:
+            continue
+        try:
+            normal_score = float(normal_cfg.get("avg_score"))
+            no_score = float(no_cfg.get("avg_score"))
+        except Exception:
+            continue
+
+        def _normalize_score_sign_local(problem_name: str, values):
+            if not values:
+                return values
+            maximize = problem_name.upper() in ("NK", "BLOCK")
+            if maximize:
+                if max(values) <= 0:
+                    return [-val for val in values]
+                return values
+            if min(values) >= 0:
+                return [-val for val in values]
+            return values
+
+        norm_norm = _normalize_score_sign_local(inst["name"], [normal_score])[0]
+        norm_no = _normalize_score_sign_local(inst["name"], [no_score])[0]
+        if norm_norm == 0:
+            continue
+        gap_pct = (norm_norm - norm_no) / abs(norm_norm) * 100.0
+        if gap_pct > 0:
+            wins_int += 1
+        elif gap_pct < 0:
+            wins_no += 1
+        gap_lines.append(f"{inst_name}: {gap_pct:.2f}% (positive => interact better)")
+
+    summary_path = Path(out_root) / "interact_vs_no_interact.txt"
+    with open(summary_path, "w") as f:
+        f.write("Interact vs No_Interact summary\n")
+        f.write(f"wins_interact: {wins_int}\n")
+        f.write(f"wins_no_interact: {wins_no}\n")
+        f.write("per_instance_gap:\n")
+        for line in gap_lines:
+            f.write(f"{line}\n")
+    print(f"[DONE] Wrote summary to {summary_path}")
+
 
 if __name__ == "__main__":
     main()
