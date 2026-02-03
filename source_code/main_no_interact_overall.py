@@ -21,6 +21,7 @@ from main_expe_overall import (
     _is_cuda_oom,
     _load_instances,
 )
+from main_expe_overall import _rank_vs_global_ranking_excluding_ppo
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import get_Score_trajectoriesQUBO_cuda
 from environment.nk import get_Score_trajectoriesNK_cuda, getTensorInstances_NK
@@ -273,6 +274,8 @@ def main():
     wins_no = 0
     wins_int = 0
     gap_values = []
+    ranks_interact = []
+    ranks_no = []
     for inst in instances:
         inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
         normal_summary = Path(out_root) / inst_name / "best_summary.txt"
@@ -316,6 +319,21 @@ def main():
             f"{inst_name}: interact={norm_norm:.6f}, no_interact={norm_no:.6f}, gap={gap_pct:.2f}% ({verdict})"
         )
 
+        _best_algo, _best_score, rank_int, _n_rank, _pct, _my_cmp, _best_cmp = (
+            _rank_vs_global_ranking_excluding_ppo(
+                repo_root, inst["name"], inst["dim"], inst["type_instance"], normal_score
+            )
+        )
+        if rank_int is not None:
+            ranks_interact.append(rank_int)
+        _best_algo, _best_score, rank_no, _n_rank, _pct, _my_cmp, _best_cmp = (
+            _rank_vs_global_ranking_excluding_ppo(
+                repo_root, inst["name"], inst["dim"], inst["type_instance"], no_score
+            )
+        )
+        if rank_no is not None:
+            ranks_no.append(rank_no)
+
     summary_path = Path(out_root) / "interact_vs_no_interact.txt"
     with open(summary_path, "w") as f:
         f.write("Interact vs No_Interact summary\n")
@@ -323,6 +341,14 @@ def main():
         f.write(f"wins_no_interact: {wins_no}\n")
         mean_gap = sum(gap_values) / len(gap_values) if gap_values else 0.0
         f.write(f"mean_gap: {mean_gap:.2f}%\n")
+        mean_rank_interact = float(np.mean(ranks_interact)) if ranks_interact else None
+        median_rank_interact = float(np.median(ranks_interact)) if ranks_interact else None
+        mean_rank_no = float(np.mean(ranks_no)) if ranks_no else None
+        median_rank_no = float(np.median(ranks_no)) if ranks_no else None
+        f.write(f"mean_rank_interact: {mean_rank_interact}\n")
+        f.write(f"median_rank_interact: {median_rank_interact}\n")
+        f.write(f"mean_rank_no_interact: {mean_rank_no}\n")
+        f.write(f"median_rank_no_interact: {median_rank_no}\n")
         f.write("per_instance_gap:\n")
         for line in gap_lines:
             f.write(f"{line}\n")
