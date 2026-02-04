@@ -247,6 +247,22 @@ def _plot_interact_vs_no_interact(instance, interact_path: Path, no_interact_pat
         color_b="#ff7f0e",
     )
 
+    x_int_e, y_int_e = load_metric_series(interact_path, x_field="step", y_field="avg_entropy")
+    x_no_e, y_no_e = load_metric_series(no_interact_path, x_field="step", y_field="avg_entropy")
+    plot_pair_series(
+        x_int_e,
+        y_int_e,
+        x_no_e,
+        y_no_e,
+        title=f"Entropy: interact vs no_interact ({problem} N={dim}, K={t})",
+        ylabel="Average entropy",
+        output_path=output_dir / "entropy_interact_vs_no_interact.png",
+        label_a="interact",
+        label_b="no_interact",
+        color_a="#1f77b4",
+        color_b="#ff7f0e",
+    )
+
     # Boxplot: final score normal vs no_interact
     box_specs = []
     stats_int = load_quantile_stats_at_final_step(interact_path)
