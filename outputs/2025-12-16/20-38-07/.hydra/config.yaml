@@ -1,0 +1,26 @@
+problem:
+  name: QUBO
+  type_problem: QUBO
+  dim: 64
+  type_instance: 0
+agent:
+  name: REINFORCE-EDA
+  updateMethod: REINFORCE
+  M: 6
+  lambda: 36
+  advantage: peragentrankweighted
+  kernel: hk
+seed: 0
+verbose: true
+output_dir: outputs
+nb_instances_test: 10
+nb_restarts: 10
+budget: 10000
+visualization: true
+strategy_variants:
+- label: Baseline
+  advantage: baseline
+- label: Global rank weighted
+  advantage: globalrankweighted
+- label: Per-agent rank weighted
+  advantage: peragentrankweighted
