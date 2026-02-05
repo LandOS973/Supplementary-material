@@ -280,6 +280,112 @@ def _plot_interact_vs_no_interact(instance, interact_path: Path, no_interact_pat
         )
 
 
+def _plot_normal_vs_no_repulsion(instance, normal_path: Path, no_repulsion_path: Path, output_dir: Path):
+    problem = instance["problem"]
+    dim = instance["dim"]
+    t = instance["type_instance"]
+    maximize = problem.upper() in ("NK", "BLOCK")
+
+    x_norm, y_norm, std_norm = load_metric_series_with_std(
+        normal_path, x_field="step", maximize=maximize
+    )
+    x_nr, y_nr, std_nr = load_metric_series_with_std(
+        no_repulsion_path, x_field="step", maximize=maximize
+    )
+
+    plot_pair_series(
+        x_norm,
+        y_norm,
+        x_nr,
+        y_nr,
+        title=f"Average Score: normal vs no_repulsion ({problem} N={dim}, K={t})",
+        ylabel="Average score",
+        output_path=output_dir / "avg_score_normal_vs_no_repulsion.png",
+        label_a="normal",
+        label_b="no_repulsion",
+        color_a="#1f77b4",
+        color_b="#ff7f0e",
+    )
+
+    if std_norm is not None and std_nr is not None:
+        plot_pair_series(
+            x_norm,
+            std_norm,
+            x_nr,
+            std_nr,
+            title=f"Std: normal vs no_repulsion ({problem} N={dim}, K={t})",
+            ylabel="Std",
+            output_path=output_dir / "std_normal_vs_no_repulsion.png",
+            label_a="normal",
+            label_b="no_repulsion",
+            color_a="#1f77b4",
+            color_b="#ff7f0e",
+        )
+
+    x_norm_l1, y_norm_l1 = load_metric_series(normal_path, x_field="step", y_field="avg_l1")
+    x_nr_l1, y_nr_l1 = load_metric_series(no_repulsion_path, x_field="step", y_field="avg_l1")
+    plot_pair_series(
+        x_norm_l1,
+        y_norm_l1,
+        x_nr_l1,
+        y_nr_l1,
+        title=f"L1: normal vs no_repulsion ({problem} N={dim}, K={t})",
+        ylabel="Average L1",
+        output_path=output_dir / "l1_normal_vs_no_repulsion.png",
+        label_a="normal",
+        label_b="no_repulsion",
+        color_a="#1f77b4",
+        color_b="#ff7f0e",
+    )
+
+    x_norm_h, y_norm_h = load_metric_series(normal_path, x_field="step", y_field="avg_hamming")
+    x_nr_h, y_nr_h = load_metric_series(no_repulsion_path, x_field="step", y_field="avg_hamming")
+    plot_pair_series(
+        x_norm_h,
+        y_norm_h,
+        x_nr_h,
+        y_nr_h,
+        title=f"Hamming: normal vs no_repulsion ({problem} N={dim}, K={t})",
+        ylabel="Average hamming",
+        output_path=output_dir / "hamming_normal_vs_no_repulsion.png",
+        label_a="normal",
+        label_b="no_repulsion",
+        color_a="#1f77b4",
+        color_b="#ff7f0e",
+    )
+
+    x_norm_e, y_norm_e = load_metric_series(normal_path, x_field="step", y_field="avg_entropy")
+    x_nr_e, y_nr_e = load_metric_series(no_repulsion_path, x_field="step", y_field="avg_entropy")
+    plot_pair_series(
+        x_norm_e,
+        y_norm_e,
+        x_nr_e,
+        y_nr_e,
+        title=f"Entropy: normal vs no_repulsion ({problem} N={dim}, K={t})",
+        ylabel="Average entropy",
+        output_path=output_dir / "entropy_normal_vs_no_repulsion.png",
+        label_a="normal",
+        label_b="no_repulsion",
+        color_a="#1f77b4",
+        color_b="#ff7f0e",
+    )
+
+    box_specs = []
+    stats_norm = load_quantile_stats_at_final_step(normal_path)
+    if stats_norm:
+        box_specs.append(("NORMAL", normalize_box_stats(problem, stats_norm)))
+    stats_nr = load_quantile_stats_at_final_step(no_repulsion_path)
+    if stats_nr:
+        box_specs.append(("NO_REPULSION", normalize_box_stats(problem, stats_nr)))
+    if box_specs:
+        plot_synthetic_boxplot(
+            title=f"Final score distribution (normal vs no_repulsion) {problem} N={dim}, K={t}",
+            ylabel="Score",
+            output_path=output_dir / "boxplot_final_score_normal_vs_no_repulsion.png",
+            box_specs=box_specs,
+        )
+
+
 def main():
     config_name = input(
         "Config name (ex: kjsd__advperagentrankweighted__M4__L24__eps0p01__g0p0005__ds0p05__dm0p05): "
@@ -312,6 +418,12 @@ def main():
             _plot_interact_vs_no_interact(inst, my_metrics, no_interact_metrics, output_dir)
         else:
             print(f"[WARN] Missing {no_interact_metrics}. Skipping interact/no_interact plots.")
+
+        no_repulsion_metrics = inst_dir / "no_repulsion" / "best_metrics.csv"
+        if no_repulsion_metrics.exists():
+            _plot_normal_vs_no_repulsion(inst, my_metrics, no_repulsion_metrics, output_dir)
+        else:
+            print(f"[WARN] Missing {no_repulsion_metrics}. Skipping normal/no_repulsion plots.")
 
 
 if __name__ == "__main__":

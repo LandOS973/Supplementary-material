@@ -204,6 +204,7 @@ def main(cfg: DictConfig):
     visualization_enabled = bool(cfg.get('visualization', True))
     advantage_cfg = agent_val("advantage") or cfg.get('advantage') or "baseline"
     no_interact = bool(agent_val("no_interact") or cfg.get("no_interact") or False)
+    no_repulsion = bool(agent_val("no_repulsion") or cfg.get("no_repulsion") or False)
     decay_enabled = bool(agent_val("decay") or cfg.get("decay") or False)
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
@@ -306,7 +307,7 @@ def main(cfg: DictConfig):
     print(
         f"Using REINFORCE update. Number of agents: {M} with epsilon_svgd: {epsilon_svgd}, "
         f"λ: {lambda_}, svgd_gamma: {svgd_gamma}, advantage={advantage_cfg}, "
-        f"kernel={kernel_name}{bandwith_kernel_suffix}, no_interact={no_interact}, bandwith_kernel: {kernel_bandwith_kernel}, decay_start_ratio: {decay_start_ratio}, decay_min_factor: {decay_min_factor}"
+        f"kernel={kernel_name}{bandwith_kernel_suffix}, no_interact={no_interact}, no_repulsion={no_repulsion}, bandwith_kernel: {kernel_bandwith_kernel}, decay_start_ratio: {decay_start_ratio}, decay_min_factor: {decay_min_factor}"
     )
 
     torch.manual_seed(seed)
@@ -402,6 +403,7 @@ def main(cfg: DictConfig):
         advantage_cfg=advantage_cfg,
         kernel_config=kernel_cfg,
         no_interact=no_interact,
+        no_repulsion=no_repulsion,
     ).to(device)
     if (type_problem == "QUBO"):
         result = get_Score_trajectoriesQUBO_cuda(
@@ -473,6 +475,7 @@ def main(cfg: DictConfig):
             kernel=kernel_name,
             advantage=advantage_cfg,
             M=M,
+            no_repulsion=no_repulsion,
         )
         _write_history_csv(budget_dir, filename, history, meta=meta)
 

@@ -5,5 +5,6 @@ lambda: 24
 advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness
 kernel:  jsd # rbf | hk | pk | ppk | jsd | no_interact
 no_interact: false
+no_repulsion: true
 decay_start_ratio: 1
 min_factor: 1

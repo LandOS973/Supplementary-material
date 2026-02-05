@@ -33,6 +33,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         epsilon_svgd=None,
         enable_visualization=False,
         no_interact=False,
+        no_repulsion=False,
         sigma=None,
         svgd_gamma=10.0,
         decay_start_ratio=0.8,
@@ -56,6 +57,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.epsilon_svgd = epsilon_svgd
         self.enable_visualization = bool(enable_visualization)
         self.no_interact = bool(no_interact)
+        self.no_repulsion = bool(no_repulsion)
         self.dim_variables = dim_variables
         self.svgd_gamma = float(svgd_gamma)
         self.decay_start_ratio = float(decay_start_ratio)
@@ -72,7 +74,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         # interaction SVGD 
         kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
-        self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma)
+        self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma, no_repulsion=self.no_repulsion)
         self.theta_history = []
         self.kernel_metric_history = []
 

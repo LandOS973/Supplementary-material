@@ -2,11 +2,12 @@ import torch
 import numpy as np
 
 class SVGD:
-    def __init__(self, kernel, gamma=10.0):
+    def __init__(self, kernel, gamma=10.0, no_repulsion=False):
         self.kernel = kernel  
         if gamma == 0:
             raise ValueError("gamma must be non-zero.")
         self.gamma = float(gamma)
+        self.no_repulsion = bool(no_repulsion)
         self.last_kernel_stats = None
 
     def phi(self, thetas, score):
@@ -27,7 +28,10 @@ class SVGD:
         if torch.isnan(grad_term).any() or torch.isinf(grad_term).any():
             grad_term = torch.nan_to_num(grad_term, nan=0.0, posinf=0.0, neginf=0.0)
         score_term = torch.matmul(K, score)
-        phi = (score_term / self.gamma + grad_term) / M  # (B, M, N)
+        if self.no_repulsion:
+            phi = (score_term / self.gamma) / M  # (B, M, N)
+        else:
+            phi = (score_term / self.gamma + grad_term) / M  # (B, M, N)
 
         # phi = score
 
