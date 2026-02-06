@@ -10,7 +10,7 @@ class SVGD:
         self.no_repulsion = bool(no_repulsion)
         self.last_kernel_stats = None
 
-    def phi(self, thetas, score):
+    def phi(self, thetas, score, probs=None):
         """
         B => Nombre d'instances
         N => Nombre de variables
@@ -22,7 +22,7 @@ class SVGD:
             φ_i = (1/M) * [ Σ_j k(θ_j, θ_i) * score_j  +  Σ_j ∇_θ_j k(θ_j, θ_i) ]
         """
         B, M, N = thetas.shape
-        K, grad_term = self.kernel(thetas)  # (B, M, M), (B, M, N)
+        K, grad_term = self.kernel(thetas, probs=probs)  # (B, M, M), (B, M, N)
         if torch.isnan(K).any() or torch.isinf(K).any():
             K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
         if torch.isnan(grad_term).any() or torch.isinf(grad_term).any():

@@ -7,7 +7,7 @@ class NoInteractKernel(nn.Module):
     Kernel non-interactif : matrice identité et gradient nul.
     """
 
-    def forward(self, Thetas):
+    def forward(self, Thetas, probs=None):
         """
         Thetas : (B, M, N)
         Retourne :

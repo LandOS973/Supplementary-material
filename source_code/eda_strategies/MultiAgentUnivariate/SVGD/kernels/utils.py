@@ -1,7 +1,7 @@
 import torch
 
 
-def adaptative_bandwith(dist, eps=1e-8):
+def adaptative_bandwith(dist, eps=1e-3):
     """
     Calcule un facteur de largeur via la median heuristic.
     dist: (B, M, M) matrice de distances.

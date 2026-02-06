@@ -67,6 +67,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.kernel_config = kernel_config or {}
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
         self.kernel_params = {}
+        self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
 
         # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
@@ -82,6 +83,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.theta = None
         self.nb_instances = 0
         self.latest_advantages = None
+        self.probs = None
 
         # Buffers (B, M)
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
@@ -93,10 +95,12 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         """
         if self.theta is None:
             raise RuntimeError("reset_learned_parameters doit être appelé avant forward().")
-        return torch.sigmoid(self.theta)  # (B, M, N)
+        probs = torch.sigmoid(self.theta)
+        self.probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), self.prob_eps_clamp, 1 - self.prob_eps_clamp)
+        return probs  # (B, M, N)
 
     def kl_divergence(self, p, q):
-        eps = 1e-7
+        eps = self.prob_eps_clamp
         p = torch.clamp(torch.nan_to_num(p, nan=0.5), eps, 1 - eps)
         q = torch.clamp(torch.nan_to_num(q, nan=0.5), eps, 1 - eps)
         return p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
@@ -122,6 +126,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.enable_visualization:
             self._record_theta()
         self.latest_advantages = None
+        self.probs = None
 
     def sample_solutions(self):
         """
@@ -135,12 +140,11 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         λa = self.lambda_per_agent
         λ_total = self.total_lambda
 
-        probs = self.forward()  # (B, M, N)
-        probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), 1e-10, 1 - 1e-10)
+        self.probs = self.forward()  # (B, M, N)
 
         # u : (B, M, λa, N)
         u = torch.rand((B, M, λa, N), device=self.device)
-        samples_agents = (u < probs.unsqueeze(2)).float()  # (B, M, λa, N)
+        samples_agents = (u < self.probs.unsqueeze(2)).float()  # (B, M, λa, N)
 
         # On concatène tous les agents sur la dimension λ : (B, λ, N, 1)
         # on tire tout les lamdba en une fois pour eviter les boucles
@@ -175,8 +179,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.baseline.numel() == 0:
             baseline = torch.zeros(BM, device=self.device)
 
-        all_Pi_Theta = torch.sigmoid(theta)  # (BM, N)
-        all_Pi_Theta = torch.clamp(all_Pi_Theta, 1e-6, 1 - 1e-6)
+        all_Pi_Theta = self.probs.view(BM, N)  # (BM, N)
         all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
 
         Pi_selected = torch.where(
@@ -203,8 +206,8 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             per_instance = reshaped_adv.view(B, self.lambda_)
             self.latest_advantages = per_instance.cpu()
 
-        grad_theta, = torch.autograd.grad(loss, theta, create_graph=False)
-        self.last_theta_grad = grad_theta.detach().clone().view(B, M, N)
+        grad_theta, = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
+        self.last_theta_grad = grad_theta.detach().clone()
 
         with torch.no_grad():
             baseline_new = fitness.mean(dim=1)  # (BM,)
@@ -237,13 +240,14 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         score = self.last_theta_grad.detach()  # pas de rétroprop vers les agents
 
         with torch.enable_grad():
-            phi = self.svgd.phi(theta, score)  # (B, M, N)
+            phi = self.svgd.phi(theta, score, probs=self.probs)  # (B, M, N)
             kernel_stats = self.svgd.get_last_kernel_stats()
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
 
         with torch.no_grad():
             self.theta += self.epsilon_svgd * phi
+            self.probs = None
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
         if not self.decay_enabled or self.no_interact or self.M <= 1 or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
@@ -269,7 +273,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if self.theta is None or self.nb_instances <= 0:
             return []
         with torch.no_grad():
-            probs = torch.sigmoid(self.theta).detach() # (B, M, N)
+            probs = self.probs if self.probs is not None else self.forward()
         probs_final = [probs[:, m, :] for m in range(self.M)] # liste de (B, N) par agent
         if not probs_final:
             return

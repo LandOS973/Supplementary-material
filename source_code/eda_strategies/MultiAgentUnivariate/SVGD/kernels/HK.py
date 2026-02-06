@@ -19,18 +19,18 @@ class HammingKernel(nn.Module):
         super().__init__()
         self.bandwith_kernel = bandwith_kernel
 
-    def forward(self, Thetas):
+    def forward(self, Thetas, probs=None):
         """
         Thetas : (B, M, N)
         """
+        if probs is None:
+            raise ValueError("Hamming kernel requires probs.")
         Thetas = Thetas.requires_grad_(True)
 
         B, M, N = Thetas.shape
 
-
-
-        probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
-        probs_j = torch.sigmoid(Thetas.detach()).unsqueeze(1)  # (B, 1, M, N)
+        probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
+        probs_j = probs.detach().unsqueeze(1)  # (B, 1, M, N)
 
         hamming = probs_i + probs_j.detach() - 2 * probs_i * probs_j.detach()  # (B, M, M, N)
 

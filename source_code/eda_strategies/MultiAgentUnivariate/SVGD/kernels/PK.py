@@ -19,20 +19,18 @@ class ProbabilityKernel(nn.Module):
         # largeur du noyau appliqué sur les probabilités
         self.bandwith_kernel = bandwith_kernel
 
-    def forward(self, Thetas):
+    def forward(self, Thetas, probs=None):
         """
         Thetas : (B, M, N)
         """
+        if probs is None:
+            raise ValueError("Probability kernel requires probs.")
         Thetas = Thetas.requires_grad_(True)
 
         B, M, N = Thetas.shape
 
-
-        theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
-        theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
-
-        probs_i = torch.sigmoid(theta_i)
-        probs_j = torch.sigmoid(theta_j)
+        probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
+        probs_j = probs.unsqueeze(1)  # (B, 1, M, N)
 
         dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
 

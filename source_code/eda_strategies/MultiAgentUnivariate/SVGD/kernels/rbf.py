@@ -24,7 +24,7 @@ class RBF(nn.Module):
         # facteur de largeur du noyau RBF (peut être fixé via la config)
         self.bandwith_kernel = bandwith_kernel
 
-    def forward(self, Thetas):
+    def forward(self, Thetas, probs=None):
         """
         X : (B, M, N)
         Y : (B, P, N)

@@ -5,12 +5,14 @@ class PPK(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, Thetas):
+    def forward(self, Thetas, probs=None):
         # X: (B,M,N), Y: (B,P,N)
+        if probs is None:
+            raise ValueError("PPK kernel requires probs.")
         Thetas = Thetas.requires_grad_(True)
 
-        Theta_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B,M,1,N)
-        Theta_j = torch.sigmoid(Thetas).unsqueeze(1)  # (B,1,P,N)
+        Theta_i = probs.unsqueeze(2)  # (B,M,1,N)
+        Theta_j = probs.unsqueeze(1)  # (B,1,P,N)
 
         f = Theta_i * Theta_j + (1 - Theta_i) * (1 - Theta_j)
 

@@ -8,20 +8,15 @@ class JSD(nn.Module):
         super().__init__()
         self.bandwith_kernel = bandwith_kernel
 
-    def forward(self, Thetas):
+    def forward(self, Thetas, probs=None):
         Thetas = Thetas.requires_grad_(True)
         B, M, N = Thetas.shape
 
         # p_i avec gradient
-        probs_i = torch.sigmoid(Thetas).unsqueeze(2)             # (B, M, 1, N)
+        pi = probs.unsqueeze(2)             # (B, M, 1, N)
         # p_j sans gradient (detach)
-        probs_j = torch.sigmoid(Thetas.detach()).unsqueeze(1)    # (B, 1, M, N)
-
-        # clamp pour éviter log(0)
-        pi = torch.clamp(probs_i, 1e-6, 1.0 - 1e-6)
-        pj = torch.clamp(probs_j, 1e-6, 1.0 - 1e-6)
+        pj = probs.detach().unsqueeze(1)    # (B, 1, M, N)
         m = 0.5 * (pi + pj)
-        m = torch.clamp(m, 1e-6, 1.0 - 1e-6)
 
         kl_pm = pi * torch.log(pi / m) + (1.0 - pi) * torch.log((1.0 - pi) / (1.0 - m))
         kl_qm = pj * torch.log(pj / m) + (1.0 - pj) * torch.log((1.0 - pj) / (1.0 - m))
@@ -31,7 +26,7 @@ class JSD(nn.Module):
 
         # ===== median heuristic =====
         if self.bandwith_kernel is None:
-            gamma = adaptative_bandwith(dist, eps=1e-6)
+            gamma = adaptative_bandwith(dist, eps=1e-3)
         else:
             gamma = self.bandwith_kernel
 
