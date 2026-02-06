@@ -14,7 +14,7 @@ class JSD(nn.Module):
 
         # p_i avec gradient
         probs_i = torch.sigmoid(Thetas).unsqueeze(2)             # (B, M, 1, N)
-        # p_j sans gradient (detach) comme dans ton code
+        # p_j sans gradient (detach)
         probs_j = torch.sigmoid(Thetas.detach()).unsqueeze(1)    # (B, 1, M, N)
 
         # clamp pour éviter log(0)
@@ -38,11 +38,10 @@ class JSD(nn.Module):
         # Kernel
         K = torch.exp(-gamma * dist)                             # (B, M, M)
 
-        # ===== Gradient (même style que ton code) =====
         grad_Thetas = torch.zeros((B, M, N), device=Thetas.device, dtype=Thetas.dtype)
 
         for i in range(M):
-            Ki = K[:, :, i]  # même convention que toi
+            Ki = K[:, :, i]  
             vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
             grad_Thetas[:, i, :] = torch.sum(vect_grad_Thetas, dim=1)
         return K, grad_Thetas
