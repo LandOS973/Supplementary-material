@@ -3,6 +3,7 @@ from typing import Any, Dict, Type
 from .base import AdvantageStrategy
 from .baseline import BaselineAdvantage
 from .rank_weighted import (
+    BaselineRescaledAdvantage,
     GlobalRankWeightedAdvantage,
     NormalizedFitnessAdvantage,
     PerAgentRankWeightedAdvantage,
@@ -12,6 +13,7 @@ from .rank_weighted import (
 class AdvantageFactory:
     _REGISTRY: Dict[str, Type[AdvantageStrategy]] = {
         "baseline": BaselineAdvantage,
+        "baseline_rescaled": BaselineRescaledAdvantage,
         "globalrankweighted": GlobalRankWeightedAdvantage,
         "rankbaseweighted": GlobalRankWeightedAdvantage,  # rétrocompatibilité
         "peragentrankweighted": PerAgentRankWeightedAdvantage,

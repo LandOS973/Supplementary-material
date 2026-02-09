@@ -1,3 +1,7 @@
+import csv
+import os
+from pathlib import Path
+
 import torch
 
 from .base import AdvantageStrategy
@@ -161,3 +165,173 @@ class NormalizedFitnessAdvantage(AdvantageStrategy):
             self.fitness_mean = current_fitness.view(nb_instances, -1).mean(dim=1).detach().clone()
 
         return normalized.view(BM, lambda_per_agent)
+
+
+class BaselineRescaledAdvantage(AdvantageStrategy):
+    """
+    Avantage basé sur une calibration fixe : f - b.
+    b est calculé une seule fois à partir d'un fichier de calibration
+    par distribution d'instances, puis mis en cache.
+    """
+
+    def __init__(
+        self,
+        calibration_path: str | None = None,
+        problem: str | None = None,
+        dim: int | None = None,
+        type_instance: int | None = None,
+        top_k: int = 200,
+        h_top_k: int = 500,
+    ):
+        super().__init__()
+        self.calibration_path = calibration_path
+        self.problem = (problem or "").upper()
+        self.dim = dim
+        self.type_instance = type_instance
+        self.top_k = int(top_k)
+        self.h_top_k = int(h_top_k)
+        self._cached_b = None
+
+    def _find_repo_root(self) -> Path:
+        here = Path(__file__).resolve()
+        for parent in [here] + list(here.parents):
+            if (parent / "additional_results").is_dir() and (parent / "config").is_dir():
+                return parent
+        return Path.cwd()
+
+    def _infer_problem_cfg(self, repo_root: Path):
+        cfg_path = repo_root / "config" / "config.yaml"
+        if not cfg_path.exists():
+            return None
+        try:
+            with cfg_path.open("r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return None
+        problem_key = None
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("- problem:"):
+                problem_key = stripped.split(":", 1)[1].strip()
+                if "#" in problem_key:
+                    problem_key = problem_key.split("#", 1)[0].strip()
+                break
+        if not problem_key:
+            return None
+        problem_cfg = repo_root / "config" / "problem" / f"{problem_key}.yaml"
+        if not problem_cfg.exists():
+            return None
+        data = {}
+        try:
+            with problem_cfg.open("r", encoding="utf-8") as fh:
+                for raw in fh:
+                    row = raw.strip()
+                    if not row or row.startswith("#") or ":" not in row:
+                        continue
+                    key, value = row.split(":", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if "#" in value:
+                        value = value.split("#", 1)[0].strip()
+                    if not value:
+                        continue
+                    lowered = value.lower()
+                    if lowered in ("none", "null"):
+                        parsed = None
+                    else:
+                        try:
+                            parsed = int(value)
+                        except ValueError:
+                            parsed = value
+                    data[key] = parsed
+        except OSError:
+            return None
+        return data
+
+    def _resolve_calibration_path(self) -> Path:
+        if self.calibration_path:
+            return Path(self.calibration_path)
+
+        repo_root = self._find_repo_root()
+        self._ensure_problem_meta(repo_root)
+        problem = self.problem
+        dim = self.dim
+        type_instance = self.type_instance
+
+        if not problem or dim is None or type_instance is None:
+            raise ValueError("Impossible de déterminer problem/dim/type_instance pour baseline_rescaled.")
+
+        if problem in ("QUBO", "UBQP"):
+            filename = f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+        elif problem == "NK3":
+            filename = f"NK3_N_{dim}_K_{type_instance}_ranks.csv"
+        elif problem == "NK":
+            filename = f"NK_N_{dim}_K_{type_instance}_ranks.csv"
+        else:
+            raise ValueError(f"Problem {problem} non supporté pour baseline_rescaled.")
+
+        return repo_root / "additional_results" / "global_ranking" / filename
+
+    def _ensure_problem_meta(self, repo_root: Path | None = None):
+        if self.problem and self.dim is not None and self.type_instance is not None:
+            return
+        repo_root = repo_root or self._find_repo_root()
+        cfg = self._infer_problem_cfg(repo_root) or {}
+        if not self.problem:
+            self.problem = str(cfg.get("name") or cfg.get("type_problem") or "").upper()
+        if self.dim is None:
+            self.dim = cfg.get("dim") or cfg.get("n")
+        if self.type_instance is None:
+            self.type_instance = cfg.get("type_instance") or cfg.get("k")
+
+    def _load_scores(self, path: Path):
+        if not path.exists():
+            raise FileNotFoundError(f"Calibration introuvable: {path}")
+        with path.open("r", encoding="utf-8") as fh:
+            reader = csv.reader(fh)
+            rows = [row for row in reader if row]
+        if not rows:
+            raise ValueError(f"Calibration vide: {path}")
+        header = [h.strip().lower() for h in rows[0]]
+        rows = rows[1:]
+        idx_score = None
+        for key in ("score", "best_score", "value", "objective", "obj"):
+            if key in header:
+                idx_score = header.index(key)
+                break
+        if idx_score is None:
+            raise ValueError(f"Colonne score introuvable dans {path}")
+        scores = []
+        for r in rows:
+            if idx_score >= len(r):
+                continue
+            try:
+                s = float(r[idx_score])
+            except Exception:
+                continue
+            scores.append(s)
+        if not scores:
+            raise ValueError(f"Aucun score valide dans {path}")
+        return scores
+
+    def _compute_b(self):
+        path = self._resolve_calibration_path()
+        scores = self._load_scores(path)
+        scores_sorted = sorted(scores, reverse=True)
+        top_k = min(self.top_k, len(scores_sorted))
+        top_scores = scores_sorted[:top_k]
+        b = sum(top_scores) / max(1, len(top_scores))
+        return b
+
+    def compute(self, fitness, **context):
+        if self._cached_b is None:
+            self._cached_b = self._compute_b()
+        b = self._cached_b
+        self._ensure_problem_meta()
+        f = fitness
+        if self.dim:
+            f = f / float(self.dim)
+        device, dtype = fitness.device, fitness.dtype
+        b_t = torch.tensor(b, device=device, dtype=dtype)
+        print("FITNESS DES 5 PREMIER ", f[:5])
+        return f - b_t

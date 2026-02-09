@@ -63,11 +63,31 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         self.decay_start_ratio = float(decay_start_ratio)
         self.decay_min_factor = float(decay_min_factor)
         self.decay_enabled = bool(decay_enabled)
-        self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
-        self.kernel_config = kernel_config or {}
+        kernel_config_local = kernel_config or {}
+        advantage_cfg_local = advantage_cfg
+        if isinstance(advantage_cfg_local, str) and advantage_cfg_local.lower() == "baseline_rescaled":
+            advantage_cfg_local = {"type": advantage_cfg_local, "params": {}}
+        if isinstance(advantage_cfg_local, dict):
+            adv_type = str(advantage_cfg_local.get("type", "")).lower()
+            if adv_type == "baseline_rescaled":
+                params = advantage_cfg_local.setdefault("params", {})
+                for key in ("calibration_path", "problem", "dim", "type_instance", "top_k", "h_top_k"):
+                    if key not in params and key in kernel_config_local:
+                        params[key] = kernel_config_local.get(key)
+                if "dim" not in params:
+                    params["dim"] = self.N
+                if "problem" not in params:
+                    params["problem"] = getattr(self, "problem_type", None)
+        self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg_local)
+        self.kernel_config = kernel_config_local
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
         self.kernel_params = {}
         self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
+        self.natural_grad = bool(self.kernel_config.get("natural_grad", False))
+        self._natural_grad_notice = False
+        if self.natural_grad:
+            # Natural gradient disables SVGD decay regardless of config.
+            self.decay_enabled = False
 
         # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
@@ -199,6 +219,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             num_agents=M,
         )  # (BM, λa)
 
+        print("avantage des 5 premiers individus  de la première instance :")
+        print(advantages[0, :5])
+
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
         loss = loss_per_instance.sum()
         with torch.no_grad():
@@ -246,10 +269,20 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 self.kernel_metric_history.append(kernel_stats)
 
         with torch.no_grad():
-            self.theta += self.epsilon_svgd * phi
+            if self.natural_grad:
+                probs = self.probs if self.probs is not None else self.forward()
+                coeff_inverse_fisher = 1.0 / (probs * (1.0 - probs))
+                self.theta += self.epsilon_svgd * phi * coeff_inverse_fisher
+            else:
+                self.theta += self.epsilon_svgd * phi
             self.probs = None
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
+        if self.natural_grad:
+            if not self._natural_grad_notice:
+                print("natural grad activated, decay desactivated")
+                self._natural_grad_notice = True
+            return True
         if not self.decay_enabled or self.no_interact or self.M <= 1 or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
             return
         progress = (current_iter + 1) / float(total_iters)
