@@ -9,18 +9,15 @@ from __future__ import annotations
 
 import argparse
 import csv
-import fcntl
 import itertools
 import os
 import random
 import re
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
 import torch
-from openpyxl import Workbook, load_workbook
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
@@ -54,32 +51,6 @@ DEFAULT_GRIDS = [
 QUBO_PATTERN = re.compile(r"^puboi_evo_n_(?P<dim>\d+)_t_(?P<t>\d+)_i_(?P<i>\d+)\.json$")
 NK_PATTERN = re.compile(r"^nk_(?P<dim>\d+)_(?P<t>\d+)_?(?P<i>\d+)\.txt$")
 INSTANCE_DIR_RE = re.compile(r"^(?P<problem>QUBO|NK)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
-
-SUMMARY_HEADERS = [
-    "config_name",
-    "kernel",
-    "advantage",
-    "M",
-    "lambda_",
-    "epsilon_svgd",
-    "gamma",
-    "decay_start_ratio",
-    "decay_min_factor",
-    "mean_rank",
-    "median_rank",
-    "std_percent",
-    "top1_count",
-    "top3_count",
-    "top5_count",
-    "top10_count",
-    "top_1_nk",
-    "top_1_qubo",
-    "win_rate_mean",
-    "mean_hamming_norm",
-    "mean_l1_norm",
-    "n_instances",
-    "n_ranked",
-]
 
 
 def _set_seeds(seed: int) -> None:
@@ -786,147 +757,6 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
     )
 
 
-def _load_summary_rows(ws):
-    rows = list(ws.iter_rows(values_only=True))
-    if not rows:
-        return {}, []
-    header = [str(h) if h is not None else "" for h in rows[0]]
-    data = {}
-    if "config_name" not in header:
-        return data, header
-    idx = header.index("config_name")
-    for r in rows[1:]:
-        if not r or idx >= len(r):
-            continue
-        cfg_name = r[idx]
-        if not cfg_name:
-            continue
-        row_dict = {header[i]: r[i] for i in range(len(header))}
-        data[str(cfg_name)] = row_dict
-    return data, header
-
-
-def _write_summary_sheet(ws, rows_dict):
-    ws.delete_rows(1, ws.max_row)
-    ws.append(SUMMARY_HEADERS)
-    def sort_key(item):
-        row = item[1]
-        top1 = row.get("top1_count")
-        mean_rank = row.get("mean_rank")
-        mean_hamming = row.get("mean_hamming_norm")
-        top1_val = float(top1) if top1 is not None else -1.0
-        mean_rank_val = float(mean_rank) if mean_rank is not None else float("inf")
-        mean_hamming_val = float(mean_hamming) if mean_hamming is not None else -1.0
-        return (-top1_val, mean_rank_val, -mean_hamming_val, str(item[0]))
-
-    for cfg_name, row in sorted(rows_dict.items(), key=sort_key):
-        ws.append([row.get(h) for h in SUMMARY_HEADERS])
-
-
-@contextmanager
-def _file_lock(filepath: str, timeout: int = 60):
-    """Context manager for file-based locking to prevent concurrent writes."""
-    lock_file = filepath + ".lock"
-    lock_fd = None
-    start_time = time.time()
-    
-    try:
-        # Try to acquire lock with timeout
-        while True:
-            try:
-                lock_fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-                break
-            except FileExistsError:
-                if time.time() - start_time > timeout:
-                    raise TimeoutError(f"Could not acquire lock on {filepath} after {timeout}s")
-                time.sleep(0.1)
-        
-        yield
-    finally:
-        if lock_fd is not None:
-            os.close(lock_fd)
-            try:
-                os.remove(lock_file)
-            except OSError:
-                pass
-
-
-def _infer_params_from_name(config_name: str) -> dict:
-    """Parse config_name to extract parameters."""
-    parts = config_name.split("__")
-    out = {
-        "kernel": None,
-        "advantage": None,
-        "M": None,
-        "lambda_": None,
-        "epsilon_svgd": None,
-        "gamma": None,
-        "decay_start_ratio": None,
-        "decay_min_factor": None,
-        "bandwith_kernel": None,
-    }
-    def parse_float(token: str):
-        token = token.replace("p", ".").replace("m", "-")
-        try:
-            return float(token)
-        except Exception:
-            return None
-    for p in parts:
-        if p.startswith("k"):
-            out["kernel"] = p[1:]
-        elif p.startswith("adv"):
-            out["advantage"] = p[3:]
-        elif p.startswith("M"):
-            try:
-                out["M"] = int(p[1:])
-            except Exception:
-                pass
-        elif p.startswith("L"):
-            try:
-                out["lambda_"] = int(p[1:])
-            except Exception:
-                pass
-        elif p.startswith("eps"):
-            out["epsilon_svgd"] = parse_float(p[3:])
-        elif p.startswith("g"):
-            out["gamma"] = parse_float(p[1:])
-        elif p.startswith("ds"):
-            out["decay_start_ratio"] = parse_float(p[2:])
-        elif p.startswith("dm"):
-            out["decay_min_factor"] = parse_float(p[2:])
-        elif p.startswith("bw"):
-            out["bandwith_kernel"] = parse_float(p[2:])
-    return out
-
-
-def _rebuild_excel_summary(out_xlsx: str, out_root: str):
-    """Rebuild Excel from all config directories (one-time at the end)."""
-    rows = []
-    for cfg_dir in sorted(Path(out_root).iterdir()):
-        if not cfg_dir.is_dir():
-            continue
-        config_name = cfg_dir.name
-        params = _infer_params_from_name(config_name)
-        if not params.get("kernel") or params.get("M") is None or params.get("lambda_") is None:
-            continue
-        
-        repo_root = os.path.abspath(os.path.join(out_root, ".."))
-        stats = _collect_config_stats(str(cfg_dir), config_name, params, repo_root)
-        if stats["n_instances"] == 0:
-            continue
-        rows.append(stats)
-
-    with _file_lock(out_xlsx, timeout=300):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "summary"
-        ws.append(SUMMARY_HEADERS)
-        for row in rows:
-            ws.append([row.get(h) for h in SUMMARY_HEADERS])
-        wb.save(out_xlsx)
-
-
-
 def main():
     parser = argparse.ArgumentParser(description="Overall PPO-EDA decay grid (QUBO + NK).")
     parser.add_argument("--outdir", type=str, default=None, help="Root output dir (default: results/config).")
@@ -947,7 +777,6 @@ def main():
 
     _set_seeds(DEFAULTS["seed"])
 
-    out_xlsx = os.path.join(out_root, "overall_summary.xlsx")
     start_all = time.time()
     for grid in grids:
         for config_name, params in _expand_grid(grid):
@@ -1033,9 +862,7 @@ def main():
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
 
-    print(f"[DONE] experiments complete. Rebuilding Excel summary...")
-    _rebuild_excel_summary(out_xlsx, out_root)
-    print(f"[DONE] overall summary at {out_xlsx}")
+    print(f"[DONE] experiments complete")
     print(f"Elapsed: {time.time() - start_all:.2f}s")
 
 
