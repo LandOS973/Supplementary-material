@@ -1,0 +1,20 @@
+ConfigName: krbf__advnormalizedfitness__M4__L12__eps0p033__g0p005__ds0p3__dm0p01
+Problem: NK
+Kernel: rbf
+Advantage: normalizedfitness
+M: 4
+lambda: 12
+epsilon_svgd: 0.033
+gamma: 0.005
+decay_start_ratio: 0.3
+decay_min_factor: 0.01
+bandwith_kernel: None
+no_interact: False
+avg_score: 0.7377254962921143
+median_score: 0.7369294762611389
+std_score: 0.0134179862216115
+percentiles: 2%=0.7087753415107727, 5%=0.7156146764755249, 10%=0.7206175327301025, 25%=0.7300878763198853, 50%=0.7369294762611389, 75%=0.7483837008476257, 90%=0.7539719343185425, 95%=0.7568612694740295, 98%=0.762293815612793
+ranking_best_algo: PBIL
+ranking_best_score: 0.733570253046875
+ranking_my_rank: 1/504 (100.0%)
+ranking_my_percent: 100.0
