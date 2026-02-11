@@ -37,12 +37,12 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
         advantages=["normalizedfitness"],
-        M_values=[2],
-        lambda_values=[15],
-        epsilon_svgd=[0.025],
-        gamma=[0.007],
-        decay_start_ratio=[0.15],
-        decay_min_factor=[0.01],
+        M_values=[4],
+        lambda_values=[8,10,12,15],
+        epsilon_svgd=[0.015,0.025,0.033],
+        gamma=[0.005,0.007,0.01,0.015],
+        decay_start_ratio=[0.01,0.15,0.3],
+        decay_min_factor=[0.01,0.3],
         bandwith_kernel=[None],
     )
 ]

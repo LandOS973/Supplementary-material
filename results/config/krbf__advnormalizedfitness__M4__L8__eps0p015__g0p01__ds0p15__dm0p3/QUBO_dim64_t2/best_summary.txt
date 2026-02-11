@@ -1,0 +1,20 @@
+ConfigName: krbf__advnormalizedfitness__M4__L8__eps0p015__g0p01__ds0p15__dm0p3
+Problem: QUBO
+Kernel: rbf
+Advantage: normalizedfitness
+M: 4
+lambda: 8
+epsilon_svgd: 0.015
+gamma: 0.01
+decay_start_ratio: 0.15
+decay_min_factor: 0.3
+bandwith_kernel: None
+no_interact: False
+avg_score: -138.3000030517578
+median_score: -138.5
+std_score: 11.135079383850098
+percentiles: 2%=-157.02000427246094, 5%=-157.0, 10%=-155.0, 25%=-146.0, 50%=-138.5, 75%=-130.75, 90%=-125.0, 95%=-119.95000457763672, 98%=-114.97999572753906
+ranking_best_algo: DiscreteDE
+ranking_best_score: 143.4
+ranking_my_rank: 108/504 (78.8%)
+ranking_my_percent: 78.76984126984127

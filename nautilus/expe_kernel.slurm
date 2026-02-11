@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=expe
+#SBATCH --job-name=expe4
 #SBATCH --qos=short
 #SBATCH -p gpu
 #SBATCH --output=/home/t.lan@univ-angers.fr/Supplementary-material/outputs/expe_%j.out
@@ -19,10 +19,6 @@ export PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 PYTHON=/micromamba/$USER/envs/ppo_env/bin/python
 
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe.py
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_no_interact_batch.py
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe_decay.py
-srun $PYTHON /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_ppo_eda_batch.py
-
+srun $PYTHON -B /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main_expe_overall.py
 echo "Job terminé à $(date)"
 echo "Notification mail Slurm activée."
