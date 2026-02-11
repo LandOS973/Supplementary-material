@@ -218,10 +218,6 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
             nb_instances=B,
             num_agents=M,
         )  # (BM, λa)
-
-        print("avantage des 5 premiers individus  de la première instance :")
-        print(advantages[0, :5])
-
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
         loss = loss_per_instance.sum()
         with torch.no_grad():

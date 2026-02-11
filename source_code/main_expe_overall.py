@@ -36,14 +36,14 @@ DEFAULTS = dict(
 
 DEFAULT_GRIDS = [
     dict(
-        kernels=["jsd"],
-        advantages=["peragentrankweighted"],
-        M_values=[4],
-        lambda_values=[24],
-        epsilon_svgd=[0.01],
-        gamma=[0.0005],
-        decay_start_ratio=[1],
-        decay_min_factor=[1],
+        kernels=["rbf"],
+        advantages=["normalizedfitness"],
+        M_values=[2],
+        lambda_values=[15],
+        epsilon_svgd=[0.025],
+        gamma=[0.007],
+        decay_start_ratio=[0.15],
+        decay_min_factor=[0.01],
         bandwith_kernel=[None],
     )
 ]
