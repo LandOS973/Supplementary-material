@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import itertools
 import os
 import random
 import re
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -821,28 +823,108 @@ def _write_summary_sheet(ws, rows_dict):
         ws.append([row.get(h) for h in SUMMARY_HEADERS])
 
 
-def _update_excel_summary(out_xlsx: str, config_name: str, params: dict, config_dir: str, repo_root: str):
-    stats = _collect_config_stats(config_dir, config_name, params, repo_root)
-    if stats["n_instances"] == 0:
-        return
+@contextmanager
+def _file_lock(filepath: str, timeout: int = 60):
+    """Context manager for file-based locking to prevent concurrent writes."""
+    lock_file = filepath + ".lock"
+    lock_fd = None
+    start_time = time.time()
+    
+    try:
+        # Try to acquire lock with timeout
+        while True:
+            try:
+                lock_fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                break
+            except FileExistsError:
+                if time.time() - start_time > timeout:
+                    raise TimeoutError(f"Could not acquire lock on {filepath} after {timeout}s")
+                time.sleep(0.1)
+        
+        yield
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+            try:
+                os.remove(lock_file)
+            except OSError:
+                pass
 
-    if os.path.isfile(out_xlsx):
-        wb = load_workbook(out_xlsx)
-        if "summary" in wb.sheetnames:
-            ws = wb["summary"]
-            rows_dict, header = _load_summary_rows(ws)
-        else:
-            ws = wb.create_sheet("summary")
-            rows_dict = {}
-    else:
+
+def _infer_params_from_name(config_name: str) -> dict:
+    """Parse config_name to extract parameters."""
+    parts = config_name.split("__")
+    out = {
+        "kernel": None,
+        "advantage": None,
+        "M": None,
+        "lambda_": None,
+        "epsilon_svgd": None,
+        "gamma": None,
+        "decay_start_ratio": None,
+        "decay_min_factor": None,
+        "bandwith_kernel": None,
+    }
+    def parse_float(token: str):
+        token = token.replace("p", ".").replace("m", "-")
+        try:
+            return float(token)
+        except Exception:
+            return None
+    for p in parts:
+        if p.startswith("k"):
+            out["kernel"] = p[1:]
+        elif p.startswith("adv"):
+            out["advantage"] = p[3:]
+        elif p.startswith("M"):
+            try:
+                out["M"] = int(p[1:])
+            except Exception:
+                pass
+        elif p.startswith("L"):
+            try:
+                out["lambda_"] = int(p[1:])
+            except Exception:
+                pass
+        elif p.startswith("eps"):
+            out["epsilon_svgd"] = parse_float(p[3:])
+        elif p.startswith("g"):
+            out["gamma"] = parse_float(p[1:])
+        elif p.startswith("ds"):
+            out["decay_start_ratio"] = parse_float(p[2:])
+        elif p.startswith("dm"):
+            out["decay_min_factor"] = parse_float(p[2:])
+        elif p.startswith("bw"):
+            out["bandwith_kernel"] = parse_float(p[2:])
+    return out
+
+
+def _rebuild_excel_summary(out_xlsx: str, out_root: str):
+    """Rebuild Excel from all config directories (one-time at the end)."""
+    rows = []
+    for cfg_dir in sorted(Path(out_root).iterdir()):
+        if not cfg_dir.is_dir():
+            continue
+        config_name = cfg_dir.name
+        params = _infer_params_from_name(config_name)
+        if not params.get("kernel") or params.get("M") is None or params.get("lambda_") is None:
+            continue
+        
+        repo_root = os.path.abspath(os.path.join(out_root, ".."))
+        stats = _collect_config_stats(str(cfg_dir), config_name, params, repo_root)
+        if stats["n_instances"] == 0:
+            continue
+        rows.append(stats)
+
+    with _file_lock(out_xlsx, timeout=300):
         wb = Workbook()
         ws = wb.active
         ws.title = "summary"
-        rows_dict = {}
+        ws.append(SUMMARY_HEADERS)
+        for row in rows:
+            ws.append([row.get(h) for h in SUMMARY_HEADERS])
+        wb.save(out_xlsx)
 
-    rows_dict[config_name] = stats
-    _write_summary_sheet(ws, rows_dict)
-    wb.save(out_xlsx)
 
 
 def main():
@@ -871,8 +953,6 @@ def main():
         for config_name, params in _expand_grid(grid):
             config_dir = os.path.join(out_root, config_name)
             print(f"[CONFIG] {config_name}")
-
-            _update_excel_summary(out_xlsx, config_name, params, config_dir, repo_root)
 
             pending_instances = []
             skipped_instances = []
@@ -952,8 +1032,9 @@ def main():
                 )
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
-                _update_excel_summary(out_xlsx, config_name, params, config_dir, repo_root)
 
+    print(f"[DONE] experiments complete. Rebuilding Excel summary...")
+    _rebuild_excel_summary(out_xlsx, out_root)
     print(f"[DONE] overall summary at {out_xlsx}")
     print(f"Elapsed: {time.time() - start_all:.2f}s")
 
