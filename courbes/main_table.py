@@ -82,6 +82,31 @@ def load_best_summary(experiment_dir: Path, problem_name: str) -> dict[str, str]
     return best_summary
 
 
+def load_svgd_score(config_dir: Path, problem_name: str, dim: int, type_instance: int) -> float | None:
+    """Load SVGD score from config directory structure."""
+    instance_dir = config_dir / f"{problem_name}_dim{dim}_t{type_instance}"
+    if not instance_dir.exists():
+        return None
+    summary_files = sorted(instance_dir.glob(f"{problem_name}_*_best_summary.txt"))
+    if not summary_files:
+        return None
+    best_score = None
+    maximize = is_maximization_problem(problem_name)
+    for path in summary_files:
+        data = parse_summary_file(path)
+        avg_score = parse_float(data.get("avg_score"))
+        if avg_score is None:
+            continue
+        if best_score is None:
+            best_score = avg_score
+            continue
+        if maximize and avg_score > best_score:
+            best_score = avg_score
+        elif not maximize and avg_score < best_score:
+            best_score = avg_score
+    return best_score
+
+
 def ranking_path(problem_name: str, dim: int, type_instance: int) -> Path:
     if problem_name.upper() == "QUBO":
         name = "UBQP"
@@ -148,15 +173,13 @@ def wrap_name(name: str | None, width: int = 18) -> str:
     return textwrap.fill(name, width=width)
 
 
-def build_rows(methods: List[str]) -> tuple[List[List[str]], List[str]]:
+def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], List[str]]:
     rows: List[List[str]] = []
     for problem_name, dim, type_instance, exp_dir in discover_instances():
         summary = load_best_summary(exp_dir, problem_name)
         if summary is None:
             continue
         avg_score = parse_float(summary.get("avg_score"))
-        rank_value = parse_rank_value(summary.get("ranking_my_rank"))
-        my_rank, my_total = (rank_value or (None, None))
 
         ranking_file = ranking_path(problem_name, dim, type_instance)
         ranking = load_ranking(ranking_file)
@@ -164,30 +187,25 @@ def build_rows(methods: List[str]) -> tuple[List[List[str]], List[str]]:
 
         row: List[str] = [problem_name, str(dim), str(type_instance)]
 
-        our_score = normalize_score(problem_name, avg_score)
+        # Load SVGD score from config
+        svgd_raw_score = load_svgd_score(config_dir, problem_name, dim, type_instance)
+        svgd_score = normalize_score(problem_name, svgd_raw_score)
 
-        decay_score = None
-        decay_dir = exp_dir / "decay"
-        if decay_dir.exists():
-            decay_summary = load_best_summary(decay_dir, problem_name)
-            if decay_summary:
-                decay_score = normalize_score(problem_name, parse_float(decay_summary.get("avg_score")))
-
+        # Build combined ranking including SVGD
         combined = list(ranking)
-        if our_score is not None:
-            combined.append(("reinforce SVGD", our_score))
-        if decay_score is not None:
-            combined.append(("reinforce SVGD decay", decay_score))
+        if svgd_score is not None:
+            combined.append(("SVGD", svgd_score))
         combined.sort(key=lambda item: item[1], reverse=True)
         total = len(combined) if combined else None
+        
         rank_map: dict[str, tuple[int, float]] = {}
         for idx, (name, score) in enumerate(combined, start=1):
             rank_map[name] = (idx, score)
-        our_rank = rank_map.get("reinforce SVGD", (None, None))[0]
-        decay_rank = rank_map.get("reinforce SVGD decay", (None, None))[0]
-        row.extend([format_rank(our_rank, total), format_score(problem_name, our_score)])
-        row.extend([format_rank(decay_rank, total), format_score(problem_name, decay_score)])
+        
+        svgd_rank = rank_map.get("SVGD", (None, None))[0]
+        row.extend([format_rank(svgd_rank, total), format_score(problem_name, svgd_score)])
 
+        # Add other methods
         for method in methods:
             rank_entry = rank_map.get(method)
             if rank_entry:
@@ -196,13 +214,13 @@ def build_rows(methods: List[str]) -> tuple[List[List[str]], List[str]]:
             else:
                 row.extend(["—", "—"])
 
+        # Best method (excluding SVGD, PBIL, MIMIC, BOA)
         best_name = "—"
         best_rank = None
         best_score = None
         if combined:
-            excluded = set(methods)
-            excluded.add("reinforce SVGD")
-            excluded.add("reinforce SVGD decay")
+            excluded = {"SVGD"}
+            excluded.update(methods)
             for idx, (name, score) in enumerate(combined, start=1):
                 if name in excluded:
                     continue
@@ -220,7 +238,7 @@ def build_rows(methods: List[str]) -> tuple[List[List[str]], List[str]]:
         )
         rows.append(row)
 
-    return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (2 + len(methods)) + ["Name", "Rank", "Score"]
+    return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (1 + len(methods)) + ["Name", "Rank", "Score"]
 
 
 def write_csv(rows: List[List[str]], col_labels: List[str], output_csv: Path) -> None:
@@ -252,11 +270,11 @@ def write_excel(rows: List[List[str]], col_labels: List[str], output_xlsx: Path)
 
     # Column groups (0-based indices)
     # Instances: Pb, n, t -> cols 1-3
-    # Methods: reinforce SVGD, PBIL, MIMIC, BOA -> each has Rank/Score
+    # Methods: SVGD, PBIL, MIMIC, BOA -> each has Rank/Score
     # Best method (others): Name, Rank, Score -> last 3
     n_cols = len(col_labels)
-    if n_cols != 16:
-        print("[WARN] Unexpected column count, Excel header merging may be off.")
+    if n_cols != 14:
+        print(f"[WARN] Unexpected column count: {n_cols}, expected 14. Excel header merging may be off.")
 
     # Header rows
     ws.append([""] * n_cols)
@@ -266,22 +284,20 @@ def write_excel(rows: List[List[str]], col_labels: List[str], output_xlsx: Path)
     # Group headers (row 1)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
     ws.cell(row=1, column=1, value="Instances")
-    ws.merge_cells(start_row=1, start_column=4, end_row=1, end_column=13)
+    ws.merge_cells(start_row=1, start_column=4, end_row=1, end_column=11)
     ws.cell(row=1, column=4, value="Methods")
-    ws.merge_cells(start_row=1, start_column=14, end_row=1, end_column=16)
-    ws.cell(row=1, column=14, value="Best method (others)")
+    ws.merge_cells(start_row=1, start_column=12, end_row=1, end_column=14)
+    ws.cell(row=1, column=12, value="Best method (others)")
 
     # Method headers (row 2)
     ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=5)
-    ws.cell(row=2, column=4, value="reinforce SVGD")
+    ws.cell(row=2, column=4, value="SVGD")
     ws.merge_cells(start_row=2, start_column=6, end_row=2, end_column=7)
-    ws.cell(row=2, column=6, value="reinforce SVGD decay")
+    ws.cell(row=2, column=6, value="PBIL")
     ws.merge_cells(start_row=2, start_column=8, end_row=2, end_column=9)
-    ws.cell(row=2, column=8, value="PBIL")
+    ws.cell(row=2, column=8, value="MIMIC")
     ws.merge_cells(start_row=2, start_column=10, end_row=2, end_column=11)
-    ws.cell(row=2, column=10, value="MIMIC")
-    ws.merge_cells(start_row=2, start_column=12, end_row=2, end_column=13)
-    ws.cell(row=2, column=12, value="BOA")
+    ws.cell(row=2, column=10, value="BOA")
 
     # Data rows
     for row in rows:
@@ -299,7 +315,7 @@ def write_excel(rows: List[List[str]], col_labels: List[str], output_xlsx: Path)
         for col_idx in range(1, n_cols + 1):
             ws.cell(row=row_idx, column=col_idx).alignment = center
 
-    col_widths = [8, 6, 6] + [9, 9] * 5 + [24, 9, 9]
+    col_widths = [8, 6, 6] + [9, 9] * 4 + [24, 9, 9]
     for idx, width in enumerate(col_widths, start=1):
         ws.column_dimensions[chr(64 + idx)].width = width
 
@@ -319,7 +335,7 @@ def plot_table(rows: List[List[str]], col_labels: List[str], output_png: Path, o
     ax.axis("off")
     ax.set_position([0.02, 0.02, 0.96, 0.96])
 
-    col_widths = [0.06, 0.04, 0.04] + [0.06, 0.06] * 5 + [0.24, 0.06, 0.06]
+    col_widths = [0.06, 0.04, 0.04] + [0.06, 0.06] * 4 + [0.24, 0.06, 0.06]
     total_width = sum(col_widths)
     col_widths = [w / total_width for w in col_widths]
 
@@ -401,15 +417,15 @@ def plot_table(rows: List[List[str]], col_labels: List[str], output_png: Path, o
             )
 
     draw_header_cell(x_edges[0], x_edges[3], header1_y, header1_h, "Instances", 11)
-    draw_header_cell(x_edges[3], x_edges[13], header1_y, header1_h, "Methods", 11)
-    draw_header_cell(x_edges[13], x_edges[16], header1_y, header1_h, "Best method (others)", 11)
+    draw_header_cell(x_edges[3], x_edges[11], header1_y, header1_h, "Methods", 11)
+    draw_header_cell(x_edges[11], x_edges[14], header1_y, header1_h, "Best method (others)", 11)
 
     draw_header_cell(x_edges[0], x_edges[3], header2_y, header2_h, "", 9)
-    method_labels = ["reinforce SVGD", "reinforce SVGD decay", "PBIL", "MIMIC", "BOA"]
-    method_spans = [(3, 5), (5, 7), (7, 9), (9, 11), (11, 13)]
+    method_labels = ["SVGD", "PBIL", "MIMIC", "BOA"]
+    method_spans = [(3, 5), (5, 7), (7, 9), (9, 11)]
     for label, (start, end) in zip(method_labels, method_spans):
         draw_header_cell(x_edges[start], x_edges[end], header2_y, header2_h, label, 9)
-    draw_header_cell(x_edges[13], x_edges[16], header2_y, header2_h, "", 9)
+    draw_header_cell(x_edges[11], x_edges[14], header2_y, header2_h, "", 9)
 
     ax.hlines(header_bottom, 0, 1, transform=ax.transAxes, color="#333333", linewidth=0.8)
 
@@ -429,8 +445,16 @@ def main() -> None:
     parser.add_argument("--format", choices=("all", "csv", "image", "excel"), default="all")
     args = parser.parse_args()
 
+    # Ask for config
+    config_name = input("Enter config name (e.g., krbf__advnormalizedfitness__M2__L14__eps0p025__g0p007__ds0p15__dm0p01): ").strip()
+    config_dir = ROOT / "results" / "config" / config_name
+    
+    if not config_dir.exists():
+        print(f"Error: Config directory not found: {config_dir}")
+        return
+
     methods = ["PBIL", "MIMIC", "BOA"]
-    rows, col_labels = build_rows(methods)
+    rows, col_labels = build_rows(methods, config_dir)
     if args.format in ("all", "csv"):
         write_csv(rows, col_labels, args.csv)
     if args.format in ("all", "image"):
