@@ -8,7 +8,34 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from main_expe_overall import SUMMARY_HEADERS, _collect_config_stats
+from main_expe_overall import _collect_config_stats
+
+
+SUMMARY_HEADERS = [
+    "config_name",
+    "kernel",
+    "advantage",
+    "M",
+    "lambda_",
+    "epsilon_svgd",
+    "gamma",
+    "decay_start_ratio",
+    "decay_min_factor",
+    "mean_rank",
+    "median_rank",
+    "std_percent",
+    "top1_count",
+    "top3_count",
+    "top5_count",
+    "top10_count",
+    "top_1_nk",
+    "top_1_qubo",
+    "win_rate_mean",
+    "mean_hamming_norm",
+    "mean_l1_norm",
+    "n_instances",
+    "n_ranked",
+]
 
 
 def _infer_params_from_name(config_name: str) -> dict:
