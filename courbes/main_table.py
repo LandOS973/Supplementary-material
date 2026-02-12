@@ -82,29 +82,64 @@ def load_best_summary(experiment_dir: Path, problem_name: str) -> dict[str, str]
     return best_summary
 
 
-def load_svgd_score(config_dir: Path, problem_name: str, dim: int, type_instance: int) -> float | None:
-    """Load SVGD score from config directory structure."""
+def load_svgd_score(config_dir: Path, problem_name: str, dim: int, type_instance: int) -> tuple[float | None, tuple[int, int] | None]:
+    """Load SVGD score and optional rank from config directory.
+
+    Returns (score, (rank, total)) where rank tuple may be None.
+    """
     instance_dir = config_dir / f"{problem_name}_dim{dim}_t{type_instance}"
     if not instance_dir.exists():
-        return None
-    summary_files = sorted(instance_dir.glob(f"{problem_name}_*_best_summary.txt"))
+        return None, None
+
+    # Accept several possible summary filename patterns, including plain best_summary.txt
+    summary_files = sorted(instance_dir.glob("*best_summary*.txt"))
     if not summary_files:
-        return None
+        # fallback to best_metrics.csv if present
+        csv_path = instance_dir / "best_metrics.csv"
+        if csv_path.exists():
+            # try to read avg_score from csv first row
+            try:
+                with csv_path.open() as fh:
+                    reader = csv.DictReader(fh)
+                    for row in reader:
+                        for key in ("avg_score", "score", "avg", "avg_fitness", "fitness"):
+                            if key in row and row[key]:
+                                return parse_float(row[key]), None
+                        break
+            except Exception:
+                pass
+        return None, None
+
     best_score = None
     maximize = is_maximization_problem(problem_name)
+    parsed_rank = None
     for path in summary_files:
         data = parse_summary_file(path)
-        avg_score = parse_float(data.get("avg_score"))
+
+        # try several possible keys for average score
+        avg_score = None
+        for k in ("avg_score", "score", "avg", "avg_fitness", "fitness"):
+            if k in data:
+                avg_score = parse_float(data.get(k))
+                if avg_score is not None:
+                    break
+
         if avg_score is None:
             continue
+
         if best_score is None:
             best_score = avg_score
-            continue
-        if maximize and avg_score > best_score:
-            best_score = avg_score
-        elif not maximize and avg_score < best_score:
-            best_score = avg_score
-    return best_score
+        else:
+            if maximize and avg_score > best_score:
+                best_score = avg_score
+            elif not maximize and avg_score < best_score:
+                best_score = avg_score
+
+        # parse rank if present (e.g., ranking_my_rank: 3/504)
+        if parsed_rank is None:
+            parsed_rank = parse_rank_value(data.get("ranking_my_rank") or data.get("my_rank") or data.get("rank"))
+
+    return best_score, parsed_rank
 
 
 def ranking_path(problem_name: str, dim: int, type_instance: int) -> Path:
@@ -175,11 +210,38 @@ def wrap_name(name: str | None, width: int = 18) -> str:
 
 def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], List[str]]:
     rows: List[List[str]] = []
-    for problem_name, dim, type_instance, exp_dir in discover_instances():
-        summary = load_best_summary(exp_dir, problem_name)
-        if summary is None:
+
+    # Gather instances from results/experiments
+    instances = list(discover_instances())
+
+    # Also gather instances present in the config directory (to ensure none missing)
+    if config_dir.exists():
+        for entry in config_dir.iterdir():
+            # looking for directories like NK_dim64_t1
+            match = re.match(r"^(?P<name>.+)_dim(?P<dim>\d+)_t(?P<t>\d+)$", entry.name)
+            if not match:
+                continue
+            name = match.group("name")
+            dim = int(match.group("dim"))
+            type_instance = int(match.group("t"))
+            key = (name, dim, type_instance)
+            if key not in {(i[0], i[1], i[2]) for i in instances}:
+                instances.append((name, dim, type_instance, entry))
+
+    # sort instances for deterministic output
+    instances = sorted(instances, key=lambda item: (item[0], item[1], item[2]))
+
+    for problem_name, dim, type_instance, exp_dir in instances:
+        # Exclude specific problematic instance per user request
+        if problem_name.upper() == "BLOCK" and dim == 2064 and type_instance == 16:
             continue
-        avg_score = parse_float(summary.get("avg_score"))
+        # Try to load summary from experiments folder if exists
+        avg_score = None
+        exp_summary = None
+        if exp_dir and exp_dir.exists():
+            exp_summary = load_best_summary(exp_dir, problem_name)
+            if exp_summary:
+                avg_score = parse_float(exp_summary.get("avg_score"))
 
         ranking_file = ranking_path(problem_name, dim, type_instance)
         ranking = load_ranking(ranking_file)
@@ -187,8 +249,8 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
 
         row: List[str] = [problem_name, str(dim), str(type_instance)]
 
-        # Load SVGD score from config
-        svgd_raw_score = load_svgd_score(config_dir, problem_name, dim, type_instance)
+        # Load SVGD score and optional rank from config
+        svgd_raw_score, svgd_rank_from_config = load_svgd_score(config_dir, problem_name, dim, type_instance)
         svgd_score = normalize_score(problem_name, svgd_raw_score)
 
         # Build combined ranking including SVGD
@@ -197,11 +259,11 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
             combined.append(("SVGD", svgd_score))
         combined.sort(key=lambda item: item[1], reverse=True)
         total = len(combined) if combined else None
-        
+
         rank_map: dict[str, tuple[int, float]] = {}
         for idx, (name, score) in enumerate(combined, start=1):
             rank_map[name] = (idx, score)
-        
+
         svgd_rank = rank_map.get("SVGD", (None, None))[0]
         row.extend([format_rank(svgd_rank, total), format_score(problem_name, svgd_score)])
 
