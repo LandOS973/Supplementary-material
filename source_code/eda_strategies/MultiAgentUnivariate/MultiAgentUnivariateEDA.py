@@ -266,6 +266,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
 
         with torch.no_grad():
             if self.natural_grad:
+                print("Applying natural gradient scaling to SVGD update.")
                 probs = self.probs if self.probs is not None else self.forward()
                 coeff_inverse_fisher = 1.0 / (probs * (1.0 - probs))
                 self.theta += self.epsilon_svgd * phi * coeff_inverse_fisher
@@ -279,7 +280,7 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
                 print("natural grad activated, decay desactivated")
                 self._natural_grad_notice = True
             return True
-        if not self.decay_enabled or self.no_interact or self.M <= 1 or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
+        if not self.decay_enabled or self.no_interact or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
             return
         progress = (current_iter + 1) / float(total_iters)
         start = self.decay_start_ratio

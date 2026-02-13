@@ -4,7 +4,7 @@ M: 2
 lambda: 10
 advantage: normalizedfitness # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
 kernel:  rbf # rbf | hk | pk | ppk | jsd | no_interact
-no_interact: true
+no_interact: false
 no_repulsion: false
 decay_start_ratio: 0.5
 min_factor: 0.05

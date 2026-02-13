@@ -22,6 +22,8 @@ class SVGD:
             φ_i = (1/M) * [ Σ_j k(θ_j, θ_i) * score_j  +  Σ_j ∇_θ_j k(θ_j, θ_i) ]
         """
         B, M, N = thetas.shape
+        if M == 1:
+            return score / self.gamma
         K, grad_term = self.kernel(thetas, probs=probs)  # (B, M, M), (B, M, N)
         if torch.isnan(K).any() or torch.isinf(K).any():
             K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
