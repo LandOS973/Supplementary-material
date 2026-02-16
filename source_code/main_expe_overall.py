@@ -37,7 +37,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
         advantages=["normalizedfitness"],
-        M_values=[4],
+        M_values=[1],
         lambda_values=[8,10,12,15],
         epsilon_svgd=[0.015,0.025,0.033],
         gamma=[0.005,0.007,0.01,0.015],
