@@ -37,7 +37,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
         advantages=["normalizedfitness"],
-        M_values=[1],
+        M_values=[2],
         lambda_values=[8,10,12,15],
         epsilon_svgd=[0.015,0.025,0.033],
         gamma=[0.005,0.007,0.01,0.015],
@@ -808,7 +808,21 @@ def main():
                 print("  -> already complete, skipping.")
                 continue
 
+            # Separate QUBO and NK instances
+            qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO' and inst['dim'] != 64]
+            nk_pending = [inst for inst in pending_instances if inst['name'] == 'NK']
+            
+            # Skip QUBO dim 64 instances
             for inst in pending_instances:
+                if inst['name'] == 'QUBO' and inst['dim'] == 64:
+                    inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+                    print(f"  -> skip {inst_name} (dim 64 excluded)")
+            
+            # Track TOP 1 count in QUBO
+            qubo_top1_count = 0
+            
+            # Run QUBO instances first
+            for inst in qubo_pending:
                 inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
                 inst_dir = os.path.join(config_dir, inst_name)
                 problem_ctx = _load_instances(inst, DEFAULTS["device"])
@@ -861,6 +875,79 @@ def main():
                 )
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
+                    qubo_top1_count += 1
+
+            # Check if we should skip NK
+            if qubo_top1_count < 3 and nk_pending:
+                print(f"  [SKIP NK] Only {qubo_top1_count} TOP 1 in QUBO (threshold: 3)")
+                for inst in nk_pending:
+                    inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+                    print(f"  -> skip {inst_name} (insufficient TOP 1 in QUBO)")
+            else:
+                # Run NK instances
+                for inst in nk_pending:
+                    inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+                    inst_dir = os.path.join(config_dir, inst_name)
+                    problem_ctx = _load_instances(inst, DEFAULTS["device"])
+                    print(f"  -> run {inst_name}")
+                    t0 = time.time()
+                    nb_restarts = DEFAULTS["nb_restarts"]
+                    success = False
+                    while nb_restarts > 0 and not success:
+                        try:
+                            avg_score, history, meta = _run_once(
+                                problem_ctx,
+                                params["kernel"],
+                                params["advantage"],
+                                params["M"],
+                                params["lambda_"],
+                                params["epsilon_svgd"],
+                                params["gamma"],
+                                params["decay_start_ratio"],
+                                params["decay_min_factor"],
+                                params.get("bandwith_kernel"),
+                                device=DEFAULTS["device"],
+                                nb_restarts=nb_restarts,
+                            )
+                            success = True
+                        except (torch.OutOfMemoryError, RuntimeError) as exc:
+                            if not _is_cuda_oom(exc):
+                                raise
+                            nb_restarts -= 1
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                            if nb_restarts > 0:
+                                print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
+                            else:
+                                print("     [OOM] nb_restarts=0, skip instance.")
+
+                    if not success:
+                        continue
+                    dt = time.time() - t0
+                    print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+                    ranking = _rank_vs_global_ranking_excluding_ppo(
+                        repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
+                    )
+                    _save_history_csv(
+                        inst_dir,
+                        inst["name"],
+                        params["kernel"],
+                        {"history": history, "meta": meta},
+                        ranking=ranking,
+                        config_name=config_name,
+                    )
+                    if ranking and ranking[2] == 1:
+                        print("     -> TOP 1")
+
+            # After each config, print stats
+            stats = _collect_config_stats(config_dir, config_name, params, repo_root)
+            print(f"\n  *** SUMMARY FOR CONFIG: {config_name} ***")
+            print(f"  NOMBRE DE TOP 1 : {stats['top1_count']} (NK: {stats['top_1_nk']}, QUBO: {stats['top_1_qubo']})")
+            print(f"  NOMBRE DE TOP 3 : {stats['top3_count']}")
+            print(f"  NOMBRE DE TOP 5 : {stats['top5_count']}")
+            print(f"  NOMBRE DE TOP 10 : {stats['top10_count']}")
+            print(f"  Instances: {stats['n_ranked']}/{stats['n_instances']}")
+            print()
 
     print(f"[DONE] experiments complete")
     print(f"Elapsed: {time.time() - start_all:.2f}s")
