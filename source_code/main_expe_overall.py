@@ -38,11 +38,11 @@ DEFAULT_GRIDS = [
         kernels=["rbf"],
         advantages=["normalizedfitness"],
         M_values=[2],
-        lambda_values=[8,10,12,15],
-        epsilon_svgd=[0.015,0.025,0.033],
-        gamma=[0.005,0.007,0.01,0.015],
-        decay_start_ratio=[0.01,0.15,0.3],
-        decay_min_factor=[0.01,0.3],
+        lambda_values=[9,10,11],
+        epsilon_svgd=[0.01,0.015,0.020],
+        gamma=[0.003,0.005,0.007],
+        decay_start_ratio=[0.01],
+        decay_min_factor=[0.01],
         bandwith_kernel=[None],
     )
 ]
