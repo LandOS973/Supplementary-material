@@ -58,17 +58,17 @@ from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 # ============================================================================
 
 CONFIGURATIONS = [
-    {"M": 1,  "lambda_per_agent": 14},
-    {"M": 2,  "lambda_per_agent": 14},
-    {"M": 4,  "lambda_per_agent": 14},
-    {"M": 8,  "lambda_per_agent": 14},
-    {"M": 16, "lambda_per_agent": 14},
+    {"M": 1,  "lambda_per_agent": 10},
+    {"M": 2,  "lambda_per_agent": 10},
+    {"M": 4,  "lambda_per_agent": 10},
+    {"M": 8,  "lambda_per_agent": 10},
+    {"M": 10, "lambda_per_agent": 10},
 ]
 
 FIXED_HYPERPARAMS = {
-    "epsilon_svgd": 0.025,
-    "svgd_gamma": 0.007,
-    "decay_start_ratio": 0.15,
+    "epsilon_svgd": 0.015,
+    "svgd_gamma": 0.005,
+    "decay_start_ratio": 0.01,
     "decay_min_factor": 0.01,
     "decay_enabled": True,
     "kernel_config": {"name": "rbf"},
@@ -116,7 +116,13 @@ def set_seed(seed: int):
     random.seed(seed)
 
 
-def load_nk_problem(N: int, K: int, M: int, lambda_per_agent: int) -> Tuple:
+def load_nk_problem(
+    N: int,
+    K: int,
+    M: int,
+    lambda_per_agent: int,
+    num_restarts: Optional[int] = None,
+) -> Tuple:
     """
     Load real NK instances for specific N and K.
     
@@ -137,10 +143,13 @@ def load_nk_problem(N: int, K: int, M: int, lambda_per_agent: int) -> Tuple:
     if not os.path.exists(nk_path):
         raise FileNotFoundError(f"NK instance path not found: {nk_path}")
     
+    if num_restarts is None:
+        num_restarts = NK_PARAMS["num_restarts"]
+
     tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
         nk_path,
         NK_PARAMS["num_instances"],
-        NK_PARAMS["num_restarts"],
+        num_restarts,
         M * lambda_per_agent,
         N,
         D,
@@ -185,7 +194,7 @@ def create_strategy(N: int, M: int, lambda_per_agent: int, device: str):
 # MAIN SENSITIVITY ANALYSIS
 # ============================================================================
 
-def run_sensitivity_analysis(output_dir: str = ".") -> str:
+def run_sensitivity_analysis(output_dir: str = ".") -> Tuple[str, str]:
     """
     Run Sensitivity Analysis using get_Score_trajectoriesNK_cuda.
     Collects RAW fitness values (not normalized).
@@ -206,6 +215,7 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
     
     os.makedirs(output_dir, exist_ok=True)
     results = []
+    history_results = []
     
     # Loop over ALL NK landscape configurations
     for nk_idx, nk_cfg in enumerate(NK_CONFIGS):
@@ -221,38 +231,75 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
             
             # Set seed for reproducibility
             set_seed(NK_PARAMS["seed_base"])
-            
-            # Load NK Tensors
-            try:
-                tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test, vectorIndex_th = load_nk_problem(
-                    N, K, M, lambda_per_agent
-                )
-            except FileNotFoundError as e:
-                print(f"[SKIP] {e}")
-                continue
+           
+            device_for_config = device
+            restarts_for_config = nb_restarts
+            # Load NK Tensors (reduce restarts on OOM)
+            while True:
+                try:
+                    tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test, vectorIndex_th = load_nk_problem(
+                        N, K, M, lambda_per_agent, num_restarts=restarts_for_config
+                    )
+                    break
+                except FileNotFoundError as e:
+                    print(f"[SKIP] {e}")
+                    continue
+                except torch.OutOfMemoryError:
+                    if not torch.cuda.is_available():
+                        raise
+                    if restarts_for_config <= 1:
+                        raise
+                    torch.cuda.empty_cache()
+                    new_restarts = max(1, restarts_for_config // 2)
+                    print(
+                        f"[OOM] Reducing restarts from {restarts_for_config} to {new_restarts} "
+                        f"and retrying..."
+                    )
+                    restarts_for_config = new_restarts
             
             # Create strategy (errors NOT caught - let them surface)
-            strategy = create_strategy(N, M, lambda_per_agent, device)
+            strategy = create_strategy(N, M, lambda_per_agent, device_for_config)
             
             # VECTORIZED EXECUTION on GPU
-            # One call for all 100 runs (10 instances × 10 restarts)
-            scores = get_Score_trajectoriesNK_cuda(
-                strategy,
-                N,
-                K,
-                2,  # D=2 for NK
-                nb_instances,
-                nb_restarts,
-                total_budget,
-                lambda_per_agent,
-                vectorIndex_th,
-                tensor_matrix_locus,
-                tensor_matrix_contrib,
-                device,
-                verbose=False,
-                enable_visualization=False,
-                return_history=False,
-            )
+            # One call for all runs (instances × restarts). If OOM, reduce restarts.
+            while True:
+                try:
+                    scores, history = get_Score_trajectoriesNK_cuda(
+                        strategy,
+                        N,
+                        K,
+                        2,  # D=2 for NK
+                        nb_instances,
+                        restarts_for_config,
+                        total_budget,
+                        lambda_per_agent,
+                        vectorIndex_th,
+                        tensor_matrix_locus,
+                        tensor_matrix_contrib,
+                        device_for_config,
+                        verbose=False,
+                        enable_visualization=False,
+                        return_history=True,
+                    )
+                    break
+                except torch.OutOfMemoryError as e:
+                    if not torch.cuda.is_available():
+                        raise
+                    if restarts_for_config <= 1:
+                        raise
+                    torch.cuda.empty_cache()
+                    new_restarts = max(1, restarts_for_config // 2)
+                    print(
+                        f"[OOM] Reducing restarts from {restarts_for_config} to {new_restarts} "
+                        f"and retrying..."
+                    )
+                    restarts_for_config = new_restarts
+                    # Reload NK tensors with the reduced number of restarts
+                    tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test, vectorIndex_th = load_nk_problem(
+                        N, K, M, lambda_per_agent, num_restarts=restarts_for_config
+                    )
+                    # Recreate strategy to reset internal buffers sized by batch
+                    strategy = create_strategy(N, M, lambda_per_agent, device_for_config)
             
             # Process raw results (length 100)
             # Store one entry per fitness value (100 total)
@@ -264,6 +311,8 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
                     "fitness": float(fitness),
                 })
             
+            # Curves disabled
+            
             print(f"✓ {len(scores)} runs collected")
     
     # Save results
@@ -272,13 +321,12 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
     results_df.to_csv(csv_path, index=False)
     
     print(f"\n✓ Saved {len(results)} fitness values to {csv_path}")
-    print(f"  Columns: {list(results_df.columns)}")
     
-    return csv_path
+    return csv_path, None
 
 
 # ============================================================================
-# VISUALIZATION (BOXPLOTS)
+# VISUALIZATION (BOXPLOTS & CURVES)
 # ============================================================================
 
 def plot_boxplot_results(csv_path: str, output_dir: Optional[str] = None) -> str:
@@ -397,7 +445,7 @@ def main():
     output_dir = os.path.join(script_dir, "sensitivity_analysis_boxplot")
     
     # Run sensitivity analysis (collect raw fitness values)
-    csv_path = run_sensitivity_analysis(output_dir=output_dir)
+    csv_path, _ = run_sensitivity_analysis(output_dir=output_dir)
     
     # Print summary statistics
     print_summary_statistics(csv_path)
@@ -410,11 +458,10 @@ def main():
     print(f"{'='*80}")
     print(f"\nResults Summary:")
     print(f"  • CSV File: {csv_path}")
-    print(f"  • Plots Directory: {plots_dir}")
+    print(f"  • Boxplots Directory: {plots_dir}")
     print(f"\nNext Steps:")
-    print(f"  1. Review CSV for raw fitness values")
-    print(f"  2. Inspect boxplots to assess M impact on fitness distribution")
-    print(f"  3. Analyze stability and outliers per configuration")
+    print(f"  1. Review CSVs for raw data")
+    print(f"  2. Inspect boxplots to assess M impact on distribution")
 
 
 if __name__ == "__main__":

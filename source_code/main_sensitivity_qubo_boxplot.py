@@ -57,25 +57,23 @@ from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO
 # ============================================================================
 # CONFIGURATION & SETUP
 # ============================================================================
-
 CONFIGURATIONS = [
-    {"M": 1,  "lambda_per_agent": 14},
-    {"M": 2,  "lambda_per_agent": 14},
-    {"M": 4,  "lambda_per_agent": 14},
-    {"M": 8,  "lambda_per_agent": 14},
-    {"M": 16, "lambda_per_agent": 14},
+    {"M": 1,  "lambda_per_agent": 10},
+    {"M": 2,  "lambda_per_agent": 10},
+    {"M": 4,  "lambda_per_agent": 10},
+    {"M": 8,  "lambda_per_agent": 10},
+    {"M": 10, "lambda_per_agent": 10},
 ]
 
 FIXED_HYPERPARAMS = {
-    "epsilon_svgd": 0.025,
-    "svgd_gamma": 0.007,
-    "decay_start_ratio": 0.15,
+    "epsilon_svgd": 0.015,
+    "svgd_gamma": 0.005,
+    "decay_start_ratio": 0.01,
     "decay_min_factor": 0.01,
     "decay_enabled": True,
     "kernel_config": {"name": "rbf"},
-    "advantage_cfg": "normalizedfitness",  
+    "advantage_cfg": "normalizedfitness",
 }
-
 # QUBO Problem Configurations
 # All combinations of N ∈ {64, 128, 256} and Type ∈ {0, 1, 2, 3, 4, 5}
 QUBO_CONFIGS = [
@@ -124,7 +122,13 @@ def set_seed(seed: int):
     random.seed(seed)
 
 
-def load_qubo_problem(n: int, type_instance: int, M: int, lambda_per_agent: int) -> Tuple:
+def load_qubo_problem(
+    n: int,
+    type_instance: int,
+    M: int,
+    lambda_per_agent: int,
+    num_restarts: Optional[int] = None,
+) -> Tuple:
     """
     Load real QUBO instances for specific dimension n and instance type.
     
@@ -139,10 +143,13 @@ def load_qubo_problem(n: int, type_instance: int, M: int, lambda_per_agent: int)
     """
     instance_path = os.path.join(script_dir, "instances", "QUBO") + os.sep
     
+    if num_restarts is None:
+        num_restarts = QUBO_PARAMS["num_restarts"]
+
     tensor_Q = getTensorInstances_QUBO(
         instance_path,
         QUBO_PARAMS["num_instances"],
-        QUBO_PARAMS["num_restarts"],
+        num_restarts,
         n,
         type_instance,
         EXPERIMENT_PARAMS["device"],
@@ -186,7 +193,7 @@ def create_strategy(n: int, M: int, lambda_per_agent: int, device: str):
 # MAIN SENSITIVITY ANALYSIS
 # ============================================================================
 
-def run_sensitivity_analysis(output_dir: str = ".") -> str:
+def run_sensitivity_analysis(output_dir: str = ".") -> Tuple[str, str]:
     """
     Run Sensitivity Analysis using get_Score_trajectoriesQUBO_cuda.
     Collects RAW fitness values (not normalized).
@@ -209,6 +216,7 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
     
     os.makedirs(output_dir, exist_ok=True)
     results = []
+    history_results = []
     
     # Loop over ALL QUBO problem configurations (N × Type)
     for qubo_idx, qubo_cfg in enumerate(QUBO_CONFIGS):
@@ -225,27 +233,67 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
             # Set seed for reproducibility
             set_seed(QUBO_PARAMS["seed_base"])
             
-            # Load QUBO Tensors
-            tensor_Q = load_qubo_problem(n, type_instance, M, lambda_per_agent)
+            device_for_config = device
+            restarts_for_config = nb_restarts
+            # Load QUBO Tensors (reduce restarts on OOM)
+            while True:
+                try:
+                    tensor_Q = load_qubo_problem(
+                        n, type_instance, M, lambda_per_agent, num_restarts=restarts_for_config
+                    )
+                    break
+                except torch.OutOfMemoryError:
+                    if not torch.cuda.is_available():
+                        raise
+                    if restarts_for_config <= 1:
+                        raise
+                    torch.cuda.empty_cache()
+                    new_restarts = max(1, restarts_for_config // 2)
+                    print(
+                        f"[OOM] Reducing restarts from {restarts_for_config} to {new_restarts} "
+                        f"and retrying..."
+                    )
+                    restarts_for_config = new_restarts
             
             # Create strategy (errors NOT caught - let them surface)
-            strategy = create_strategy(n, M, lambda_per_agent, device)
+            strategy = create_strategy(n, M, lambda_per_agent, device_for_config)
             
             # VECTORIZED EXECUTION on GPU
             # One call for all 100 runs (10 instances × 10 restarts)
-            scores = get_Score_trajectoriesQUBO_cuda(
-                strategy,
-                n,
-                nb_instances,
-                nb_restarts,
-                total_budget,
-                lambda_per_agent,
-                tensor_Q,
-                device,
-                verbose=False,
-                enable_visualization=False,
-                return_history=False,
-            )
+            while True:
+                try:
+                    scores, history = get_Score_trajectoriesQUBO_cuda(
+                        strategy,
+                        n,
+                        nb_instances,
+                        restarts_for_config,
+                        total_budget,
+                        lambda_per_agent,
+                        tensor_Q,
+                        device_for_config,
+                        verbose=False,
+                        enable_visualization=False,
+                        return_history=True,
+                    )
+                    break
+                except torch.OutOfMemoryError as e:
+                    if not torch.cuda.is_available():
+                        raise
+                    if restarts_for_config <= 1:
+                        raise
+                    torch.cuda.empty_cache()
+                    new_restarts = max(1, restarts_for_config // 2)
+                    print(
+                        f"[OOM] Reducing restarts from {restarts_for_config} to {new_restarts} "
+                        f"and retrying..."
+                    )
+                    restarts_for_config = new_restarts
+                    # Reload QUBO tensors with the reduced number of restarts
+                    tensor_Q = load_qubo_problem(
+                        n, type_instance, M, lambda_per_agent, num_restarts=restarts_for_config
+                    )
+                    # Recreate strategy to reset internal buffers sized by batch
+                    strategy = create_strategy(n, M, lambda_per_agent, device_for_config)
             
             # Process raw results (length 100)
             # Store one entry per fitness value (100 total)
@@ -258,6 +306,8 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
                     "fitness": float(fitness),
                 })
             
+            # Curves disabled
+            
             print(f"✓ {len(scores)} runs collected")
     
     # Save results
@@ -266,13 +316,12 @@ def run_sensitivity_analysis(output_dir: str = ".") -> str:
     results_df.to_csv(csv_path, index=False)
     
     print(f"\n✓ Saved {len(results)} fitness values to {csv_path}")
-    print(f"  Columns: {list(results_df.columns)}")
     
-    return csv_path
+    return csv_path, None
 
 
 # ============================================================================
-# VISUALIZATION (BOXPLOTS)
+# VISUALIZATION (BOXPLOTS & CURVES)
 # ============================================================================
 
 def plot_boxplot_results(csv_path: str, output_dir: Optional[str] = None) -> str:
@@ -393,7 +442,7 @@ def main():
     output_dir = os.path.join(script_dir, "sensitivity_analysis_qubo_boxplot")
     
     # Run sensitivity analysis (collect raw fitness values)
-    csv_path = run_sensitivity_analysis(output_dir=output_dir)
+    csv_path, _ = run_sensitivity_analysis(output_dir=output_dir)
     
     # Print summary statistics
     print_summary_statistics(csv_path)
@@ -406,11 +455,10 @@ def main():
     print(f"{'='*80}")
     print(f"\nResults Summary:")
     print(f"  • CSV File: {csv_path}")
-    print(f"  • Plots Directory: {plots_dir}")
+    print(f"  • Boxplots Directory: {plots_dir}")
     print(f"\nNext Steps:")
     print(f"  1. Review CSV for raw fitness values (minimization: lower is better)")
     print(f"  2. Inspect boxplots to assess M impact on fitness distribution")
-    print(f"  3. Analyze stability and convergence quality per configuration")
 
 
 if __name__ == "__main__":
