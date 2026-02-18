@@ -383,10 +383,11 @@ def plot_boxplot_results(csv_path: str, output_dir: Optional[str] = None) -> str
         )
         
         # Formatting
-        ax.set_xlabel("Number of Agents (M)", fontsize=13, fontweight='bold')
-        ax.set_ylabel("Best Fitness (Raw)", fontsize=13, fontweight='bold')
+        ax.set_xlabel("Number of Agents (m)", fontsize=20, fontweight='bold')
+        ax.set_ylabel("Fitness", fontsize=20, fontweight='bold')
         ax.set_title(f"NK(N={nk_n}, K={nk_k})", 
-                     fontsize=14, fontweight='bold', pad=20)
+                     fontsize=18, fontweight='bold', pad=20)
+        ax.tick_params(axis="both", labelsize=16)
         
         # Grid for better readability
         ax.grid(True, linestyle='--', alpha=0.3, axis='y')
@@ -443,9 +444,13 @@ def print_summary_statistics(csv_path: str):
 def main():
     """Main entry point for sensitivity analysis."""
     output_dir = os.path.join(script_dir, "sensitivity_analysis_boxplot")
+    csv_path = os.path.join(output_dir, "sensitivity_nk_boxplot_results.csv")
     
-    # Run sensitivity analysis (collect raw fitness values)
-    csv_path, _ = run_sensitivity_analysis(output_dir=output_dir)
+    # Run sensitivity analysis only if results are not already saved
+    if os.path.exists(csv_path):
+        print(f"[INFO] Using existing results CSV: {csv_path}")
+    else:
+        csv_path, _ = run_sensitivity_analysis(output_dir=output_dir)
     
     # Print summary statistics
     print_summary_statistics(csv_path)
