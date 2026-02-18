@@ -199,6 +199,8 @@ def format_score(problem_name: str, value: float | None) -> str:
         return "—"
     if problem_name.upper() in ("NK", "NK3"):
         return f"{value:.4f}"
+    if problem_name.upper() == "QUBO":
+        return f"{-abs(value):.1f}"
     return f"{value:.1f}"
 
 
@@ -245,7 +247,11 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
 
         ranking_file = ranking_path(problem_name, dim, type_instance)
         ranking = load_ranking(ranking_file)
-        ranking = [(name, score) for name, score in ranking if name != "PPO-EDA"]
+        ranking = [
+            (name, score)
+            for name, score in ranking
+            if name not in {"PPO-EDA", "Tabu", "TABU"}
+        ]
 
         row: List[str] = [problem_name, str(dim), str(type_instance)]
 
