@@ -29,12 +29,14 @@ def _is_maximization_problem(problem_name: str) -> bool:
 def _normalize_score_sign(problem_name: str, values: List[float]) -> List[float]:
     if not values:
         return values
+    if problem_name.upper() in ("QUBO", "UBQP"):
+        return [abs(val) for val in values]
     maximize = _is_maximization_problem(problem_name)
     if maximize:
         if max(values) <= 0:
             return [-val for val in values]
         return values
-    # minimization problems (QUBO/UBQP): scores expected to be negative
+    # minimization problems: scores expected to be negative
     if min(values) >= 0:
         return [-val for val in values]
     return values
@@ -766,7 +768,7 @@ def aggregate_quantile_stats(
 def style_axes(ax, grid_axis: str = "y") -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.tick_params(axis="both", labelsize=9, width=0.6, length=3)
+    ax.tick_params(axis="both", labelsize=12, width=0.6, length=3)
     ax.grid(True, axis=grid_axis, linestyle="--", linewidth=0.5, alpha=0.4)
 
 
@@ -823,16 +825,16 @@ def plot_synthetic_boxplot(
         if mean_val is None:
             continue
         ax.hlines(mean_val, idx - half_width, idx + half_width, colors="#d62728", linewidth=1.4)
-    ax.set_title(title, fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=10)
-    ax.set_xticklabels(labels, rotation=30, ha="right")
+    ax.set_title(title, fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=14)
     ax.legend(
         handles=[
             Line2D([0], [0], color="#d62728", linewidth=1.4, label="mean"),
             Line2D([0], [0], color="#111111", linewidth=1.2, label="median"),
         ],
         frameon=False,
-        fontsize=9,
+        fontsize=11,
         loc="center left",
         bbox_to_anchor=(1.02, 0.5),
     )
@@ -882,10 +884,10 @@ def plot_interact_vs_no_interact_series(
         lower = [y - s for y, s in zip(y_no, std_no)]
         upper = [y + s for y, s in zip(y_no, std_no)]
         ax.fill_between(x_no, lower, upper, color="#ff7f0e", alpha=0.2, linewidth=0.0)
-    ax.set_title(title, fontsize=12)
-    ax.set_xlabel("Evaluations", fontsize=10)
-    ax.set_ylabel(ylabel, fontsize=10)
-    ax.legend(frameon=False, fontsize=9)
+    ax.set_title(title, fontsize=14)
+    ax.set_xlabel("Evaluations", fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.legend(frameon=False, fontsize=11)
     style_axes(ax, grid_axis="both")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
@@ -936,10 +938,10 @@ def plot_pair_series(
         lower = [y - s for y, s in zip(y_b, std_b)]
         upper = [y + s for y, s in zip(y_b, std_b)]
         ax.fill_between(x_b, lower, upper, color=color_b, alpha=0.2, linewidth=0.0)
-    ax.set_title(title, fontsize=12)
-    ax.set_xlabel("Evaluations", fontsize=10)
-    ax.set_ylabel(ylabel, fontsize=10)
-    ax.legend(frameon=False, fontsize=9)
+    ax.set_title(title, fontsize=14)
+    ax.set_xlabel("Evaluations", fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.legend(frameon=False, fontsize=11)
     style_axes(ax, grid_axis="both")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
@@ -966,9 +968,9 @@ def plot_kernel_bar(
         linewidth=0.4,
         width=0.6,
     )
-    ax.set_title(title, fontsize=12)
-    ax.set_xlabel("Kernel", fontsize=10)
-    ax.set_ylabel(ylabel, fontsize=10)
+    ax.set_title(title, fontsize=13)
+    ax.set_xlabel("Kernel", fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
     if log_scale:
         ax.set_yscale("log")
     style_axes(ax, grid_axis="y")
@@ -994,13 +996,13 @@ def plot_kernel_hyperparams(
             linewidth=0.4,
             width=0.6,
         )
-        ax.set_title(param, fontsize=11)
-        ax.set_xlabel("Kernel", fontsize=9)
+        ax.set_title(param, fontsize=12)
+        ax.set_xlabel("Kernel", fontsize=10)
         if param == "gamma":
             ax.set_yscale("log")
         style_axes(ax, grid_axis="y")
 
-    fig.suptitle("Grid Search Hyperparameters", fontsize=13, y=1.02)
+    fig.suptitle("Grid Search Hyperparameters", fontsize=14, y=1.02)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     output_path = output_dir / f"{problem_name.lower()}_dim{dim}_t{type_instance}_hyperparams.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1046,10 +1048,10 @@ def plot_kernel_metric_curves(
             markeredgewidth=0.6,
             markevery=mark_every,
         )
-    ax.set_title(title, fontsize=12)
-    ax.set_xlabel("Evaluations", fontsize=10)
-    ax.set_ylabel(ylabel, fontsize=10)
-    ax.legend(frameon=False, fontsize=9, ncol=2)
+    ax.set_title(title, fontsize=13)
+    ax.set_xlabel("Evaluations", fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.legend(frameon=False, fontsize=10, ncol=2)
     style_axes(ax, grid_axis="both")
     output_path = output_dir / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)

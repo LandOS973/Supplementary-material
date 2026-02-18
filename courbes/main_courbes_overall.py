@@ -65,7 +65,7 @@ def _plot_comparison_vs_algos(instance, config_name: str, my_metrics: Path, outp
         print(f"[WARN] Missing ranking file {ranking_path}.")
         return
 
-    algos = load_top_algorithms(ranking_path, limit=10, skip=("PPO-EDA",))
+    algos = load_top_algorithms(ranking_path, limit=10, skip=("PPO-EDA", "Tabu", "TABU", "tabu"))
     fig, ax = plt.subplots(figsize=(10, 6), dpi=160)
     color_cycle = cycle(plt.cm.tab20.colors)
 
@@ -102,16 +102,17 @@ def _plot_comparison_vs_algos(instance, config_name: str, my_metrics: Path, outp
         ax.plot(
             my_x,
             my_y,
-            label="reinforce svgd",
+            label="SVGD-EDA",
             color="green",
             linewidth=2.0,
             zorder=3,
         )
 
-    ax.set_title(f"Comparison on {problem} (N={dim}, K={t})")
-    ax.set_xlabel("Evaluations")
-    ax.set_ylabel("Average score")
-    ax.legend(fontsize=8, ncol=2, frameon=False)
+    ax.set_title("")
+    ax.set_xlabel("Evaluations", fontsize=12)
+    ax.set_ylabel("Average score", fontsize=12)
+    ax.legend(fontsize=11, ncol=2, frameon=False)
+    ax.tick_params(axis="both", labelsize=12)
     ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.5)
     output_path = output_dir / f"comparison_{problem.lower()}_{dim}_t{t}.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,10 +139,10 @@ def _plot_top5_boxplot(instance, my_metrics: Path, output_dir: Path):
         print(f"[WARN] Missing quantiles in {my_metrics}. Skipping top-5 boxplot.")
         return
 
-    my_label = "reinforce svgd"
+    my_label = "SVGD-EDA"
     box_specs = [(my_label, normalize_box_stats(problem, my_stats))]
 
-    algos = load_top_algorithms(ranking_path, limit=5, skip=("PPO-EDA",))
+    algos = load_top_algorithms(ranking_path, limit=5, skip=("PPO-EDA", "Tabu", "TABU", "tabu"))
     for algo in algos:
         try:
             paths, has_header = find_competitor_files(algo, dim, t, problem)
@@ -170,7 +171,7 @@ def _plot_top5_boxplot(instance, my_metrics: Path, output_dir: Path):
 
     output_path = output_dir / "boxplot_final_score_vs_top5.png"
     plot_synthetic_boxplot(
-        title=f"Final score distribution top-5 ({problem} N={dim}, K={t})",
+        title="",
         ylabel="Score",
         output_path=output_path,
         box_specs=box_specs,
@@ -190,6 +191,9 @@ def _plot_interact_vs_no_interact(instance, interact_path: Path, no_interact_pat
     x_no, y_no, std_no = load_metric_series_with_std(
         no_interact_path, x_field="step", maximize=maximize
     )
+    if problem.upper() in ("QUBO", "UBQP"):
+        y_int = _normalize_score_sign(problem, y_int)
+        y_no = _normalize_score_sign(problem, y_no)
 
     plot_interact_vs_no_interact_series(
         x_int,
@@ -292,6 +296,9 @@ def _plot_normal_vs_no_repulsion(instance, normal_path: Path, no_repulsion_path:
     x_nr, y_nr, std_nr = load_metric_series_with_std(
         no_repulsion_path, x_field="step", maximize=maximize
     )
+    if problem.upper() in ("QUBO", "UBQP"):
+        y_norm = _normalize_score_sign(problem, y_norm)
+        y_nr = _normalize_score_sign(problem, y_nr)
 
     plot_pair_series(
         x_norm,

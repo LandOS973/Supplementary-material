@@ -347,6 +347,8 @@ def plot_boxplot_results(csv_path: str, output_dir: Optional[str] = None) -> str
     
     # Load data
     results_df = pd.read_csv(csv_path)
+    # QUBO: display scores in positive (maximization-style)
+    results_df["fitness"] = results_df["fitness"].abs()
     print(f"\nLoaded {len(results_df)} fitness values from {csv_path}")
     
     # Create subdirectory for plots
@@ -407,6 +409,8 @@ def plot_boxplot_results(csv_path: str, output_dir: Optional[str] = None) -> str
 def print_summary_statistics(csv_path: str):
     """Print summary statistics per QUBO (N, Type) configuration and M."""
     results_df = pd.read_csv(csv_path)
+    # QUBO: display scores in positive (maximization-style)
+    results_df["fitness"] = results_df["fitness"].abs()
     
     print(f"\n{'='*80}")
     print("SUMMARY STATISTICS (Per QUBO Configuration and M)")
