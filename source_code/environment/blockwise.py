@@ -90,6 +90,21 @@ def get_Score_trajectoriesBLOCK_cuda(
     avg_kernel_grad_history = []
     solutions_history = [] if enable_visualization else None
     metrics = MetricsCalculator()
+    num_agents = len(agent_lambdas) if isinstance(agent_lambdas, (list, tuple)) else 0
+    if num_agents == 0 and hasattr(strategy, "agents"):
+        num_agents = len(strategy.agents)
+    per_agent_lambdas = None
+    if isinstance(agent_lambdas, (list, tuple)) and agent_lambdas:
+        per_agent_lambdas = list(agent_lambdas)
+    elif num_agents > 0 and size_pop % num_agents == 0:
+        per_agent_lambdas = [size_pop // num_agents for _ in range(num_agents)]
+    valid_agent_partition = (
+        per_agent_lambdas
+        and num_agents == len(per_agent_lambdas)
+        and sum(per_agent_lambdas) == size_pop
+    )
+    sample_hamming_history = [] if (enable_visualization and valid_agent_partition and num_agents > 1) else None
+    sample_hamming_pairwise_history = [] if (enable_visualization and valid_agent_partition and num_agents > 1) else None
 
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
@@ -111,6 +126,36 @@ def get_Score_trajectoriesBLOCK_cuda(
         block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
         # Fitness par solution: moyenne sur les blocs utiles (les dummy sont ignores).
         tensor_score = block_scores[:, :, :scoring_blocks].mean(dim=2)
+
+        sample_hamming_current = None
+        if sample_hamming_history is not None:
+            try:
+                with torch.no_grad():
+                    samples = tensor_solution.squeeze(3)  # (B, total_lambda, N)
+                    start_idx = 0
+                    best_per_agent = []
+                    for agent_lambda in per_agent_lambdas:
+                        end_idx = start_idx + agent_lambda
+                        sub_samples = samples[:, start_idx:end_idx, :]
+                        sub_scores = tensor_score[:, start_idx:end_idx]
+                        idx = torch.argmax(sub_scores, dim=1)
+                        idx_expand = idx[:, None, None].expand(-1, 1, N)
+                        best = torch.gather(sub_samples, 1, idx_expand).squeeze(1)  # (B, N)
+                        best_per_agent.append(best)
+                        start_idx = end_idx
+                    pairwise = torch.zeros(num_agents, num_agents, device="cpu")
+                    for i in range(num_agents):
+                        for j in range(num_agents):
+                            diff = (best_per_agent[i] != best_per_agent[j]).float()
+                            dist = diff.sum(dim=1).mean().item()
+                            pairwise[i, j] = dist
+                    avg = (pairwise.sum() - pairwise.diag().sum()) / (num_agents * (num_agents - 1))
+                    sample_hamming_current = float(avg)
+                    sample_hamming_pairwise_history.append(pairwise.numpy().tolist())
+            except Exception:
+                sample_hamming_pairwise_history.append(None)
+                sample_hamming_current = None
+            sample_hamming_history.append(sample_hamming_current if sample_hamming_current is not None else 0.0)
 
         # Fitness par instance: meilleur individu du pool.
         current_score = torch.max(tensor_score, dim=1).values
@@ -222,6 +267,8 @@ def get_Score_trajectoriesBLOCK_cuda(
                 postfix["leader"] = leader_idx
                 postfix["avg_hamming"] = avg_hamming
                 postfix["avg_js"] = avg_js
+                if sample_hamming_current is not None:
+                    postfix["sample_hamming"] = sample_hamming_current
             pbar.set_postfix(**postfix)
 
     bestScore_np = bestScore.detach().cpu().numpy()
@@ -259,6 +306,8 @@ def get_Score_trajectoriesBLOCK_cuda(
             entropy_agent_history,
             avg_kernel_value_history,
             avg_kernel_grad_history,
+            sample_hamming_history=sample_hamming_history,
+            sample_hamming_pairwise_history=sample_hamming_pairwise_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

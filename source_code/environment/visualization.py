@@ -40,6 +40,10 @@ def render_agent_dashboard(
     entropy_agent_history=None,
     kernel_value_history=None,
     kernel_grad_history=None,
+    sample_entropy_history=None,
+    sample_entropy_agent_history=None,
+    sample_hamming_history=None,
+    sample_hamming_pairwise_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -76,6 +80,8 @@ def render_agent_dashboard(
     pairwise_l2 = _prepare_pairwise(l2_pairwise_history)
     pairwise_l1 = _prepare_pairwise(l1_pairwise_history)
     entropy_agent_series = _prepare_agent_series(entropy_agent_history)
+    sample_entropy_agent_series = _prepare_agent_series(sample_entropy_agent_history)
+    sample_hamming_pairwise = _prepare_pairwise(sample_hamming_pairwise_history)
 
     metrics_data = OrderedDict()
     if iterations and hamming_history:
@@ -122,6 +128,24 @@ def render_agent_dashboard(
             color="tab:green",
             overlay_type="per_agent",
             overlay_data=entropy_agent_series,
+        )
+    if sample_entropy_history and sample_entropy_agent_series is not None:
+        metrics_data["Sample Entropy"] = dict(
+            average=sample_entropy_history,
+            ylabel="Sample Entropy",
+            title="Sample Entropy (Samples)",
+            color="tab:olive",
+            overlay_type="per_agent",
+            overlay_data=sample_entropy_agent_series,
+        )
+    if sample_hamming_history and sample_hamming_pairwise is not None:
+        metrics_data["Sample Hamming"] = dict(
+            average=sample_hamming_history,
+            ylabel="Sample Hamming",
+            title="Sample Hamming (Best Samples)",
+            color="tab:cyan",
+            overlay_type="pairwise",
+            overlay_data=sample_hamming_pairwise,
         )
     if iterations and kernel_value_history:
         metrics_data["Kernel Value"] = dict(
