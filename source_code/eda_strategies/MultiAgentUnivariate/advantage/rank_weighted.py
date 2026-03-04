@@ -40,31 +40,6 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
         ranks = greater_counts
         ranks = ranks.to(dtype=fitness.dtype)
         ranked = 1.0 - 2.0 * (ranks / total_individuals)
-
-        # Debug prints (sans mode debug) : résumé clair
-        if nb_instances > 0:
-            sorted_indices = torch.argsort(per_instance, dim=1, descending=True)
-            top_k = min(5, num_individuals)
-            top_idx = sorted_indices[0, :top_k]
-            top_agent = torch.div(top_idx, lambda_per_agent, rounding_mode="floor")
-            print(
-                "[GlobalRankWeightedAdvantage] weights (instance 0) max/mean/min:",
-                ranked[0].max().item(),
-                ranked[0].mean().item(),
-                ranked[0].min().item(),
-            )
-            print(
-                "[GlobalRankWeightedAdvantage] top5 (fitness, weight, agent):",
-                list(
-                    zip(
-                        per_instance[0, top_idx].detach().cpu().tolist(),
-                        ranked[0, top_idx].detach().cpu().tolist(),
-                        top_agent.detach().cpu().tolist(),
-                    )
-                ),
-            )
-            print(" max et min de ranked (instance 0) :", ranked[0].max().item(), ranked[0].min().item())
-
         # Retour au shape original (B*M, λ_agent)
         return ranked.view(BM, lambda_per_agent)
 
