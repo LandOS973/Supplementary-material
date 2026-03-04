@@ -9,16 +9,16 @@ from .base import AdvantageStrategy
 
 class GlobalRankWeightedAdvantage(AdvantageStrategy):
     """
-    Classement pondéré global :
+    Classement pondéré global (version IGO/RL-EDA) :
     - On rassemble tous les individus d'une instance (tous agents confondus)
     - On les trie par fitness décroissante
-    - On attribue des poids linéaires de start_weight à end_weight en fonction du rang global
+    - Les ex-aequo partagent le même rang (0, 0, 2, ...)
+    - On applique w(x)=1-2x avec x = rangGlobal / (M * λ_agent)
+      => poids = 1 - 2 * (rangGlobal / (M * λ_agent))
     """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.start_weight = float(1.0)   # w_max
-        self.end_weight = float(-1.0)    # w_min
 
     def compute(self, fitness, nb_instances=None, num_agents=None, **context):
         nb_instances = nb_instances or context.get("nb_instances")
@@ -30,29 +30,40 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
         # reshape -> (B, M, λ_agent)
         reshaped = fitness.view(nb_instances, num_agents, lambda_per_agent)
         # (B, M * λ_agent) : tous les individus d'une instance sur une seule dimension
-        per_instance = reshaped.view(nb_instances, -1)
+        per_instance = reshaped.view(nb_instances, -1) # (B, M*λ_agent)
 
         # Nombre d'individus par instance : λ = M * λ_agent
         num_individuals = per_instance.shape[1]
-        # Pas positif Δ = (w_max - w_min) / (λ - 1)
         total_individuals = lambda_per_agent * num_agents
-        denom = max(total_individuals - 1, 1)
-        delta = (self.start_weight - self.end_weight) / denom
-        ranks = torch.arange(
-            num_individuals,
-            device=fitness.device,
-            dtype=fitness.dtype,
-        )
-        weight_vector = self.start_weight - ranks * delta  # (λ,)
+        # Rang global avec ex-aequo: rang = nombre d'individus strictement meilleurs (0, 0, 2, ...)
+        greater_counts = (per_instance[:, :, None] < per_instance[:, None, :]).sum(dim=2)
+        ranks = greater_counts
+        ranks = ranks.to(dtype=fitness.dtype)
+        ranked = 1.0 - 2.0 * (ranks / total_individuals)
 
-        # On duplique ce vecteur pour toutes les instances : (B, λ)
-        weights = weight_vector.unsqueeze(0).expand_as(per_instance)
-
-        # Classement global par instance (descendant)
-        sorted_indices = torch.argsort(per_instance, dim=1, descending=True)
-
-        # On scatter les poids selon le rang : les meilleurs reçoivent les plus grands poids
-        ranked = torch.empty_like(per_instance).scatter_(1, sorted_indices, weights)
+        # Debug prints (sans mode debug) : résumé clair
+        if nb_instances > 0:
+            sorted_indices = torch.argsort(per_instance, dim=1, descending=True)
+            top_k = min(5, num_individuals)
+            top_idx = sorted_indices[0, :top_k]
+            top_agent = torch.div(top_idx, lambda_per_agent, rounding_mode="floor")
+            print(
+                "[GlobalRankWeightedAdvantage] weights (instance 0) max/mean/min:",
+                ranked[0].max().item(),
+                ranked[0].mean().item(),
+                ranked[0].min().item(),
+            )
+            print(
+                "[GlobalRankWeightedAdvantage] top5 (fitness, weight, agent):",
+                list(
+                    zip(
+                        per_instance[0, top_idx].detach().cpu().tolist(),
+                        ranked[0, top_idx].detach().cpu().tolist(),
+                        top_agent.detach().cpu().tolist(),
+                    )
+                ),
+            )
+            print(" max et min de ranked (instance 0) :", ranked[0].max().item(), ranked[0].min().item())
 
         # Retour au shape original (B*M, λ_agent)
         return ranked.view(BM, lambda_per_agent)

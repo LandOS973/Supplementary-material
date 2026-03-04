@@ -36,7 +36,7 @@ DEFAULTS = dict(
 DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
-        advantages=["normalizedfitness"],
+        advantages=["globalrankweighted"],
         M_values=[2],
         lambda_values=[9,10,11],
         epsilon_svgd=[0.01,0.015,0.020],
