@@ -180,6 +180,7 @@ def get_Score_trajectoriesNK_cuda(
     kl_pairwise_history = []
     avg_kernel_value_history = []
     avg_kernel_grad_history = []
+    solutions_history = [] if enable_visualization else None
     metrics = MetricsCalculator(normalization_factor=N)
 
     use_tqdm = bool(verbose and enable_visualization)
@@ -196,6 +197,12 @@ def get_Score_trajectoriesNK_cuda(
 
 
         tensor_solution = strategy.sample_solutions()
+        if solutions_history is not None:
+            try:
+                sample_first = tensor_solution[0, :, :, 0].detach().cpu().numpy().astype(np.uint8)
+            except Exception:
+                sample_first = None
+            solutions_history.append(sample_first)
 
         #if epoch == 0:
             
@@ -377,6 +384,9 @@ def get_Score_trajectoriesNK_cuda(
             agent_fitness_history,
             num_agents,
             theta_history,
+            {"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
+            if solutions_history is not None and num_agents > 0
+            else None,
             hamming_pairwise_history,
             js_pairwise_history,
             avg_l2_history,

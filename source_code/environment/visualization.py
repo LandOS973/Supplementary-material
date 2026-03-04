@@ -29,6 +29,7 @@ def render_agent_dashboard(
     agent_fitness_history,
     num_agents,
     theta_history,
+    solutions_history=None,
     hamming_pairwise_history=None,
     js_pairwise_history=None,
     l2_history=None,
@@ -163,7 +164,7 @@ def render_agent_dashboard(
         fitness_available = bool(agent_fitness_history and num_agents > 0)
         show_fitness_var = tk.IntVar(value=1 if fitness_available else 0)
 
-        theta_available = bool(theta_history and theta_history.get("values"))
+        theta_available = bool(solutions_history and solutions_history.get("values"))
         theta_var = tk.IntVar(value=1 if theta_available else 0)
         theta_panel = None
         theta_pack_info = None
@@ -173,7 +174,7 @@ def render_agent_dashboard(
             theta_container = tk.Frame(pane, width=pane_theta_width)
             pane.add(theta_container)
             pane.paneconfigure(theta_container, minsize=pane_theta_width // 2)
-            theta_panel = _build_theta_panel(theta_container, root, theta_history)
+            theta_panel = _build_solution_tsne_panel(theta_container, root, solutions_history, num_agents)
             if theta_panel:
                 theta_pack_info = theta_panel.pack_info()
                 if theta_var.get() == 0:
@@ -431,7 +432,7 @@ def render_agent_dashboard(
         if theta_panel is not None:
             tk.Checkbutton(
                 options_frame,
-                text="Theta Explorer",
+                text="Solutions t-SNE",
                 variable=theta_var,
                 command=_toggle_theta_panel,
             ).pack(side="left", padx=4)
@@ -524,37 +525,27 @@ def render_svgd_field_plot(snapshot):
         print(f"Failed to render SVGD field plot: {exc}")
 
 
-def _build_theta_panel(container, root_window, history):
+def _build_solution_tsne_panel(container, root_window, history, num_agents):
+    try:
+        from sklearn.manifold import TSNE
+    except Exception:
+        TSNE = None
+
     values = history.get("values") or []
     if not values:
         return
 
-    first_entry = values[0]
-    num_agents = len(first_entry)
     if num_agents == 0:
         return
+    lambda_per_agent = int(history.get("lambda_per_agent") or 0)
+    if lambda_per_agent <= 0:
+        return
 
-    sample = first_entry[0]
-    num_instances = sample.shape[0]
-    num_dims = sample.shape[1]
-
-    panel = tk.LabelFrame(container, text="Theta Evolution Explorer")
+    panel = tk.LabelFrame(container, text="Solutions t-SNE Explorer")
     panel.pack(side="right", fill="both", expand=True, padx=10, pady=6)
     panel.pack_propagate(False)
 
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.grid(True, linestyle="--", alpha=0.4)
-    ax.set_xlabel("sigmoid(theta[dim X])")
-    ax.set_ylabel("sigmoid(theta[dim Y])")
-
-    cmap = plt.cm.get_cmap("tab20", max(num_agents, 1))
-    scatters = [
-        ax.scatter([], [], color=cmap(agent_idx), label=f"Agent {agent_idx}")
-        for agent_idx in range(num_agents)
-    ]
-
     fig.tight_layout()
     canvas = FigureCanvasTkAgg(fig, master=panel)
     canvas.draw()
@@ -564,9 +555,8 @@ def _build_theta_panel(container, root_window, history):
     controls.pack(fill="x", padx=10, pady=6)
 
     epoch_var = tk.IntVar(value=0)
-    instance_var = tk.IntVar(value=0)
-    dim_x_var = tk.IntVar(value=0)
-    dim_y_var = tk.IntVar(value=1 if num_dims > 1 else 0)
+    total_lambda = lambda_per_agent * num_agents
+    fixed_perplexity = min(10, max(1, total_lambda - 1))
 
     def clamp(var, upper):
         try:
@@ -583,43 +573,107 @@ def _build_theta_panel(container, root_window, history):
     status_var = tk.StringVar()
     tk.Label(panel, textvariable=status_var).pack(pady=2)
 
+    if num_agents < 2:
+        tk.Label(panel, text="t-SNE requires at least 2 agents.").pack(pady=8)
+        return panel
+    if TSNE is None:
+        tk.Label(panel, text="scikit-learn not available (install scikit-learn).").pack(pady=8)
+        return panel
+
+    labels = np.repeat(np.arange(num_agents), lambda_per_agent)
+    embedding_cache = {}
+
     def update_plot(*_):
         epoch_idx = clamp(epoch_var, len(values) - 1)
-        inst_idx = clamp(instance_var, num_instances - 1)
-        dx = clamp(dim_x_var, num_dims - 1)
-        dy = clamp(dim_y_var, num_dims - 1)
-
-        ax.set_title(f"Instance {inst_idx} – dims ({dx},{dy})")
+        perp = fixed_perplexity
 
         entry = values[epoch_idx]
-        for agent_idx, scatter in enumerate(scatters):
-            final_probs = entry[agent_idx]
-            x = float(final_probs[inst_idx, dx].item())
-            y = float(final_probs[inst_idx, dy].item())
-            scatter.set_offsets([[x, y]])
-        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)} – Instance {inst_idx}")
-        ax.legend(loc="upper right", ncol=2 if num_agents > 6 else 1, fontsize="small")
+        if entry is None:
+            status_var.set("t-SNE skipped: no sampled solutions.")
+            return
+        X = np.asarray(entry)
+        if X.ndim == 3 and X.shape[-1] == 1:
+            X = X[:, :, 0]
+        if X.ndim != 2:
+            status_var.set("t-SNE skipped: expected (total_lambda, N) samples.")
+            return
+        if X.shape[0] != total_lambda:
+            status_var.set("t-SNE skipped: unexpected sample count.")
+            return
+
+        init_value = "pca"
+        prev_embedding = embedding_cache.get(epoch_idx - 1)
+        if prev_embedding is not None and prev_embedding.shape[0] == X.shape[0]:
+            init_value = prev_embedding
+
+        try:
+            tsne = TSNE(
+                n_components=2,
+                metric="hamming",
+                init=init_value,
+                perplexity=perp,
+                random_state=0,
+            )
+            embedding = tsne.fit_transform(X)
+        except Exception as exc:
+            status_var.set(f"t-SNE failed: {exc}")
+            return
+
+        embedding_cache[epoch_idx] = embedding
+
+        ax.clear()
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.set_xlabel("t-SNE 1")
+        ax.set_ylabel("t-SNE 2")
+        ax.set_title(f"Epoch {epoch_idx + 1}/{len(values)} – samples {total_lambda}")
+        from matplotlib.lines import Line2D
+        from matplotlib.colors import hsv_to_rgb
+        hues = np.linspace(0, 1, max(num_agents, 1), endpoint=False)
+        colors = hsv_to_rgb(np.stack([hues, np.ones_like(hues), np.ones_like(hues)], axis=1))
+        legend_handles = []
+        marker = "o"
+        scale = float(np.std(embedding, axis=0).mean()) if embedding.size else 0.0
+        jitter_scale = max(0.001, 0.02 * scale)
+        for agent_idx in range(num_agents):
+            mask = labels == agent_idx
+            if not np.any(mask):
+                continue
+            points = embedding[mask]
+            rounded = np.round(points, 3)
+            uniq, counts = np.unique(rounded, axis=0, return_counts=True)
+            sizes = 45 * (1 + 0.6 * (counts - 1))
+            angle = 2 * np.pi * (agent_idx / max(num_agents, 1))
+            offset = np.array([np.cos(angle), np.sin(angle)]) * jitter_scale
+            ax.scatter(
+                uniq[:, 0] + offset[0],
+                uniq[:, 1] + offset[1],
+                s=sizes,
+                color=colors[agent_idx],
+                edgecolor="white",
+                linewidth=0.4,
+                zorder=3,
+                alpha=0.9,
+                marker=marker,
+            )
+            legend_handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    marker=marker,
+                    color="w",
+                    markerfacecolor=colors[agent_idx],
+                    markeredgecolor="white",
+                    markersize=8,
+                    label=f"Agent {agent_idx}",
+                )
+            )
+        if legend_handles:
+            ax.legend(handles=legend_handles, loc="best", fontsize="small")
+        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)} – perplexity {perp}")
         canvas.draw_idle()
 
-    def labeled_spinbox(parent, text, var, upper, width=5):
-        frame = tk.Frame(parent)
-        frame.pack(side="left", padx=4)
-        tk.Label(frame, text=text).pack()
-        spin = tk.Spinbox(
-            frame,
-            from_=0,
-            to=max(0, upper),
-            textvariable=var,
-            width=width,
-            command=update_plot,
-        )
-        spin.pack()
-        var.trace_add("write", lambda *args: update_plot())
-        return spin
-
-    labeled_spinbox(controls, "Instance", instance_var, num_instances - 1)
-    labeled_spinbox(controls, "Dim X", dim_x_var, num_dims - 1)
-    labeled_spinbox(controls, "Dim Y", dim_y_var, num_dims - 1)
+    def recompute_now():
+        update_plot()
 
     slider = tk.Scale(
         panel,
@@ -627,10 +681,11 @@ def _build_theta_panel(container, root_window, history):
         to=len(values) - 1,
         orient="horizontal",
         length=450,
-        command=lambda val: (epoch_var.set(int(float(val))), update_plot()),
+        command=lambda val: (epoch_var.set(int(float(val))), status_var.set("Press Recompute t-SNE")),
         label="Epoch",
     )
     slider.pack(fill="x", padx=12, pady=6)
+    tk.Button(controls, text="Recompute t-SNE", command=recompute_now).pack(side="left", padx=4)
 
     def step_epoch(delta):
         new_idx = max(0, min(len(values) - 1, epoch_var.get() + delta))
@@ -638,6 +693,8 @@ def _build_theta_panel(container, root_window, history):
 
     root_window.bind("<Left>", lambda event: step_epoch(-1))
     root_window.bind("<Right>", lambda event: step_epoch(1))
+    root_window.bind("<Return>", lambda event: recompute_now())
+    root_window.bind("<KP_Enter>", lambda event: recompute_now())
 
     update_plot()
 

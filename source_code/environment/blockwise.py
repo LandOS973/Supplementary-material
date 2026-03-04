@@ -88,6 +88,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     kl_pairwise_history = []
     avg_kernel_value_history = []
     avg_kernel_grad_history = []
+    solutions_history = [] if enable_visualization else None
     metrics = MetricsCalculator()
 
     use_tqdm = bool(verbose)
@@ -95,6 +96,12 @@ def get_Score_trajectoriesBLOCK_cuda(
 
     for epoch in pbar:
         tensor_solution = strategy.sample_solutions()
+        if solutions_history is not None:
+            try:
+                sample_first = tensor_solution[0, :, :, 0].detach().cpu().numpy().astype(np.uint8)
+            except Exception:
+                sample_first = None
+            solutions_history.append(sample_first)
 
         tensor_binary = tensor_solution.squeeze(3)
         tensor_blocks = tensor_binary.reshape(total_cases, size_pop, num_blocks, block_size)
@@ -239,6 +246,9 @@ def get_Score_trajectoriesBLOCK_cuda(
             agent_fitness_history,
             num_agents,
             theta_history,
+            {"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
+            if solutions_history is not None and num_agents > 0
+            else None,
             hamming_pairwise_history,
             js_pairwise_history,
             avg_l2_history,

@@ -19,6 +19,7 @@ from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
+from environment.tsne_agents import plot_agents_tsne
 
 
 def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
@@ -244,6 +245,16 @@ def main(cfg: DictConfig):
 
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
+
+    try:
+        plot_agents_tsne(
+            strategy,
+            output_path=os.path.join(os.getcwd(), "agents_tsne.png"),
+            perplexity=None,
+            random_state=0,
+        )
+    except ValueError as exc:
+        print(f"[WARN] t-SNE agents skipped: {exc}")
 
 
 if __name__ == "__main__":
