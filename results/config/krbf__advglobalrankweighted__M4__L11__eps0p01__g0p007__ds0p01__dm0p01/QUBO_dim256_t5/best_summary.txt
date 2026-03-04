@@ -1,0 +1,20 @@
+ConfigName: krbf__advglobalrankweighted__M4__L11__eps0p01__g0p007__ds0p01__dm0p01
+Problem: QUBO
+Kernel: rbf
+Advantage: globalrankweighted
+M: 4
+lambda: 11
+epsilon_svgd: 0.01
+gamma: 0.007
+decay_start_ratio: 0.01
+decay_min_factor: 0.01
+bandwith_kernel: None
+no_interact: False
+avg_score: -2195.89990234375
+median_score: -2165.5
+std_score: 167.27195739746094
+percentiles: 2%=-2568.4599609375, 5%=-2499.64990234375, 10%=-2402.60009765625, 25%=-2294.75, 50%=-2165.5, 75%=-2079.25, 90%=-1993.800048828125, 95%=-1969.75, 98%=-1905.97998046875
+ranking_best_algo: SVM1MetaModelLogNormal
+ranking_best_score: 2605.14
+ranking_my_rank: 189/504 (62.7%)
+ranking_my_percent: 62.698412698412696
