@@ -809,14 +809,8 @@ def main():
                 continue
 
             # Separate QUBO and NK instances
-            qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO' and inst['dim'] != 64]
+            qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO']
             nk_pending = [inst for inst in pending_instances if inst['name'] == 'NK']
-            
-            # Skip QUBO dim 64 instances
-            for inst in pending_instances:
-                if inst['name'] == 'QUBO' and inst['dim'] == 64:
-                    inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-                    print(f"  -> skip {inst_name} (dim 64 excluded)")
             
             # Track TOP 1 count in QUBO
             qubo_top1_count = 0
