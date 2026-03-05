@@ -89,6 +89,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     avg_kernel_value_history = []
     avg_kernel_grad_history = []
     solutions_history = [] if enable_visualization else None
+    sample_scores_history = [] if enable_visualization else None
     metrics = MetricsCalculator()
     num_agents = len(agent_lambdas) if isinstance(agent_lambdas, (list, tuple)) else 0
     if num_agents == 0 and hasattr(strategy, "agents"):
@@ -126,6 +127,11 @@ def get_Score_trajectoriesBLOCK_cuda(
         block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
         # Fitness par solution: moyenne sur les blocs utiles (les dummy sont ignores).
         tensor_score = block_scores[:, :, :scoring_blocks].mean(dim=2)
+        if sample_scores_history is not None:
+            try:
+                sample_scores_history.append(tensor_score[0].detach().cpu().numpy().astype(np.float32))
+            except Exception:
+                sample_scores_history.append(None)
 
         sample_hamming_current = None
         if sample_hamming_history is not None:
@@ -293,7 +299,11 @@ def get_Score_trajectoriesBLOCK_cuda(
             agent_fitness_history,
             num_agents,
             theta_history,
-            {"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
+            {
+                "values": solutions_history,
+                "lambda_per_agent": size_pop // max(num_agents, 1),
+                "scores": sample_scores_history,
+            }
             if solutions_history is not None and num_agents > 0
             else None,
             hamming_pairwise_history,

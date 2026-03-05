@@ -558,6 +558,7 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
     values = history.get("values") or []
     if not values:
         return
+    score_values = history.get("scores") or []
 
     if num_agents == 0:
         return
@@ -580,7 +581,7 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
 
     epoch_var = tk.IntVar(value=0)
     total_lambda = lambda_per_agent * num_agents
-    fixed_perplexity = min(10, max(1, total_lambda - 1))
+    fixed_perplexity = min(50, max(1, total_lambda - 1))
 
     def clamp(var, upper):
         try:
@@ -646,6 +647,41 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
         embedding_cache[epoch_idx] = embedding
 
         ax.clear()
+        xs = embedding[:, 0]
+        ys = embedding[:, 1]
+        span = max(float(xs.max() - xs.min()), float(ys.max() - ys.min()), 1e-6)
+        norm_scores = None
+        score_entry = score_values[epoch_idx] if epoch_idx < len(score_values) else None
+        if score_entry is not None:
+            scores = np.asarray(score_entry, dtype=np.float32).reshape(-1)
+            if scores.shape[0] == embedding.shape[0]:
+                norm_scores = np.clip(scores, 0.0, 1.0)
+                xmin, xmax = float(xs.min()), float(xs.max())
+                ymin, ymax = float(ys.min()), float(ys.max())
+                pad = 0.06 * span
+                gx = np.linspace(xmin - pad, xmax + pad, 140)
+                gy = np.linspace(ymin - pad, ymax + pad, 140)
+                GX, GY = np.meshgrid(gx, gy)
+                heat = np.zeros_like(GX, dtype=np.float32)
+                sigma = max(1e-3, 0.07 * span)
+                inv = 1.0 / (2.0 * sigma * sigma)
+                for x, y, s in zip(xs, ys, norm_scores):
+                    if s <= 0.0:
+                        continue
+                    dx = GX - x
+                    dy = GY - y
+                    influence = s * np.exp(-(dx * dx + dy * dy) * inv)
+                    heat = np.maximum(heat, influence)
+                ax.imshow(
+                    heat,
+                    origin="lower",
+                    extent=[gx[0], gx[-1], gy[0], gy[-1]],
+                    cmap="Reds",
+                    vmin=0.0,
+                    vmax=1.0,
+                    alpha=0.35,
+                    aspect="auto",
+                )
         ax.grid(True, linestyle="--", alpha=0.4)
         ax.set_xlabel("t-SNE 1")
         ax.set_ylabel("t-SNE 2")
@@ -663,8 +699,14 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
             if not np.any(mask):
                 continue
             points = embedding[mask]
+            if norm_scores is None:
+                scores_agent = np.zeros(points.shape[0], dtype=np.float32)
+            else:
+                scores_agent = norm_scores[mask]
             rounded = np.round(points, 3)
-            uniq, counts = np.unique(rounded, axis=0, return_counts=True)
+            uniq, inverse, counts = np.unique(rounded, axis=0, return_inverse=True, return_counts=True)
+            uniq_scores = np.zeros(len(uniq), dtype=np.float32)
+            np.maximum.at(uniq_scores, inverse, scores_agent)
             sizes = 45 * (1 + 0.6 * (counts - 1))
             angle = 2 * np.pi * (agent_idx / max(num_agents, 1))
             offset = np.array([np.cos(angle), np.sin(angle)]) * jitter_scale
@@ -679,6 +721,18 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
                 alpha=0.9,
                 marker=marker,
             )
+            if norm_scores is not None:
+                for (x, y, s_val) in zip(uniq[:, 0], uniq[:, 1], uniq_scores):
+                    ax.text(
+                        x + offset[0],
+                        y + offset[1] + 0.01 * span,
+                        f"{s_val:.2f}",
+                        fontsize=7,
+                        color="#222222",
+                        ha="center",
+                        va="bottom",
+                        zorder=4,
+                    )
             legend_handles.append(
                 Line2D(
                     [0],
