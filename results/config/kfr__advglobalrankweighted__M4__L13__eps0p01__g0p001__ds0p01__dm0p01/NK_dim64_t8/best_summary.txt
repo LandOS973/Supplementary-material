@@ -1,0 +1,20 @@
+ConfigName: kfr__advglobalrankweighted__M4__L13__eps0p01__g0p001__ds0p01__dm0p01
+Problem: NK
+Kernel: fr
+Advantage: globalrankweighted
+M: 4
+lambda: 13
+epsilon_svgd: 0.01
+gamma: 0.001
+decay_start_ratio: 0.01
+decay_min_factor: 0.01
+bandwith_kernel: None
+no_interact: False
+avg_score: 0.7400814294815063
+median_score: 0.7387399673461914
+std_score: 0.014158896170556545
+percentiles: 2%=0.7116256356239319, 5%=0.7203302979469299, 10%=0.7240259647369385, 25%=0.7304350733757019, 50%=0.7387399673461914, 75%=0.7511347532272339, 90%=0.7555605173110962, 95%=0.7586541771888733, 98%=0.7706997990608215
+ranking_best_algo: Tabu
+ranking_best_score: 0.7601875690625
+ranking_my_rank: 15/504 (97.2%)
+ranking_my_percent: 97.22222222222223

@@ -1,0 +1,20 @@
+ConfigName: kfr__advglobalrankweighted__M4__L13__eps0p06__g0p001__ds0p01__dm0p01
+Problem: QUBO
+Kernel: fr
+Advantage: globalrankweighted
+M: 4
+lambda: 13
+epsilon_svgd: 0.06
+gamma: 0.001
+decay_start_ratio: 0.01
+decay_min_factor: 0.01
+bandwith_kernel: None
+no_interact: False
+avg_score: -319.0799865722656
+median_score: -321.5
+std_score: 19.699583053588867
+percentiles: 2%=-352.0400085449219, 5%=-350.0, 10%=-342.1000061035156, 25%=-334.25, 50%=-321.5, 75%=-305.5, 90%=-293.0, 95%=-282.95001220703125, 98%=-277.9599914550781
+ranking_best_algo: CMApara
+ranking_best_score: 344.22
+ranking_my_rank: 180/504 (64.5%)
+ranking_my_percent: 64.48412698412699
