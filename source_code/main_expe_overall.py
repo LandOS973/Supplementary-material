@@ -37,8 +37,8 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["fr"],
         advantages=["globalrankweighted"],
-        M_values=[3,5],
-        lambda_values=[8,9,10,11],
+        M_values=[4],
+        lambda_values=[12,15, 24],
         epsilon_svgd=[0.01,0.015,0.020],
         gamma=[0.003,0.005,0.007],
         decay_start_ratio=[0.01],

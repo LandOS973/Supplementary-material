@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=expe4
+#SBATCH --job-name=expe2
 #SBATCH --qos=short
 #SBATCH -p gpu
 #SBATCH --output=/home/t.lan@univ-angers.fr/Supplementary-material/outputs/expe_%j.out
