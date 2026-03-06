@@ -9,6 +9,7 @@ from eda_strategies.MultiAgentUnivariate.SVGD.kernels.ppk import PPK
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.JSD import JSD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.PK import ProbabilityKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
+from eda_strategies.MultiAgentUnivariate.SVGD.kernels.FR import FisherRaoKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.no_interact import NoInteractKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
@@ -343,6 +344,9 @@ class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
         if kernel == "jsd":
             bandwith_kernel = self.kernel_config.get("bandwith_kernel")
             return JSD(bandwith_kernel=bandwith_kernel)
+        if kernel in ("fr", "fisherrao", "fisher_rao", "fisher-rao"):
+            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
+            return FisherRaoKernel(bandwith_kernel=bandwith_kernel)
         raise ValueError(
-            f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk, jsd, no_interact."
+            f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk, jsd, fr, no_interact."
         )
