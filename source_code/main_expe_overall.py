@@ -37,7 +37,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["fr"],
         advantages=["globalrankweighted"],
-        M_values=[4,],
+        M_values=[4,8],
         lambda_values=[5,13,24],
         epsilon_svgd=[0.01,0.03,0.06],
         gamma=[0.001,0.005,0.007],
@@ -911,20 +911,20 @@ def main():
                 if not success:
                     continue
                 dt = time.time() - t0
-                print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-                ranking = _rank_vs_global_ranking_excluding_ppo(
-                    repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
-                )
-                _save_history_csv(
-                    inst_dir,
-                    inst["name"],
-                    params["kernel"],
-                    {"history": history, "meta": meta},
-                    ranking=ranking,
-                    config_name=config_name,
-                )
-                if ranking and ranking[2] == 1:
-                    print("     -> TOP 1")
+                    print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+                    ranking = _rank_vs_global_ranking_excluding_ppo(
+                        repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
+                    )
+                    _save_history_csv(
+                        inst_dir,
+                        inst["name"],
+                        params["kernel"],
+                        {"history": history, "meta": meta},
+                        ranking=ranking,
+                        config_name=config_name,
+                    )
+                    if ranking and ranking[2] == 1:
+                        print("     -> TOP 1")
 
             # After each config, print stats
             stats = _collect_config_stats(config_dir, config_name, params, repo_root)
