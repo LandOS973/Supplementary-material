@@ -37,10 +37,10 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["fr"],
         advantages=["globalrankweighted"],
-        M_values=[3,5],
-        lambda_values=[8,9,10,11],
-        epsilon_svgd=[0.01,0.015,0.020],
-        gamma=[0.003,0.005,0.007],
+        M_values=[4,],
+        lambda_values=[5,13,24],
+        epsilon_svgd=[0.01,0.03,0.06],
+        gamma=[0.001,0.005,0.007],
         decay_start_ratio=[0.01],
         decay_min_factor=[0.01],
         bandwith_kernel=[None],
@@ -871,67 +871,60 @@ def main():
                     print("     -> TOP 1")
                     qubo_top1_count += 1
 
-            # Check if we should skip NK
-            if qubo_top1_count < 3 and nk_pending:
-                print(f"  [SKIP NK] Only {qubo_top1_count} TOP 1 in QUBO (threshold: 3)")
-                for inst in nk_pending:
-                    inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-                    print(f"  -> skip {inst_name} (insufficient TOP 1 in QUBO)")
-            else:
-                # Run NK instances
-                for inst in nk_pending:
-                    inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-                    inst_dir = os.path.join(config_dir, inst_name)
-                    problem_ctx = _load_instances(inst, DEFAULTS["device"])
-                    print(f"  -> run {inst_name}")
-                    t0 = time.time()
-                    nb_restarts = DEFAULTS["nb_restarts"]
-                    success = False
-                    while nb_restarts > 0 and not success:
-                        try:
-                            avg_score, history, meta = _run_once(
-                                problem_ctx,
-                                params["kernel"],
-                                params["advantage"],
-                                params["M"],
-                                params["lambda_"],
-                                params["epsilon_svgd"],
-                                params["gamma"],
-                                params["decay_start_ratio"],
-                                params["decay_min_factor"],
-                                params.get("bandwith_kernel"),
-                                device=DEFAULTS["device"],
-                                nb_restarts=nb_restarts,
-                            )
-                            success = True
-                        except (torch.OutOfMemoryError, RuntimeError) as exc:
-                            if not _is_cuda_oom(exc):
-                                raise
-                            nb_restarts -= 1
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                            if nb_restarts > 0:
-                                print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
-                            else:
-                                print("     [OOM] nb_restarts=0, skip instance.")
+            # Run NK instances
+            for inst in nk_pending:
+                inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+                inst_dir = os.path.join(config_dir, inst_name)
+                problem_ctx = _load_instances(inst, DEFAULTS["device"])
+                print(f"  -> run {inst_name}")
+                t0 = time.time()
+                nb_restarts = DEFAULTS["nb_restarts"]
+                success = False
+                while nb_restarts > 0 and not success:
+                    try:
+                        avg_score, history, meta = _run_once(
+                            problem_ctx,
+                            params["kernel"],
+                            params["advantage"],
+                            params["M"],
+                            params["lambda_"],
+                            params["epsilon_svgd"],
+                            params["gamma"],
+                            params["decay_start_ratio"],
+                            params["decay_min_factor"],
+                            params.get("bandwith_kernel"),
+                            device=DEFAULTS["device"],
+                            nb_restarts=nb_restarts,
+                        )
+                        success = True
+                    except (torch.OutOfMemoryError, RuntimeError) as exc:
+                        if not _is_cuda_oom(exc):
+                            raise
+                        nb_restarts -= 1
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        if nb_restarts > 0:
+                            print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
+                        else:
+                            print("     [OOM] nb_restarts=0, skip instance.")
 
-                    if not success:
-                        continue
-                    dt = time.time() - t0
-                    print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-                    ranking = _rank_vs_global_ranking_excluding_ppo(
-                        repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
-                    )
-                    _save_history_csv(
-                        inst_dir,
-                        inst["name"],
-                        params["kernel"],
-                        {"history": history, "meta": meta},
-                        ranking=ranking,
-                        config_name=config_name,
-                    )
-                    if ranking and ranking[2] == 1:
-                        print("     -> TOP 1")
+                if not success:
+                    continue
+                dt = time.time() - t0
+                print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+                ranking = _rank_vs_global_ranking_excluding_ppo(
+                    repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
+                )
+                _save_history_csv(
+                    inst_dir,
+                    inst["name"],
+                    params["kernel"],
+                    {"history": history, "meta": meta},
+                    ranking=ranking,
+                    config_name=config_name,
+                )
+                if ranking and ranking[2] == 1:
+                    print("     -> TOP 1")
 
             # After each config, print stats
             stats = _collect_config_stats(config_dir, config_name, params, repo_root)
