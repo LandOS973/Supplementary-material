@@ -201,6 +201,13 @@ def _apply_m_override(grids, m_values):
     return overridden
 
 
+def _get_grid_m_values(grid):
+    if grid.get("configs"):
+        values = sorted({int(cfg["M"]) for cfg in grid["configs"] if "M" in cfg})
+        return values
+    return [int(m) for m in grid.get("M_values", [])]
+
+
 def _discover_qubo_instances(instances_root: Path, nb_instances: int):
     seen = {}
     for fname in os.listdir(instances_root):
@@ -811,6 +818,9 @@ def main():
     Path(out_root).mkdir(parents=True, exist_ok=True)
 
     grids = _apply_m_override(_load_grids(), args.m_values)
+    for idx, grid in enumerate(grids, start=1):
+        m_vals = _get_grid_m_values(grid)
+        print(f"[GRID {idx}] M_values={m_vals}")
 
     instances_root = Path(repo_root) / "source_code" / "instances"
     qubo_instances = _discover_qubo_instances(instances_root / "QUBO", DEFAULTS["nb_instances_test"])
