@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Run PPO-EDA (decay mode) over all QUBO/NK instances for multiple config grids.
-Stores per-instance history/summary under results/config/<ConfigName>/<InstanceName>/.
+Stores per-instance history metrics under results/config/<ConfigName>/<InstanceName>/.
 Aggregates ranks across instances into an Excel summary.
 """
 
@@ -494,41 +494,7 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None, c
                 f"{mean},{median},{std},{p2},{p5},{p10},{p25},{p50},{p75},{p90},{p95},{p98}\n"
             )
 
-    summary_path = os.path.join(out_dir, "best_summary.txt")
-    meta = entry["meta"]
-    with open(summary_path, "w") as f:
-        if config_name:
-            f.write(f"ConfigName: {config_name}\n")
-        f.write(f"Problem: {problem_name}\n")
-        f.write(f"Kernel: {kernel_name}\n")
-        f.write(f"Advantage: {meta['advantage']}\n")
-        f.write(f"M: {meta['M']}\n")
-        f.write(f"lambda: {meta['lambda_']}\n")
-        f.write(f"epsilon_svgd: {meta['epsilon_svgd']}\n")
-        f.write(f"gamma: {meta['gamma']}\n")
-        f.write(f"decay_start_ratio: {meta['decay_start_ratio']}\n")
-        f.write(f"decay_min_factor: {meta['decay_min_factor']}\n")
-        f.write(f"bandwith_kernel: {meta['bandwith_kernel']}\n")
-        f.write(f"no_interact: {meta['no_interact']}\n")
-        f.write(f"avg_score: {meta['avg_score']}\n")
-        f.write(f"median_score: {meta['median_score']}\n")
-        f.write(f"std_score: {meta['std_score']}\n")
-        f.write(
-            "percentiles: "
-            f"2%={meta['p2']}, 5%={meta['p5']}, 10%={meta['p10']}, 25%={meta['p25']}, "
-            f"50%={meta['p50']}, 75%={meta['p75']}, 90%={meta['p90']}, 95%={meta['p95']}, 98%={meta['p98']}\n"
-        )
-        if ranking:
-            best_algo, best_score, my_rank, n_rank, my_pct = ranking[:5]
-            if best_algo is not None and n_rank:
-                pct_str = f"{my_pct:.1f}%" if my_pct is not None else "n/a"
-                f.write(f"ranking_best_algo: {best_algo}\n")
-                f.write(f"ranking_best_score: {best_score}\n")
-                f.write(f"ranking_my_rank: {my_rank}/{n_rank} ({pct_str})\n")
-                if my_pct is not None:
-                    f.write(f"ranking_my_percent: {my_pct}\n")
-        else:
-            f.write("ranking: unavailable\n")
+    # best_summary.txt output removed: only metrics CSV is written.
 
 
 def _parse_summary_config(summary_path: Path):
