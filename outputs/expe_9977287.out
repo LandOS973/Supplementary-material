@@ -1,0 +1,668 @@
+Job démarré sur gnode5 à Mon Mar  9 16:59:20 CET 2026
+Run main_expe
+Job name: expe_4_7_10
+[GRID 1] M_values=[4, 7, 10]
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p05__g0p003__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-197.160004 | runtime=26.87s
+  -> run QUBO_dim64_t1
+     avg_score=-146.899994 | runtime=22.43s
+  -> run QUBO_dim64_t2
+     avg_score=-138.119995 | runtime=22.41s
+  -> run QUBO_dim64_t3
+     avg_score=-407.920013 | runtime=22.69s
+  -> run QUBO_dim64_t4
+     avg_score=-328.100006 | runtime=22.55s
+  -> run QUBO_dim64_t5
+     avg_score=-305.739990 | runtime=22.53s
+  -> run QUBO_dim128_t0
+     avg_score=-562.580017 | runtime=22.66s
+  -> run QUBO_dim128_t1
+     avg_score=-431.559998 | runtime=22.49s
+  -> run QUBO_dim128_t2
+     avg_score=-417.760010 | runtime=22.51s
+  -> run QUBO_dim128_t3
+     avg_score=-1162.859985 | runtime=22.64s
+  -> run QUBO_dim128_t4
+     avg_score=-908.619995 | runtime=22.67s
+  -> run QUBO_dim128_t5
+     avg_score=-890.400024 | runtime=22.78s
+  -> run QUBO_dim256_t0
+     avg_score=-1563.099976 | runtime=23.09s
+  -> run QUBO_dim256_t1
+     avg_score=-1263.180054 | runtime=22.88s
+  -> run QUBO_dim256_t2
+     avg_score=-1207.040039 | runtime=22.98s
+  -> run QUBO_dim256_t3
+     avg_score=-3168.080078 | runtime=22.97s
+  -> run QUBO_dim256_t4
+     avg_score=-2580.280029 | runtime=23.57s
+  -> run QUBO_dim256_t5
+     avg_score=-2519.840088 | runtime=22.96s
+  -> run NK_dim128_t1
+     avg_score=0.707685 | runtime=22.89s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.731393 | runtime=22.89s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.742633 | runtime=22.61s
+  -> run NK_dim128_t8
+     avg_score=0.719097 | runtime=23.23s
+  -> run NK_dim256_t1
+     avg_score=0.703405 | runtime=24.27s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.726482 | runtime=24.07s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.730685 | runtime=24.35s
+  -> run NK_dim256_t8
+     avg_score=0.708501 | runtime=26.57s
+  -> run NK_dim64_t1
+     avg_score=0.709628 | runtime=22.84s
+  -> run NK_dim64_t2
+     avg_score=0.742119 | runtime=22.83s
+  -> run NK_dim64_t4
+     avg_score=0.745472 | runtime=22.94s
+  -> run NK_dim64_t8
+     avg_score=0.730143 | runtime=22.86s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p05__g0p003__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 4 (NK: 4, QUBO: 0)
+  NOMBRE DE TOP 3 : 5
+  NOMBRE DE TOP 5 : 6
+  NOMBRE DE TOP 10 : 6
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p05__g0p005__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-199.160004 | runtime=22.48s
+  -> run QUBO_dim64_t1
+     avg_score=-147.660004 | runtime=22.20s
+  -> run QUBO_dim64_t2
+     avg_score=-138.460007 | runtime=22.42s
+  -> run QUBO_dim64_t3
+     avg_score=-406.600006 | runtime=22.29s
+  -> run QUBO_dim64_t4
+     avg_score=-325.739990 | runtime=22.19s
+  -> run QUBO_dim64_t5
+     avg_score=-308.059998 | runtime=22.35s
+  -> run QUBO_dim128_t0
+     avg_score=-576.559998 | runtime=22.61s
+  -> run QUBO_dim128_t1
+     avg_score=-438.739990 | runtime=22.55s
+  -> run QUBO_dim128_t2
+     avg_score=-425.359985 | runtime=22.41s
+  -> run QUBO_dim128_t3
+     avg_score=-1178.260010 | runtime=22.52s
+  -> run QUBO_dim128_t4
+     avg_score=-926.020020 | runtime=22.45s
+  -> run QUBO_dim128_t5
+     avg_score=-902.580017 | runtime=22.55s
+  -> run QUBO_dim256_t0
+     avg_score=-1604.140015 | runtime=23.23s
+  -> run QUBO_dim256_t1
+     avg_score=-1298.479980 | runtime=23.01s
+  -> run QUBO_dim256_t2
+     avg_score=-1238.300049 | runtime=22.81s
+     -> TOP 1
+  -> run QUBO_dim256_t3
+     avg_score=-3259.419922 | runtime=22.91s
+  -> run QUBO_dim256_t4
+     avg_score=-2618.760010 | runtime=23.27s
+     -> TOP 1
+  -> run QUBO_dim256_t5
+     avg_score=-2560.020020 | runtime=22.81s
+  -> run NK_dim128_t1
+     avg_score=0.709154 | runtime=22.43s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.734410 | runtime=22.22s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.751899 | runtime=22.08s
+     -> TOP 1
+  -> run NK_dim128_t8
+     avg_score=0.728330 | runtime=22.60s
+  -> run NK_dim256_t1
+     avg_score=0.706116 | runtime=23.89s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.731435 | runtime=23.68s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.740458 | runtime=23.98s
+     -> TOP 1
+  -> run NK_dim256_t8
+     avg_score=0.716563 | runtime=25.78s
+  -> run NK_dim64_t1
+     avg_score=0.711101 | runtime=21.92s
+  -> run NK_dim64_t2
+     avg_score=0.741800 | runtime=22.57s
+  -> run NK_dim64_t4
+     avg_score=0.749941 | runtime=22.29s
+  -> run NK_dim64_t8
+     avg_score=0.735778 | runtime=22.60s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p05__g0p005__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 8 (NK: 6, QUBO: 2)
+  NOMBRE DE TOP 3 : 10
+  NOMBRE DE TOP 5 : 10
+  NOMBRE DE TOP 10 : 12
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p05__g0p007__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-200.759995 | runtime=22.51s
+  -> run QUBO_dim64_t1
+     avg_score=-147.839996 | runtime=22.14s
+  -> run QUBO_dim64_t2
+     avg_score=-137.979996 | runtime=22.31s
+  -> run QUBO_dim64_t3
+     avg_score=-407.920013 | runtime=22.38s
+  -> run QUBO_dim64_t4
+     avg_score=-328.399994 | runtime=22.02s
+  -> run QUBO_dim64_t5
+     avg_score=-309.359985 | runtime=22.39s
+  -> run QUBO_dim128_t0
+     avg_score=-582.960022 | runtime=22.42s
+  -> run QUBO_dim128_t1
+     avg_score=-444.160004 | runtime=22.23s
+  -> run QUBO_dim128_t2
+     avg_score=-429.679993 | runtime=22.14s
+  -> run QUBO_dim128_t3
+     avg_score=-1197.140015 | runtime=22.58s
+  -> run QUBO_dim128_t4
+     avg_score=-941.140015 | runtime=22.47s
+  -> run QUBO_dim128_t5
+     avg_score=-912.479980 | runtime=22.38s
+  -> run QUBO_dim256_t0
+     avg_score=-1629.979980 | runtime=22.92s
+     -> TOP 1
+  -> run QUBO_dim256_t1
+     avg_score=-1308.660034 | runtime=22.85s
+     -> TOP 1
+  -> run QUBO_dim256_t2
+     avg_score=-1244.920044 | runtime=22.81s
+     -> TOP 1
+  -> run QUBO_dim256_t3
+     avg_score=-3311.879883 | runtime=23.05s
+  -> run QUBO_dim256_t4
+     avg_score=-2649.739990 | runtime=23.13s
+     -> TOP 1
+  -> run QUBO_dim256_t5
+     avg_score=-2606.040039 | runtime=23.06s
+     -> TOP 1
+  -> run NK_dim128_t1
+     avg_score=0.709862 | runtime=22.49s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.735432 | runtime=22.27s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.754883 | runtime=22.38s
+     -> TOP 1
+  -> run NK_dim128_t8
+     avg_score=0.729327 | runtime=22.58s
+  -> run NK_dim256_t1
+     avg_score=0.706745 | runtime=23.59s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.734206 | runtime=23.63s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.746070 | runtime=23.97s
+     -> TOP 1
+  -> run NK_dim256_t8
+     avg_score=0.721414 | runtime=25.72s
+     -> TOP 1
+  -> run NK_dim64_t1
+     avg_score=0.711316 | runtime=21.91s
+  -> run NK_dim64_t2
+     avg_score=0.743924 | runtime=22.28s
+  -> run NK_dim64_t4
+     avg_score=0.753499 | runtime=22.08s
+  -> run NK_dim64_t8
+     avg_score=0.740544 | runtime=22.19s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p05__g0p007__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 12 (NK: 7, QUBO: 5)
+  NOMBRE DE TOP 3 : 15
+  NOMBRE DE TOP 5 : 16
+  NOMBRE DE TOP 10 : 21
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p05__g0p01__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-199.440002 | runtime=22.15s
+  -> run QUBO_dim64_t1
+     avg_score=-150.279999 | runtime=21.96s
+  -> run QUBO_dim64_t2
+     avg_score=-139.020004 | runtime=21.97s
+  -> run QUBO_dim64_t3
+     avg_score=-414.040009 | runtime=22.50s
+  -> run QUBO_dim64_t4
+     avg_score=-330.519989 | runtime=22.20s
+  -> run QUBO_dim64_t5
+     avg_score=-311.420013 | runtime=22.00s
+  -> run QUBO_dim128_t0
+     avg_score=-580.280029 | runtime=22.47s
+  -> run QUBO_dim128_t1
+     avg_score=-441.420013 | runtime=22.14s
+  -> run QUBO_dim128_t2
+     avg_score=-429.959991 | runtime=22.10s
+  -> run QUBO_dim128_t3
+     avg_score=-1198.479980 | runtime=22.27s
+  -> run QUBO_dim128_t4
+     avg_score=-937.359985 | runtime=22.46s
+  -> run QUBO_dim128_t5
+     avg_score=-919.239990 | runtime=22.48s
+  -> run QUBO_dim256_t0
+     avg_score=-1645.880005 | runtime=23.12s
+     -> TOP 1
+  -> run QUBO_dim256_t1
+     avg_score=-1313.500000 | runtime=22.94s
+     -> TOP 1
+  -> run QUBO_dim256_t2
+     avg_score=-1254.900024 | runtime=22.77s
+     -> TOP 1
+  -> run QUBO_dim256_t3
+     avg_score=-3341.520020 | runtime=22.87s
+     -> TOP 1
+  -> run QUBO_dim256_t4
+     avg_score=-2652.620117 | runtime=22.95s
+     -> TOP 1
+  -> run QUBO_dim256_t5
+     avg_score=-2626.540039 | runtime=22.95s
+     -> TOP 1
+  -> run NK_dim128_t1
+     avg_score=0.710571 | runtime=22.08s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.737346 | runtime=22.16s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.758487 | runtime=22.19s
+     -> TOP 1
+  -> run NK_dim128_t8
+     avg_score=0.736322 | runtime=22.57s
+  -> run NK_dim256_t1
+     avg_score=0.707822 | runtime=23.47s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.736234 | runtime=23.58s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.750498 | runtime=23.94s
+     -> TOP 1
+  -> run NK_dim256_t8
+     avg_score=0.725782 | runtime=25.70s
+     -> TOP 1
+  -> run NK_dim64_t1
+     avg_score=0.711484 | runtime=21.90s
+  -> run NK_dim64_t2
+     avg_score=0.744192 | runtime=21.91s
+  -> run NK_dim64_t4
+     avg_score=0.754583 | runtime=22.54s
+  -> run NK_dim64_t8
+     avg_score=0.745075 | runtime=22.25s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p05__g0p01__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 13 (NK: 7, QUBO: 6)
+  NOMBRE DE TOP 3 : 15
+  NOMBRE DE TOP 5 : 17
+  NOMBRE DE TOP 10 : 21
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p01__g0p003__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-199.899994 | runtime=21.92s
+  -> run QUBO_dim64_t1
+     avg_score=-149.279999 | runtime=21.94s
+  -> run QUBO_dim64_t2
+     avg_score=-138.839996 | runtime=21.93s
+  -> run QUBO_dim64_t3
+     avg_score=-410.299988 | runtime=22.18s
+  -> run QUBO_dim64_t4
+     avg_score=-329.940002 | runtime=21.91s
+  -> run QUBO_dim64_t5
+     avg_score=-311.660004 | runtime=21.90s
+  -> run QUBO_dim128_t0
+     avg_score=-586.640015 | runtime=22.09s
+  -> run QUBO_dim128_t1
+     avg_score=-441.459991 | runtime=22.12s
+  -> run QUBO_dim128_t2
+     avg_score=-435.040009 | runtime=22.12s
+  -> run QUBO_dim128_t3
+     avg_score=-1206.199951 | runtime=22.28s
+  -> run QUBO_dim128_t4
+     avg_score=-943.359985 | runtime=22.25s
+  -> run QUBO_dim128_t5
+     avg_score=-917.359985 | runtime=22.29s
+  -> run QUBO_dim256_t0
+     avg_score=-1658.839966 | runtime=23.00s
+     -> TOP 1
+  -> run QUBO_dim256_t1
+     avg_score=-1321.040039 | runtime=22.89s
+     -> TOP 1
+  -> run QUBO_dim256_t2
+     avg_score=-1266.160034 | runtime=22.75s
+     -> TOP 1
+  -> run QUBO_dim256_t3
+     avg_score=-3363.340088 | runtime=22.98s
+     -> TOP 1
+  -> run QUBO_dim256_t4
+     avg_score=-2687.879883 | runtime=22.85s
+     -> TOP 1
+  -> run QUBO_dim256_t5
+     avg_score=-2647.659912 | runtime=22.81s
+     -> TOP 1
+  -> run NK_dim128_t1
+     avg_score=0.710821 | runtime=21.97s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.739354 | runtime=21.97s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.761103 | runtime=22.26s
+     -> TOP 1
+  -> run NK_dim128_t8
+     avg_score=0.739073 | runtime=22.55s
+  -> run NK_dim256_t1
+     avg_score=0.708151 | runtime=23.42s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.737312 | runtime=23.57s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.753701 | runtime=23.93s
+     -> TOP 1
+  -> run NK_dim256_t8
+     avg_score=0.730621 | runtime=25.70s
+     -> TOP 1
+  -> run NK_dim64_t1
+     avg_score=0.711854 | runtime=21.88s
+  -> run NK_dim64_t2
+     avg_score=0.744327 | runtime=21.87s
+  -> run NK_dim64_t4
+     avg_score=0.756847 | runtime=22.32s
+  -> run NK_dim64_t8
+     avg_score=0.748623 | runtime=22.30s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p01__g0p003__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 13 (NK: 7, QUBO: 6)
+  NOMBRE DE TOP 3 : 19
+  NOMBRE DE TOP 5 : 21
+  NOMBRE DE TOP 10 : 21
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p01__g0p005__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-201.320007 | runtime=21.92s
+  -> run QUBO_dim64_t1
+     avg_score=-149.559998 | runtime=21.90s
+  -> run QUBO_dim64_t2
+     avg_score=-139.119995 | runtime=21.89s
+  -> run QUBO_dim64_t3
+     avg_score=-416.600006 | runtime=21.90s
+  -> run QUBO_dim64_t4
+     avg_score=-333.980011 | runtime=21.87s
+  -> run QUBO_dim64_t5
+     avg_score=-312.920013 | runtime=21.90s
+  -> run QUBO_dim128_t0
+     avg_score=-587.260010 | runtime=22.08s
+  -> run QUBO_dim128_t1
+     avg_score=-443.619995 | runtime=22.08s
+  -> run QUBO_dim128_t2
+     avg_score=-431.320007 | runtime=22.06s
+  -> run QUBO_dim128_t3
+     avg_score=-1205.459961 | runtime=22.16s
+  -> run QUBO_dim128_t4
+     avg_score=-948.039978 | runtime=22.07s
+  -> run QUBO_dim128_t5
+     avg_score=-925.419983 | runtime=22.08s
+  -> run QUBO_dim256_t0
+     avg_score=-1662.040039 | runtime=22.75s
+     -> TOP 1
+  -> run QUBO_dim256_t1
+     avg_score=-1327.060059 | runtime=22.76s
+     -> TOP 1
+  -> run QUBO_dim256_t2
+     avg_score=-1277.079956 | runtime=22.76s
+     -> TOP 1
+  -> run QUBO_dim256_t3
+     avg_score=-3390.739990 | runtime=22.85s
+     -> TOP 1
+  -> run QUBO_dim256_t4
+     avg_score=-2671.280029 | runtime=22.81s
+     -> TOP 1
+  -> run QUBO_dim256_t5
+     avg_score=-2643.199951 | runtime=22.75s
+     -> TOP 1
+  -> run NK_dim128_t1
+     avg_score=0.711251 | runtime=21.97s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.738906 | runtime=21.98s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.762159 | runtime=22.04s
+     -> TOP 1
+  -> run NK_dim128_t8
+     avg_score=0.743391 | runtime=22.54s
+     -> TOP 1
+  -> run NK_dim256_t1
+     avg_score=0.708799 | runtime=23.46s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.738554 | runtime=23.57s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.757449 | runtime=23.95s
+     -> TOP 1
+  -> run NK_dim256_t8
+     avg_score=0.734375 | runtime=25.70s
+     -> TOP 1
+  -> run NK_dim64_t1
+     avg_score=0.711928 | runtime=21.87s
+     -> TOP 1
+  -> run NK_dim64_t2
+     avg_score=0.745935 | runtime=21.88s
+     -> TOP 1
+  -> run NK_dim64_t4
+     avg_score=0.756147 | runtime=21.90s
+  -> run NK_dim64_t8
+     avg_score=0.747363 | runtime=22.16s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p01__g0p005__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 16 (NK: 10, QUBO: 6)
+  NOMBRE DE TOP 3 : 21
+  NOMBRE DE TOP 5 : 21
+  NOMBRE DE TOP 10 : 23
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p01__g0p007__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-203.419998 | runtime=21.88s
+  -> run QUBO_dim64_t1
+     avg_score=-149.419998 | runtime=21.90s
+  -> run QUBO_dim64_t2
+     avg_score=-139.220001 | runtime=21.89s
+  -> run QUBO_dim64_t3
+     avg_score=-415.260010 | runtime=21.91s
+  -> run QUBO_dim64_t4
+     avg_score=-333.279999 | runtime=21.87s
+  -> run QUBO_dim64_t5
+     avg_score=-313.839996 | runtime=21.89s
+  -> run QUBO_dim128_t0
+     avg_score=-592.000000 | runtime=22.05s
+     -> TOP 1
+  -> run QUBO_dim128_t1
+     avg_score=-443.899994 | runtime=22.07s
+  -> run QUBO_dim128_t2
+     avg_score=-431.739990 | runtime=22.08s
+  -> run QUBO_dim128_t3
+     avg_score=-1208.380005 | runtime=22.24s
+  -> run QUBO_dim128_t4
+     avg_score=-945.919983 | runtime=22.04s
+  -> run QUBO_dim128_t5
+     avg_score=-920.000000 | runtime=22.05s
+  -> run QUBO_dim256_t0
+     avg_score=-1666.060059 | runtime=22.76s
+     -> TOP 1
+  -> run QUBO_dim256_t1
+     avg_score=-1331.300049 | runtime=22.77s
+     -> TOP 1
+  -> run QUBO_dim256_t2
+     avg_score=-1273.660034 | runtime=22.74s
+     -> TOP 1
+  -> run QUBO_dim256_t3
+     avg_score=-3414.159912 | runtime=22.76s
+     -> TOP 1
+  -> run QUBO_dim256_t4
+     avg_score=-2691.800049 | runtime=22.76s
+     -> TOP 1
+  -> run QUBO_dim256_t5
+     avg_score=-2658.520020 | runtime=22.81s
+     -> TOP 1
+  -> run NK_dim128_t1
+     avg_score=0.711377 | runtime=21.97s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.738921 | runtime=21.96s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.763559 | runtime=22.02s
+     -> TOP 1
+  -> run NK_dim128_t8
+     avg_score=0.743888 | runtime=22.54s
+     -> TOP 1
+  -> run NK_dim256_t1
+     avg_score=0.708891 | runtime=23.40s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.739408 | runtime=23.56s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.758633 | runtime=23.92s
+     -> TOP 1
+  -> run NK_dim256_t8
+     avg_score=0.737210 | runtime=25.69s
+     -> TOP 1
+  -> run NK_dim64_t1
+     avg_score=0.711936 | runtime=21.86s
+     -> TOP 1
+  -> run NK_dim64_t2
+     avg_score=0.745888 | runtime=21.86s
+  -> run NK_dim64_t4
+     avg_score=0.756115 | runtime=21.90s
+  -> run NK_dim64_t8
+     avg_score=0.749732 | runtime=22.21s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p01__g0p007__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 16 (NK: 9, QUBO: 7)
+  NOMBRE DE TOP 3 : 21
+  NOMBRE DE TOP 5 : 21
+  NOMBRE DE TOP 10 : 24
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p01__g0p01__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-202.740005 | runtime=21.89s
+  -> run QUBO_dim64_t1
+     avg_score=-148.679993 | runtime=21.88s
+  -> run QUBO_dim64_t2
+     avg_score=-139.259995 | runtime=21.90s
+  -> run QUBO_dim64_t3
+     avg_score=-415.519989 | runtime=21.89s
+  -> run QUBO_dim64_t4
+     avg_score=-331.820007 | runtime=21.89s
+  -> run QUBO_dim64_t5
+     avg_score=-314.320007 | runtime=21.89s
+  -> run QUBO_dim128_t0
+     avg_score=-589.760010 | runtime=22.07s
+     -> TOP 1
+  -> run QUBO_dim128_t1
+     avg_score=-446.399994 | runtime=22.05s
+  -> run QUBO_dim128_t2
+     avg_score=-432.880005 | runtime=22.07s
+  -> run QUBO_dim128_t3
+     avg_score=-1204.800049 | runtime=22.07s
+  -> run QUBO_dim128_t4
+     avg_score=-948.840027 | runtime=22.04s
+  -> run QUBO_dim128_t5
+     avg_score=-927.580017 | runtime=22.04s
+  -> run QUBO_dim256_t0
+     avg_score=-1669.280029 | runtime=22.76s
+     -> TOP 1
+  -> run QUBO_dim256_t1
+     avg_score=-1327.880005 | runtime=22.76s
+     -> TOP 1
+  -> run QUBO_dim256_t2
+     avg_score=-1277.739990 | runtime=22.75s
+     -> TOP 1
+  -> run QUBO_dim256_t3
+     avg_score=-3405.879883 | runtime=22.77s
+     -> TOP 1
+  -> run QUBO_dim256_t4
+     avg_score=-2687.120117 | runtime=22.74s
+     -> TOP 1
+  -> run QUBO_dim256_t5
+     avg_score=-2666.040039 | runtime=22.76s
+     -> TOP 1
+  -> run NK_dim128_t1
+     avg_score=0.711402 | runtime=21.95s
+     -> TOP 1
+  -> run NK_dim128_t2
+     avg_score=0.739634 | runtime=21.97s
+     -> TOP 1
+  -> run NK_dim128_t4
+     avg_score=0.763107 | runtime=22.01s
+     -> TOP 1
+  -> run NK_dim128_t8
+     avg_score=0.744538 | runtime=22.53s
+     -> TOP 1
+  -> run NK_dim256_t1
+     avg_score=0.709002 | runtime=23.46s
+     -> TOP 1
+  -> run NK_dim256_t2
+     avg_score=0.739810 | runtime=23.56s
+     -> TOP 1
+  -> run NK_dim256_t4
+     avg_score=0.759573 | runtime=23.91s
+     -> TOP 1
+  -> run NK_dim256_t8
+     avg_score=0.738016 | runtime=25.69s
+     -> TOP 1
+  -> run NK_dim64_t1
+     avg_score=0.712183 | runtime=21.86s
+     -> TOP 1
+  -> run NK_dim64_t2
+     avg_score=0.745873 | runtime=21.87s
+  -> run NK_dim64_t4
+     avg_score=0.758165 | runtime=22.11s
+  -> run NK_dim64_t8
+     avg_score=0.750336 | runtime=22.15s
+
+  *** SUMMARY FOR CONFIG: kfr__advglobalrankweighted__M4__L5__eps0p01__g0p01__ds0p01__dm0p01 ***
+  NOMBRE DE TOP 1 : 16 (NK: 9, QUBO: 7)
+  NOMBRE DE TOP 3 : 23
+  NOMBRE DE TOP 5 : 23
+  NOMBRE DE TOP 10 : 23
+  Instances: 30/30
+
+[CONFIG] kfr__advglobalrankweighted__M4__L5__eps0p02__g0p003__ds0p01__dm0p01
+  -> run QUBO_dim64_t0
+     avg_score=-199.419998 | runtime=22.37s
+  -> run QUBO_dim64_t1
+     avg_score=-149.279999 | runtime=22.19s
+  -> run QUBO_dim64_t2
+     avg_score=-137.839996 | runtime=22.05s
+  -> run QUBO_dim64_t3
+     avg_score=-408.440002 | runtime=22.55s
+  -> run QUBO_dim64_t4
+     avg_score=-329.079987 | runtime=21.98s
+  -> run QUBO_dim64_t5
+     avg_score=-310.600006 | runtime=22.23s
+  -> run QUBO_dim128_t0
