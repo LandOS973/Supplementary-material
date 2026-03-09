@@ -164,6 +164,43 @@ def _load_grids():
     return DEFAULT_GRIDS
 
 
+def _parse_int_list(raw: str):
+    if raw is None:
+        return None
+    parts = [p for p in re.split(r"[,\s]+", str(raw).strip()) if p]
+    if not parts:
+        raise argparse.ArgumentTypeError("Expected a non-empty list of integers.")
+    values = []
+    for part in parts:
+        try:
+            values.append(int(part))
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"Invalid integer '{part}'.") from exc
+    return values
+
+
+def _apply_m_override(grids, m_values):
+    if not m_values:
+        return grids
+    overridden = []
+    for grid in grids:
+        if grid.get("configs"):
+            new_configs = []
+            for cfg in grid["configs"]:
+                for m in m_values:
+                    new_cfg = dict(cfg)
+                    new_cfg["M"] = int(m)
+                    new_configs.append(new_cfg)
+            new_grid = dict(grid)
+            new_grid["configs"] = new_configs
+            overridden.append(new_grid)
+        else:
+            new_grid = dict(grid)
+            new_grid["M_values"] = [int(m) for m in m_values]
+            overridden.append(new_grid)
+    return overridden
+
+
 def _discover_qubo_instances(instances_root: Path, nb_instances: int):
     seen = {}
     for fname in os.listdir(instances_root):
@@ -760,13 +797,20 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
 def main():
     parser = argparse.ArgumentParser(description="Overall PPO-EDA decay grid (QUBO + NK).")
     parser.add_argument("--outdir", type=str, default=None, help="Root output dir (default: results/config).")
+    parser.add_argument(
+        "-m",
+        "--m-values",
+        type=_parse_int_list,
+        default=None,
+        help="Override M_values grid with a comma/space-separated list (e.g. -m 7,8,9,6).",
+    )
     args = parser.parse_args()
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     out_root = args.outdir or os.path.join(repo_root, "results", "config")
     Path(out_root).mkdir(parents=True, exist_ok=True)
 
-    grids = _load_grids()
+    grids = _apply_m_override(_load_grids(), args.m_values)
 
     instances_root = Path(repo_root) / "source_code" / "instances"
     qubo_instances = _discover_qubo_instances(instances_root / "QUBO", DEFAULTS["nb_instances_test"])

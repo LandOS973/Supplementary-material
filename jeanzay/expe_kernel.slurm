@@ -30,6 +30,28 @@ echo "Lancement de main_expe.py..."
 export PYTHONUNBUFFERED=1
 
 # srun est essentiel pour que Slurm surveille le processus python
-srun python source_code/main_expe.py
+M_VALUES=""
+while getopts "m:" opt; do
+  case "$opt" in
+    m) M_VALUES="$OPTARG" ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+JOB_NAME="expe_jz"
+if [ -n "$M_VALUES" ]; then
+  JOB_SUFFIX="${M_VALUES//,/_}"
+  JOB_SUFFIX="${JOB_SUFFIX// /_}"
+  JOB_NAME="expe_${JOB_SUFFIX}"
+  scontrol update JobName="$JOB_NAME" JobId="$SLURM_JOB_ID" >/dev/null 2>&1 || true
+fi
+
+echo "Job name: $JOB_NAME"
+
+if [ -n "$M_VALUES" ]; then
+  srun python source_code/main_expe_overall.py -m "$M_VALUES"
+else
+  srun python source_code/main_expe_overall.py
+fi
 
 echo "Job terminé à $(date)"
