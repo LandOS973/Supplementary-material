@@ -38,15 +38,14 @@ DEFAULT_GRIDS = [
         kernels=["fr"],
         advantages=["globalrankweighted"],
         M_values=[4],
-        lambda_values=[5, 12,15, 24],
-        epsilon_svgd=[0.05,0.01,0.020],
-        gamma=[0.003,0.005,0.007,0.01],
+        lambda_values=[10, 14, 25, 32],   
+        epsilon_svgd=[0.05, 0.07, 0.10],   
+        gamma=[0.005, 0.006, 0.007, 0.008], 
         decay_start_ratio=[0.01],
         decay_min_factor=[0.01],
         bandwith_kernel=[None],
     )
 ]
-
 
 QUBO_PATTERN = re.compile(r"^puboi_evo_n_(?P<dim>\d+)_t_(?P<t>\d+)_i_(?P<i>\d+)\.json$")
 NK_PATTERN = re.compile(r"^nk_(?P<dim>\d+)_(?P<t>\d+)_?(?P<i>\d+)\.txt$")
