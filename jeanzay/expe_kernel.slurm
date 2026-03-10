@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=expe_jz          # Nom du job
-#SBATCH --output=output/expe_%j.out # Fichier de sortie standard
+#SBATCH --output=$WORK/Supplementary-material/outputs/expe_%j.out # Fichier de sortie standard
 #SBATCH --error=output/expe_%j.err  # Fichier d'erreur (Séparé pour mieux débugger)
 #SBATCH --ntasks=1                  # 1 Processus
 #SBATCH --gres=gpu:1                # 1 GPU
@@ -55,3 +55,5 @@ else
 fi
 
 echo "Job terminé à $(date)"
+
+# sbatch expe_kernel.slurm -m 5

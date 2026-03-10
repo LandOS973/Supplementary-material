@@ -1,13 +1,7 @@
-Submit:
-sbatch $fileslurmname
-
-Check :
-squeue --me
-
-Infos complete :
-scontrol show job $Job_ID
-
-Cancel :
-scancel $Job_ID
-
+vpn (si pas au lab)
 ssh jean-zay
+cd $WORK
+cd jeanzay
+sbatch expe_kernel.slurm -m 5 (par exemple)
+squeue -u $USER => recupérer le nom du job 
+tail -n 100 -f $WORK/Supplementary-material/outputs/expe_numjob.out
