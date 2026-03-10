@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=expe_jz          # Nom du job
-#SBATCH --output=$WORK/Supplementary-material/outputs/expe_%j.out # Fichier de sortie standard
-#SBATCH --error=output/expe_%j.err  # Fichier d'erreur (Séparé pour mieux débugger)
-#SBATCH --ntasks=1                  # 1 Processus
-#SBATCH --gres=gpu:1                # 1 GPU
-#SBATCH --cpus-per-task=10          # ⚠️ OBLIGATOIRE JZ (1/4 du noeud V100)
-#SBATCH --hint=nomultithread        # ⚠️ OBLIGATOIRE JZ (Pas d'hyperthreading)
-#SBATCH --time=08:00:00             # Durée max
-#SBATCH --account=ndg@v100          # Ton compte projet (ou @a100 si besoin)
+#SBATCH --job-name=expe_jz          
+#SBATCH --output=/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/outputs/expe_%j.out 
+#SBATCH --error=/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/outputs/expe_%j.err  
+#SBATCH --ntasks=1                  
+#SBATCH --gres=gpu:1                
+#SBATCH --cpus-per-task=10          
+#SBATCH --hint=nomultithread        
+#SBATCH --time=08:00:00             
+#SBATCH --account=ndg@v100          
 
 # --- Préparation ---
 echo "Job démarré sur $(hostname) à $(date)"
@@ -15,8 +15,8 @@ echo "Job démarré sur $(hostname) à $(date)"
 # 1. Se placer dans le bon dossier (Sécurité absolue)
 cd $WORK/Supplementary-material
 
-# 2. Créer le dossier d'output s'il n'existe pas (évite le crash au démarrage)
-mkdir -p output
+# 2. Créer le dossier s'il n'existe pas
+mkdir -p outputs
 
 # 3. Charger l'environnement Conda
 module purge
@@ -26,10 +26,8 @@ conda activate ppo_env
 # --- Lancement ---
 echo "Lancement de main_expe.py..."
 
-# Force Python à afficher les logs en temps réel (pas de buffer)
 export PYTHONUNBUFFERED=1
 
-# srun est essentiel pour que Slurm surveille le processus python
 M_VALUES=""
 while getopts "m:" opt; do
   case "$opt" in
@@ -56,4 +54,4 @@ fi
 
 echo "Job terminé à $(date)"
 
-# sbatch expe_kernel.slurm -m 5
+# sbatch expe_kernel.slurm -m 10
