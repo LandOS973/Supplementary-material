@@ -101,12 +101,12 @@ QUBO_CONFIGS = [
 QUBO_PARAMS = {
     "num_instances": 10,
     "num_restarts": 10,
-    "seed_base": 42,
+    "seed_base": 0,
 }
 
 # Experiment Parameters
 EXPERIMENT_PARAMS = {
-    "budget": 10000,
+    "budget": 50000,
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
 }
 

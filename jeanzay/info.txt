@@ -5,3 +5,6 @@ cd jeanzay
 sbatch expe_kernel.slurm -m 5 (par exemple)
 squeue -u $USER => recupérer le nom du job 
 tail -n 100 -f $WORK/Supplementary-material/outputs/expe_numjob.out
+
+si tu veux cancel le job : scancel numjob
+si tu veux voir ce qui est ajouté comme fichier : dif
