@@ -71,8 +71,8 @@ FIXED_HYPERPARAMS = {
     "decay_start_ratio": 0.01,
     "decay_min_factor": 0.01,
     "decay_enabled": True,
-    "kernel_config": {"name": "rbf"},
-    "advantage_cfg": "normalizedfitness",
+    "kernel_config": {"name": "fr"},
+    "advantage_cfg": "globalrankweighted",
 }
 # QUBO Problem Configurations
 # All combinations of N ∈ {64, 128, 256} and Type ∈ {0, 1, 2, 3, 4, 5}
