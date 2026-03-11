@@ -536,11 +536,11 @@ def _rank_vs_global_ranking_excluding_ppo(
     elif problem == "NK":
         filename = f"NK_N_{dim}_K_{type_instance}_ranks.csv"
     else:
-        return None, None, None, 0, None
+        return None, None, None, 0, None, None, None
 
     path = os.path.join(repo_root, "additional_results", "global_ranking", filename)
     if not os.path.isfile(path):
-        return None, None, None, 0, None
+        return None, None, None, 0, None, None, None
 
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -564,7 +564,7 @@ def _rank_vs_global_ranking_excluding_ppo(
         idx_algo = find_idx(algo_candidates)
         idx_score = find_idx(score_candidates)
         if idx_score is None:
-            return None, None, None, 0, None
+            return None, None, None, 0, None, None, None
 
         entries = []
         for r in rows:
@@ -580,7 +580,7 @@ def _rank_vs_global_ranking_excluding_ppo(
             entries.append((name, s))
 
         if not entries:
-            return None, None, None, 0, None
+            return None, None, None, 0, None, None, None
 
         scores_only = [s for _, s in entries]
         n = len(scores_only)
@@ -654,7 +654,7 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
             if legacy.is_file():
                 summary_path = legacy
             else:
-                continue
+                summary_path = None
         metrics_path = child / "best_metrics.csv"
         if not metrics_path.is_file():
             legacy_metrics = child / f"{problem}_{params['kernel']}_best_metrics.csv"
@@ -662,8 +662,31 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
                 metrics_path = legacy_metrics
             else:
                 metrics_path = None
-        cfg = _parse_summary_config(summary_path)
-        avg_score = cfg.get("avg_score") if cfg else None
+        avg_score = None
+        if summary_path is not None and summary_path.is_file():
+            cfg = _parse_summary_config(summary_path)
+            avg_score = cfg.get("avg_score") if cfg else None
+        if avg_score is None and metrics_path is not None and metrics_path.is_file():
+            try:
+                with open(metrics_path, "r") as f:
+                    lines = [line.strip() for line in f.readlines() if line.strip()]
+                if len(lines) >= 2:
+                    header = [h.strip() for h in lines[0].split(",")]
+                    last = [v.strip() for v in lines[-1].split(",")]
+
+                    def pick(col: str):
+                        if col in header:
+                            idx = header.index(col)
+                            if idx < len(last):
+                                return last[idx]
+                        return None
+
+                    # Prefer mean score at the last iteration, fallback to median, then best_fitness.
+                    val = pick("mean") or pick("median") or pick("best_fitness")
+                    if val is not None:
+                        avg_score = val
+            except Exception:
+                avg_score = None
         if avg_score is None:
             continue
         try:
