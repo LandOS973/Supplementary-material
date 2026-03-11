@@ -56,8 +56,8 @@ def find_instances(results_root: Path) -> Dict[Tuple[str, int, int], Dict[str, P
     return instances
 
 
-def read_last_score(path: Path) -> float:
-    """Read last numeric score from a run file."""
+def read_last_score(path: Path) -> float | None:
+    """Read last numeric score from a run file. Return None if not found."""
     # Scan from end for the last non-empty, non-header line
     lines = path.read_text().splitlines()
     for line in reversed(lines):
@@ -68,7 +68,7 @@ def read_last_score(path: Path) -> float:
         if len(parts) < 2:
             continue
         return float(parts[1])
-    raise ValueError(f"No score found in {path}")
+    return None
 
 
 def collect_scores(
@@ -117,29 +117,44 @@ def build_rankings(
     skipped = 0
     written = 0
     for (problem, dim, type_instance), per_algo_dir in sorted(instances.items()):
-        missing = []
+        low_runs = []
         per_algo_score = {}
         for algo in algos:
             type_dir = per_algo_dir.get(algo)
             if type_dir is None:
-                missing.append((algo, 0))
                 continue
             files = sorted(type_dir.glob(f"*_budget_{budget}_*.txt"))
-            if len(files) < expected_runs:
-                missing.append((algo, len(files)))
+            if len(files) == 0:
                 continue
-            scores = [read_last_score(p) for p in files]
+            if len(files) < expected_runs:
+                low_runs.append((algo, len(files)))
+            bad = 0
+            scores = []
+            for p in files:
+                s = read_last_score(p)
+                if s is None:
+                    bad += 1
+                    continue
+                scores.append(s)
+            if bad:
+                low_runs.append((f"{algo}:bad", bad))
+            if not scores:
+                continue
             per_algo_score[algo] = mean(scores)
 
-        if missing:
+        if not per_algo_score:
             skipped += 1
-            missing_str = ", ".join(f"{a}={c}" for a, c in missing)
             print(
-                f"[WARN] Skip {problem} N={dim} K={type_instance}: "
-                f"missing runs (<{expected_runs}) ({missing_str})",
+                f"[WARN] Skip {problem} N={dim} K={type_instance}: no runs found",
                 file=sys.stderr,
             )
             continue
+        if low_runs:
+            low_str = ", ".join(f"{a}={c}" for a, c in low_runs)
+            print(
+                f"[WARN] {problem} N={dim} K={type_instance}: low runs (<{expected_runs}) ({low_str})",
+                file=sys.stderr,
+            )
 
         # Sort by score descending (maximization)
         ranking = sorted(per_algo_score.items(), key=lambda kv: kv[1], reverse=True)
