@@ -45,8 +45,6 @@ DEFAULT_GRIDS = [
         decay_min_factor=[0.001],
         bandwith_kernel=[None],
     )
-
-
 ]
 
 QUBO_PATTERN = re.compile(r"^puboi_evo_n_(?P<dim>\d+)_t_(?P<t>\d+)_i_(?P<i>\d+)\.json$")
