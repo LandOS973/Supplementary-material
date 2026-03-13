@@ -33,17 +33,19 @@ DEFAULTS = dict(
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
 DEFAULT_GRIDS = [
+    # Grid 3: focus epsilon/gamma (stabilité) avec L fixe
     dict(
         kernels=["fr"],
         advantages=["globalrankweighted"],
         M_values=[10],
-        lambda_values=[11],   
-        epsilon_svgd=[0.06], 
-        gamma=[0.005], 
+        lambda_values=[11],
+        epsilon_svgd=[0.04, 0.06, 0.08],
+        gamma=[0.003, 0.005, 0.007],
         decay_start_ratio=[0.08],
         decay_min_factor=[0.001],
         bandwith_kernel=[None],
     )
+
 ]
 
 QUBO_PATTERN = re.compile(r"^puboi_evo_n_(?P<dim>\d+)_t_(?P<t>\d+)_i_(?P<i>\d+)\.json$")
