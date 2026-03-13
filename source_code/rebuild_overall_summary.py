@@ -33,6 +33,7 @@ SUMMARY_HEADERS = [
     "win_rate_mean",
     "mean_hamming_norm",
     "mean_l1_norm",
+    "hasRawScore",
     "n_instances",
     "n_ranked",
 ]
@@ -86,6 +87,11 @@ def _infer_params_from_name(config_name: str) -> dict:
     return out
 
 
+def _has_raw_score(cfg_dir: Path) -> int:
+    # Any raw_scores.csv under the config directory counts.
+    return 1 if any(cfg_dir.rglob("raw_scores.csv")) else 0
+
+
 def main():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     out_root = os.path.join(repo_root, "results", "config")
@@ -100,6 +106,7 @@ def main():
         if not params.get("kernel") or params.get("M") is None or params.get("lambda_") is None:
             continue
         stats = _collect_config_stats(str(cfg_dir), config_name, params, repo_root)
+        stats["hasRawScore"] = _has_raw_score(cfg_dir)
         rows.append(stats)
 
     wb = Workbook()
