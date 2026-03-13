@@ -402,6 +402,7 @@ def _run_once(
         if isinstance(list_scores, (list, tuple, np.ndarray))
         else (list_scores.detach().cpu().numpy() if torch.is_tensor(list_scores) else np.asarray(list_scores))
     )
+    scores_array = np.ravel(scores_array)
     avg_score = float(np.mean(scores_array))
     median_score = float(np.percentile(scores_array, 50))
     std_score = float(np.std(scores_array))
@@ -442,7 +443,7 @@ def _run_once(
         p95=p95,
         p98=p98,
     )
-    return avg_score, history, run_meta
+    return avg_score, history, run_meta, scores_array
 
 
 def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None, config_name=None):
@@ -493,6 +494,15 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None, c
             )
 
     # best_summary.txt output removed: only metrics CSV is written.
+
+
+def _save_raw_scores_csv(out_dir, scores_array):
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    raw_path = os.path.join(out_dir, "raw_scores.csv")
+    with open(raw_path, "w") as f:
+        f.write("score\n")
+        for val in scores_array:
+            f.write(f"{float(val)}\n")
 
 
 def _parse_summary_config(summary_path: Path):
@@ -639,34 +649,39 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
             n_ranked=0,
         )
 
-    for child in sorted(config_path.iterdir()):
-        if not child.is_dir():
-            continue
-        match = INSTANCE_DIR_RE.match(child.name)
+    ranking_dir = Path(repo_root) / "additional_results" / "global_ranking"
+    expected_instances = []
+    for rank_file in ranking_dir.glob("*_ranks.csv"):
+        match = re.match(r"^(?P<problem>UBQP|NK)_N_(?P<dim>\d+)_K_(?P<t>\d+)_ranks\.csv$", rank_file.name)
         if not match:
             continue
-        problem = match.group("problem")
+        problem = "QUBO" if match.group("problem") == "UBQP" else "NK"
         dim = int(match.group("dim"))
         t = int(match.group("t"))
-        summary_path = child / "best_summary.txt"
-        if not summary_path.is_file():
-            legacy = child / f"{problem}_{params['kernel']}_best_summary.txt"
-            if legacy.is_file():
-                summary_path = legacy
-            else:
-                summary_path = None
-        metrics_path = child / "best_metrics.csv"
-        if not metrics_path.is_file():
+        expected_instances.append((problem, dim, t))
+    if expected_instances:
+        expected_instances = sorted(expected_instances, key=lambda item: (item[0], item[1], item[2]))
+    else:
+        for child in sorted(config_path.iterdir()):
+            if not child.is_dir():
+                continue
+            match = INSTANCE_DIR_RE.match(child.name)
+            if not match:
+                continue
+            expected_instances.append((match.group("problem"), int(match.group("dim")), int(match.group("t"))))
+        expected_instances = sorted(expected_instances, key=lambda item: (item[0], item[1], item[2]))
+
+    for problem, dim, t in expected_instances:
+        child = config_path / f"{problem}_dim{dim}_t{t}"
+        metrics_path = child / "best_metrics.csv" if child.is_dir() else None
+        if metrics_path is not None and not metrics_path.is_file():
             legacy_metrics = child / f"{problem}_{params['kernel']}_best_metrics.csv"
             if legacy_metrics.is_file():
                 metrics_path = legacy_metrics
             else:
                 metrics_path = None
         avg_score = None
-        if summary_path is not None and summary_path.is_file():
-            cfg = _parse_summary_config(summary_path)
-            avg_score = cfg.get("avg_score") if cfg else None
-        if avg_score is None and metrics_path is not None and metrics_path.is_file():
+        if metrics_path is not None and metrics_path.is_file():
             try:
                 with open(metrics_path, "r") as f:
                     lines = [line.strip() for line in f.readlines() if line.strip()]
@@ -687,12 +702,16 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
                         avg_score = val
             except Exception:
                 avg_score = None
+
+        if avg_score is not None:
+            try:
+                avg_score = float(avg_score)
+            except Exception:
+                avg_score = None
+
         if avg_score is None:
             continue
-        try:
-            avg_score = float(avg_score)
-        except Exception:
-            continue
+
         best_algo, best_score, my_rank, n_rank, my_pct, my_cmp, best_cmp = _rank_vs_global_ranking_excluding_ppo(
             repo_root, problem, dim, t, avg_score
         )
@@ -824,30 +843,7 @@ def main():
             config_dir = os.path.join(out_root, config_name)
             print(f"[CONFIG] {config_name}")
 
-            pending_instances = []
-            skipped_instances = []
-            for inst in instances:
-                inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-                inst_dir = os.path.join(config_dir, inst_name)
-                summary_path = os.path.join(inst_dir, "best_summary.txt")
-                legacy_summary = os.path.join(
-                    inst_dir, f"{inst['name']}_{params['kernel']}_best_summary.txt"
-                )
-                if os.path.isfile(summary_path) or os.path.isfile(legacy_summary):
-                    cfg_path = Path(summary_path) if os.path.isfile(summary_path) else Path(legacy_summary)
-                    cfg = _parse_summary_config(cfg_path)
-                    avg_score = cfg.get("avg_score") if cfg else None
-                    if avg_score is not None:
-                        skipped_instances.append(inst_name)
-                        continue
-                pending_instances.append(inst)
-
-            for inst_name in skipped_instances:
-                print(f"  -> skip {inst_name} (already done)")
-
-            if not pending_instances:
-                print("  -> already complete, skipping.")
-                continue
+            pending_instances = list(instances)
 
             # Separate QUBO and NK instances
             qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO']
@@ -864,7 +860,7 @@ def main():
                 success = False
                 while nb_restarts > 0 and not success:
                     try:
-                        avg_score, history, meta = _run_once(
+                        avg_score, history, meta, scores_array = _run_once(
                             problem_ctx,
                             params["kernel"],
                             params["advantage"],
@@ -905,6 +901,7 @@ def main():
                     ranking=ranking,
                     config_name=config_name,
                 )
+                _save_raw_scores_csv(inst_dir, scores_array)
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
 
@@ -919,7 +916,7 @@ def main():
                 success = False
                 while nb_restarts > 0 and not success:
                     try:
-                        avg_score, history, meta = _run_once(
+                        avg_score, history, meta, scores_array = _run_once(
                             problem_ctx,
                             params["kernel"],
                             params["advantage"],
@@ -960,6 +957,7 @@ def main():
                     ranking=ranking,
                     config_name=config_name,
                 )
+                _save_raw_scores_csv(inst_dir, scores_array)
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
 

@@ -82,6 +82,39 @@ def load_best_summary(experiment_dir: Path, problem_name: str) -> dict[str, str]
     return best_summary
 
 
+def load_last_metrics_score(csv_path: Path) -> float | None:
+    """Load the score from the last data row of a best_metrics.csv file."""
+    if not csv_path.exists():
+        return None
+
+    def _data_lines(handle):
+        for line in handle:
+            if not line.strip():
+                continue
+            if line.lstrip().startswith("#"):
+                continue
+            yield line
+
+    try:
+        with csv_path.open() as handle:
+            reader = csv.reader(_data_lines(handle))
+            header = next(reader, None)
+            if not header:
+                return None
+            last_row = None
+            for row in reader:
+                last_row = row
+            if not last_row:
+                return None
+            row_dict = dict(zip(header, last_row))
+            for key in ("mean", "avg_score", "score", "avg", "avg_fitness", "fitness", "best_fitness"):
+                if key in row_dict and row_dict[key]:
+                    return parse_float(row_dict[key])
+    except Exception:
+        return None
+    return None
+
+
 def load_svgd_score(config_dir: Path, problem_name: str, dim: int, type_instance: int) -> tuple[float | None, tuple[int, int] | None]:
     """Load SVGD score and optional rank from config directory.
 
@@ -91,55 +124,11 @@ def load_svgd_score(config_dir: Path, problem_name: str, dim: int, type_instance
     if not instance_dir.exists():
         return None, None
 
-    # Accept several possible summary filename patterns, including plain best_summary.txt
-    summary_files = sorted(instance_dir.glob("*best_summary*.txt"))
-    if not summary_files:
-        # fallback to best_metrics.csv if present
-        csv_path = instance_dir / "best_metrics.csv"
-        if csv_path.exists():
-            # try to read avg_score from csv first row
-            try:
-                with csv_path.open() as fh:
-                    reader = csv.DictReader(fh)
-                    for row in reader:
-                        for key in ("avg_score", "score", "avg", "avg_fitness", "fitness"):
-                            if key in row and row[key]:
-                                return parse_float(row[key]), None
-                        break
-            except Exception:
-                pass
+    csv_path = instance_dir / "best_metrics.csv"
+    csv_score = load_last_metrics_score(csv_path)
+    if csv_score is None:
         return None, None
-
-    best_score = None
-    maximize = is_maximization_problem(problem_name)
-    parsed_rank = None
-    for path in summary_files:
-        data = parse_summary_file(path)
-
-        # try several possible keys for average score
-        avg_score = None
-        for k in ("avg_score", "score", "avg", "avg_fitness", "fitness"):
-            if k in data:
-                avg_score = parse_float(data.get(k))
-                if avg_score is not None:
-                    break
-
-        if avg_score is None:
-            continue
-
-        if best_score is None:
-            best_score = avg_score
-        else:
-            if maximize and avg_score > best_score:
-                best_score = avg_score
-            elif not maximize and avg_score < best_score:
-                best_score = avg_score
-
-        # parse rank if present (e.g., ranking_my_rank: 3/504)
-        if parsed_rank is None:
-            parsed_rank = parse_rank_value(data.get("ranking_my_rank") or data.get("my_rank") or data.get("rank"))
-
-    return best_score, parsed_rank
+    return csv_score, None
 
 
 def ranking_path(problem_name: str, dim: int, type_instance: int) -> Path:
@@ -197,10 +186,9 @@ def format_rank(rank: int | None, total: int | None) -> str:
 def format_score(problem_name: str, value: float | None) -> str:
     if value is None:
         return "—"
+    value = abs(value)
     if problem_name.upper() in ("NK", "NK3"):
         return f"{value:.4f}"
-    if problem_name.upper() == "QUBO":
-        return f"{-abs(value):.1f}"
     return f"{value:.1f}"
 
 
