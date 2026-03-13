@@ -37,11 +37,11 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["fr"],
         advantages=["globalrankweighted"],
-        M_values=[10],
-        lambda_values=[10, 11, 12],
-        epsilon_svgd=[0.05, 0.06, 0.07],
-        gamma=[0.004, 0.005, 0.006],
-        decay_start_ratio=[0.06, 0.08, 0.10],
+        M_values=[1,2,3,4,5,6,7,8,9,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25],
+        lambda_values=[10],
+        epsilon_svgd=[0.05],
+        gamma=[0.004],
+        decay_start_ratio=[0.08],
         decay_min_factor=[0.001],
         bandwith_kernel=[None],
     )
