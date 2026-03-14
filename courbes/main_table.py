@@ -297,6 +297,181 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
     return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (1 + len(methods)) + ["Name", "Rank", "Score"]
 
 
+def _latex_escape(text: str) -> str:
+    return (
+        text.replace("\\", "\\textbackslash{}")
+        .replace("_", "\\_")
+        .replace("&", "\\&")
+        .replace("%", "\\%")
+        .replace("#", "\\#")
+    )
+
+
+def _parse_rank_value(rank_str: str | None) -> int | None:
+    if not rank_str or rank_str == "—":
+        return None
+    parsed = parse_rank_value(rank_str)
+    if not parsed:
+        return None
+    return parsed[0]
+
+
+def _parse_score_value(score_str: str | None) -> float | None:
+    if not score_str or score_str == "—":
+        return None
+    try:
+        return float(score_str)
+    except Exception:
+        return None
+
+
+def _best_wrap(text: str) -> str:
+    return f"\\best{{{text}}}"
+
+
+def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
+    if not rows:
+        print("[WARN] No rows to write.")
+        return
+
+    output_tex.parent.mkdir(parents=True, exist_ok=True)
+    with output_tex.open("w") as f:
+        f.write("% Table: Global rankings and average scores\n")
+        f.write("\\begin{table}[htbp]\n")
+        f.write("    \\centering\n")
+        f.write("    \\resizebox{\\textwidth}{!}{%\n")
+        f.write("    \\begin{tabular}{lll cc cc cc cc lcc}\n")
+        f.write("        \\toprule\n")
+        f.write("        \\multicolumn{3}{c}{\\textbf{Instances}} & \n")
+        f.write("        \\multicolumn{2}{c}{\\textbf{\\texttt{SVGD-EDA}}} & \n")
+        f.write("        \\multicolumn{2}{c}{\\textbf{\\texttt{PBIL}}} & \n")
+        f.write("        \\multicolumn{2}{c}{\\textbf{\\texttt{MIMIC}}} & \n")
+        f.write("        \\multicolumn{2}{c}{\\textbf{\\texttt{BOA}}} & \n")
+        f.write("        \\multicolumn{3}{c}{\\textbf{Best Method (Others)}} \\\\\n")
+        f.write("        \\cmidrule(r){1-3} \\cmidrule(lr){4-5} \\cmidrule(lr){6-7} ")
+        f.write("\\cmidrule(lr){8-9} \\cmidrule(lr){10-11} \\cmidrule(l){12-14}\n")
+        f.write("        Pb & $n$ & $t$ & Rank & Score & Rank & Score & Rank & Score & Rank & Score & Name & Rank & Score \\\\\n")
+        f.write("        \\midrule\n")
+
+        # Compute mean ranks and mean relative scores (score / best score per row)
+        rank_indices = [3, 5, 7, 9, 12]
+        score_indices = [4, 6, 8, 10, 13]
+        mean_ranks = [[] for _ in rank_indices]
+        mean_rel_scores = [[] for _ in score_indices]
+
+        for row in rows:
+            scores = [_parse_score_value(row[i]) for i in score_indices]
+            score_vals = [v for v in scores if v is not None]
+            best_score = max(score_vals) if score_vals else None
+            for idx, col in enumerate(rank_indices):
+                r = _parse_rank_value(row[col])
+                if r is not None:
+                    mean_ranks[idx].append(float(r))
+            if best_score:
+                for idx, s in enumerate(scores):
+                    if s is not None:
+                        mean_rel_scores[idx].append(s / best_score)
+
+        def fmt_mean(values, ndigits):
+            if not values:
+                return "—"
+            return f"{sum(values) / len(values):.{ndigits}f}"
+
+        mean_row = [
+            "Global SVGD-EDA",
+            "",
+            "",
+            fmt_mean(mean_ranks[0], 2),
+            fmt_mean(mean_rel_scores[0], 3),
+            fmt_mean(mean_ranks[1], 2),
+            fmt_mean(mean_rel_scores[1], 3),
+            fmt_mean(mean_ranks[2], 2),
+            fmt_mean(mean_rel_scores[2], 3),
+            fmt_mean(mean_ranks[3], 2),
+            fmt_mean(mean_rel_scores[3], 3),
+            "Global Others",
+            fmt_mean(mean_ranks[4], 2),
+            fmt_mean(mean_rel_scores[4], 3),
+        ]
+
+        for row in rows:
+            # row layout: Pb,n,t, SVGD rank, SVGD score, PBIL rank, PBIL score, MIMIC rank, MIMIC score,
+            #             BOA rank, BOA score, Best name, Best rank, Best score
+            rank_values = [v for v in (_parse_rank_value(row[i]) for i in rank_indices) if v is not None]
+            score_values = [v for v in (_parse_score_value(row[i]) for i in score_indices) if v is not None]
+            best_rank = min(rank_values) if rank_values else None
+            best_score = max(score_values) if score_values else None
+
+            cells: List[str] = []
+            for idx, val in enumerate(row):
+                if idx == 11:
+                    if val == "—":
+                        cell = "—"
+                    else:
+                        # Remove any wrapping whitespace inserted by textwrap.
+                        name_flat = re.sub(r"\s+", "", val)
+                        cell = f"\\mbox{{\\texttt{{{_latex_escape(name_flat)}}}}}"
+                else:
+                    cell = _latex_escape(val)
+
+                if idx in rank_indices and best_rank is not None:
+                    rank_val = _parse_rank_value(val)
+                    if rank_val == best_rank:
+                        cell = _best_wrap(cell)
+                if idx in score_indices and best_score is not None:
+                    score_val = _parse_score_value(val)
+                    if score_val is not None and abs(score_val - best_score) <= 1e-9:
+                        cell = _best_wrap(cell)
+                cells.append(cell)
+
+            f.write("        " + " & ".join(cells) + " \\\\\n")
+
+        # Mean row
+        f.write("        \\midrule\n")
+        row = mean_row
+        rank_values = [v for v in (_parse_rank_value(row[i]) for i in rank_indices) if v is not None]
+        score_values = [v for v in (_parse_score_value(row[i]) for i in score_indices) if v is not None]
+        best_rank = min(rank_values) if rank_values else None
+        best_score = max(score_values) if score_values else None
+        cells = []
+        for idx, val in enumerate(row):
+            if idx == 11:
+                if val == "—":
+                    cell = "—"
+                else:
+                    name_flat = re.sub(r"\s+", "", val)
+                    cell = f"\\mbox{{\\texttt{{{_latex_escape(name_flat)}}}}}"
+            else:
+                cell = _latex_escape(val)
+
+            if idx in rank_indices and best_rank is not None:
+                rank_val = _parse_rank_value(val)
+                if rank_val == best_rank:
+                    cell = _best_wrap(cell)
+            if idx in score_indices and best_score is not None:
+                score_val = _parse_score_value(val)
+                if score_val is not None and abs(score_val - best_score) <= 1e-9:
+                    cell = _best_wrap(cell)
+            cells.append(cell)
+        f.write("        " + " & ".join(cells) + " \\\\\n")
+
+        f.write("        \\bottomrule\n")
+        f.write("    \\end{tabular}%\n")
+        f.write("    }\n")
+        f.write(
+            "    \\caption{Global rankings and average scores obtained by \\texttt{SVGD-EDA} and the other EDAs "
+            "(\\texttt{PBIL}, \\texttt{MIMIC}, and \\texttt{BOA}) are reported. The last columns present the ranking "
+            "and average score of the best-performing method among the additional algorithms considered. "
+            "Rankings are computed by comparing the best score achieved after 50,000 objective function evaluations, "
+            "averaged across 100 independent runs. The last row reports global mean ranks and mean relative scores "
+            "(score normalized by the best score of each instance distribution) for \\texttt{SVGD-EDA} and for the "
+            "best competing method. Bold values highlight the best results among all competing methods.}\n"
+        )
+        f.write("    \\label{tab:results_portrait}\n")
+        f.write("\\end{table}\n")
+    print(f"Saved LaTeX table to {output_tex}")
+
+
 def write_csv(rows: List[List[str]], col_labels: List[str], output_csv: Path) -> None:
     if not rows:
         print("[WARN] No rows to write.")
@@ -498,7 +673,8 @@ def main() -> None:
     parser.add_argument("--pdf", type=Path, default=ROOT / "courbes" / "summary_table.pdf")
     parser.add_argument("--csv", type=Path, default=ROOT / "courbes" / "summary_table.csv")
     parser.add_argument("--xlsx", type=Path, default=ROOT / "courbes" / "summary_table.xlsx")
-    parser.add_argument("--format", choices=("all", "csv", "image", "excel"), default="all")
+    parser.add_argument("--tex", type=Path, default=ROOT / "courbes" / "summary_table.tex")
+    parser.add_argument("--format", choices=("all", "csv", "image", "excel", "tex"), default="all")
     args = parser.parse_args()
 
     # Ask for config
@@ -517,6 +693,8 @@ def main() -> None:
         plot_table(rows, col_labels, args.png, args.pdf)
     if args.format in ("all", "excel"):
         write_excel(rows, col_labels, args.xlsx)
+    if args.format in ("all", "tex"):
+        write_latex_table(rows, args.tex)
 
 
 if __name__ == "__main__":

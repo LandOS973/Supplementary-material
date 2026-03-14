@@ -28,14 +28,72 @@ from main_expe_overall import (
     _format_float,
     _is_cuda_oom,
     _load_instances,
-    _load_summary_rows,
     _parse_summary_config,
     _rank_vs_global_ranking_excluding_ppo,
     _round_float,
     _save_history_csv,
     _set_seeds,
-    _write_summary_sheet,
 )
+
+SUMMARY_COLUMNS = [
+    "config_name",
+    "kernel",
+    "advantage",
+    "M",
+    "lambda_",
+    "epsilon_svgd",
+    "gamma",
+    "decay_start_ratio",
+    "decay_min_factor",
+    "mean_rank",
+    "median_rank",
+    "std_percent",
+    "top1_count",
+    "top3_count",
+    "top5_count",
+    "top10_count",
+    "top_1_nk",
+    "top_1_qubo",
+    "win_rate_mean",
+    "mean_hamming_norm",
+    "mean_l1_norm",
+    "n_instances",
+    "n_ranked",
+]
+
+
+def _load_summary_rows(ws):
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return {}, []
+    header = [str(c).strip() if c is not None else "" for c in rows[0]]
+    if not any(header):
+        return {}, header
+    if "config_name" not in header:
+        return {}, header
+    idx = {name: i for i, name in enumerate(header) if name}
+    rows_dict = {}
+    for row in rows[1:]:
+        if not row:
+            continue
+        name = row[idx["config_name"]] if "config_name" in idx and idx["config_name"] < len(row) else None
+        if not name:
+            continue
+        entry = {}
+        for col in SUMMARY_COLUMNS:
+            if col in idx and idx[col] < len(row):
+                entry[col] = row[idx[col]]
+        rows_dict[str(name)] = entry
+    return rows_dict, header
+
+
+def _write_summary_sheet(ws, rows_dict):
+    ws.delete_rows(1, ws.max_row)
+    ws.append(SUMMARY_COLUMNS)
+    for name in sorted(rows_dict.keys()):
+        entry = dict(rows_dict[name] or {})
+        entry.setdefault("config_name", name)
+        ws.append([entry.get(col, "") for col in SUMMARY_COLUMNS])
 
 def _parse_config_name(config_name: str) -> dict:
     # Parse config_name like:
@@ -246,6 +304,31 @@ def _save_history_csv_no_repulsion(out_dir, problem_name, kernel_name, entry, ra
         return
 
 
+def _read_last_metric_score(metrics_path: Path):
+    """Return (score, metric_name) from last line. Prefer mean, then median, then best_fitness."""
+    try:
+        lines = [line.strip() for line in metrics_path.read_text().splitlines() if line.strip()]
+        if len(lines) < 2:
+            return None, None
+        header = [h.strip() for h in lines[0].split(",")]
+        last = [v.strip() for v in lines[-1].split(",")]
+
+        def pick(col: str):
+            if col in header:
+                idx = header.index(col)
+                if idx < len(last) and last[idx] != "":
+                    return last[idx]
+            return None
+
+        for col in ("mean", "median", "best_fitness"):
+            val = pick(col)
+            if val is not None:
+                return float(val), col
+        return None, None
+    except Exception:
+        return None, None
+
+
 def _collect_config_stats_no_repulsion(config_dir: str, config_name: str, params: dict, repo_root: str):
     rows = []
     config_path = Path(config_dir)
@@ -287,20 +370,11 @@ def _collect_config_stats_no_repulsion(config_dir: str, config_name: str, params
         t = int(match.group("t"))
 
         run_dir = child / "no_repulsion"
-        summary_path = run_dir / "best_summary.txt"
-        if not summary_path.is_file():
-            continue
         metrics_path = run_dir / "best_metrics.csv"
         if not metrics_path.is_file():
-            metrics_path = None
-
-        cfg = _parse_summary_config(summary_path)
-        avg_score = cfg.get("avg_score") if cfg else None
-        if avg_score is None:
             continue
-        try:
-            avg_score = float(avg_score)
-        except Exception:
+        avg_score, _metric_name = _read_last_metric_score(metrics_path)
+        if avg_score is None:
             continue
 
         best_algo, best_score, my_rank, n_rank, my_pct, _, _ = _rank_vs_global_ranking_excluding_ppo(
@@ -312,24 +386,23 @@ def _collect_config_stats_no_repulsion(config_dir: str, config_name: str, params
 
         hamming_norm = None
         l1_norm = None
-        if metrics_path is not None and metrics_path.is_file():
-            try:
-                with open(metrics_path, "r") as f:
-                    lines = [line.strip() for line in f.readlines() if line.strip()]
-                if len(lines) >= 2:
-                    header = lines[0].split(",")
-                    last = lines[-1].split(",")
-                    idx_ham = header.index("avg_hamming") if "avg_hamming" in header else None
-                    idx_l1 = header.index("avg_l1") if "avg_l1" in header else None
-                    if idx_ham is not None and idx_ham < len(last):
-                        hamming_val = float(last[idx_ham])
-                        hamming_norm = hamming_val / dim if hamming_val > 1 else hamming_val
-                    if idx_l1 is not None and idx_l1 < len(last):
-                        l1_val = float(last[idx_l1])
-                        l1_norm = l1_val / dim if l1_val > 1 else l1_val
-            except Exception:
-                hamming_norm = None
-                l1_norm = None
+        try:
+            with open(metrics_path, "r") as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+            if len(lines) >= 2:
+                header = lines[0].split(",")
+                last = lines[-1].split(",")
+                idx_ham = header.index("avg_hamming") if "avg_hamming" in header else None
+                idx_l1 = header.index("avg_l1") if "avg_l1" in header else None
+                if idx_ham is not None and idx_ham < len(last):
+                    hamming_val = float(last[idx_ham])
+                    hamming_norm = hamming_val / dim if hamming_val > 1 else hamming_val
+                if idx_l1 is not None and idx_l1 < len(last):
+                    l1_val = float(last[idx_l1])
+                    l1_norm = l1_val / dim if l1_val > 1 else l1_val
+        except Exception:
+            hamming_norm = None
+            l1_norm = None
 
         rows.append(
             dict(
@@ -542,19 +615,13 @@ def main():
 
     for inst in instances:
         inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-        normal_summary = Path(config_dir) / inst_name / "best_summary.txt"
-        no_repulsion_summary = Path(config_dir) / inst_name / "no_repulsion" / "best_summary.txt"
-        if not normal_summary.exists() or not no_repulsion_summary.exists():
+        normal_metrics = Path(config_dir) / inst_name / "best_metrics.csv"
+        no_repulsion_metrics = Path(config_dir) / inst_name / "no_repulsion" / "best_metrics.csv"
+        if not normal_metrics.exists() or not no_repulsion_metrics.exists():
             continue
-
-        normal_cfg = _parse_summary_config(normal_summary)
-        nr_cfg = _parse_summary_config(no_repulsion_summary)
-        if not normal_cfg or not nr_cfg:
-            continue
-        try:
-            normal_score = float(normal_cfg.get("avg_score"))
-            nr_score = float(nr_cfg.get("avg_score"))
-        except Exception:
+        normal_score, _ = _read_last_metric_score(normal_metrics)
+        nr_score, _ = _read_last_metric_score(no_repulsion_metrics)
+        if normal_score is None or nr_score is None:
             continue
 
         def _normalize_score_sign_local(problem_name: str, values):
