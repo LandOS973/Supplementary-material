@@ -1,10 +1,10 @@
-"""t-SNE visualization for MultiAgentUnivariateEDA agents using Hamming distances.
+"""t-SNE visualization for SVGD_EDA agents using Hamming distances.
 
 Usage example (inside your training/analysis code):
 
     from environment.tsne_agents import plot_agents_tsne
 
-    # model is an instance of MultiAgentUnivariateEDA after training/update
+    # model is an instance of SVGD_EDA after training/update
     fig, ax, embedding, distances = plot_agents_tsne(model, output_path="agents_tsne.png")
 """
 
@@ -16,7 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from environment.metrics import MetricsCalculator
-from eda_strategies.MultiAgentUnivariate.MultiAgentUnivariateEDA import MultiAgentUnivariateEDA
+from eda_strategies.MultiAgentUnivariate.SVGD_EDA import SVGD_EDA
 
 try:
     from sklearn.manifold import TSNE
@@ -27,7 +27,7 @@ except Exception as exc:  # pragma: no cover - import-time guard
 
 
 def _compute_hamming_distance_matrix(
-    model: MultiAgentUnivariateEDA,
+    model: SVGD_EDA,
     metrics: Optional[MetricsCalculator] = None,
 ) -> Tuple[np.ndarray, float]:
     if metrics is None:
@@ -76,7 +76,7 @@ def _tsne_from_distance(
 
 
 def plot_agents_tsne(
-    model: MultiAgentUnivariateEDA,
+    model: SVGD_EDA,
     output_path: Optional[str] = None,
     perplexity: Optional[float] = None,
     random_state: int = 0,

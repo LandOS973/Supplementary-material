@@ -4,7 +4,7 @@ import torch
 from eda_strategies.UMDA import UMDA
 from eda_strategies.PBIL import PBIL
 from eda_strategies.PPO_EDA import PPO_EDA
-from eda_strategies.MultiAgentUnivariate.MultiAgentUnivariateEDA import MultiAgentUnivariateEDA 
+from eda_strategies.MultiAgentUnivariate.SVGD_EDA import SVGD_EDA 
 
 
 
@@ -36,7 +36,7 @@ class FactoryStrategyEA:
             case "PBIL":
                 return PBIL(N, lambda_, device)
             case "PPO-EDA":
-                return MultiAgentUnivariateEDA(
+                return SVGD_EDA(
                     N,
                     lambda_,
                     dim_variables,

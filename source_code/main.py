@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple runner for PPO-EDA (MultiAgentUnivariateEDA) using Hydra config.
+Simple runner for PPO-EDA (SVGD_EDA) using Hydra config.
 No interactive prompts, just load config and run once.
 """
 

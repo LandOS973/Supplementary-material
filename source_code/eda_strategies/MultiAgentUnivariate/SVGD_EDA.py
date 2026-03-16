@@ -14,7 +14,7 @@ from eda_strategies.MultiAgentUnivariate.SVGD.kernels.no_interact import NoInter
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
 
-class MultiAgentUnivariateEDA(Abstract_EDA, nn.Module):
+class SVGD_EDA(Abstract_EDA, nn.Module):
     """
     Multi-agent collaboratif :
     - Budget λ défini par agent (M * λ solutions au total)
