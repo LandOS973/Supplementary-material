@@ -59,8 +59,6 @@ def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, 
 
             matrix_contrib = torch.tensor(matrix_contrib, dtype=torch.float32).unsqueeze(0)
 
-            matrix_contrib = (matrix_contrib).repeat([size_pop, 1, 1])
-
             for i in range(nb_restarts):
                 list_matrix_locus.append(matrix_locus)
                 list_matrix_contrib.append(matrix_contrib)
@@ -90,8 +88,6 @@ def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, 
             matrix_contrib = np.random.random((N, D ** (K + 1)))
 
             matrix_contrib = torch.tensor(matrix_contrib, dtype=torch.float32).unsqueeze(0)
-
-            matrix_contrib = (matrix_contrib).repeat([size_pop,1,1])
 
             for i in range(nb_restarts):
                 list_matrix_locus.append(matrix_locus)
@@ -218,7 +214,12 @@ def get_Score_trajectoriesNK_cuda(
         tensor_solution_locus = torch.gather(input=tensor_solution_rep, dim=3, index=tensor_matrix_locus)
         tensor_solution_locus = tensor_solution_locus.float()
         index_th = torch.sum(tensor_solution_locus*vectorIndex, dim=3).type(torch.int64).unsqueeze(3)
-        tensor_score = torch.sum(tensor_matrix_contrib.gather(3, index_th), dim = 2).squeeze(2)
+        contrib = tensor_matrix_contrib
+        if contrib.dim() == 3:
+            contrib = contrib.unsqueeze(1)
+        if contrib.size(1) != index_th.size(1):
+            contrib = contrib.expand(-1, index_th.size(1), -1, -1)
+        tensor_score = torch.sum(contrib.gather(3, index_th), dim=2).squeeze(2)
 
 
         #print("tensor score")

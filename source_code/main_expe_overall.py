@@ -37,7 +37,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["fr"],
         advantages=["globalrankweighted"],
-        M_values=[1],
+        M_values=[10],
         lambda_values=[10],
         epsilon_svgd=[0.05],
         gamma=[0.004],
@@ -49,7 +49,8 @@ DEFAULT_GRIDS = [
 
 QUBO_PATTERN = re.compile(r"^puboi_evo_n_(?P<dim>\d+)_t_(?P<t>\d+)_i_(?P<i>\d+)\.json$")
 NK_PATTERN = re.compile(r"^nk_(?P<dim>\d+)_(?P<t>\d+)_?(?P<i>\d+)\.txt$")
-INSTANCE_DIR_RE = re.compile(r"^(?P<problem>QUBO|NK)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
+NK3_PATTERN = re.compile(r"^nk_(?P<dim>\d+)_(?P<t>\d+)_(?P<D>\d+)_(?P<i>\d+)\.txt$")
+INSTANCE_DIR_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
 
 
 def _set_seeds(seed: int) -> None:
@@ -261,6 +262,40 @@ def _discover_nk_instances(instances_root: Path, nb_instances: int):
     return instances
 
 
+def _discover_nk3_instances(instances_root: Path, nb_instances: int):
+    instances = []
+    if not instances_root.is_dir():
+        return instances
+    for dim_dir in sorted(instances_root.iterdir()):
+        if not dim_dir.is_dir() or not dim_dir.name.isdigit():
+            continue
+        dim = int(dim_dir.name)
+        for t_dir in sorted(dim_dir.iterdir()):
+            if not t_dir.is_dir() or not t_dir.name.isdigit():
+                continue
+            t = int(t_dir.name)
+            indices = []
+            for fname in os.listdir(t_dir):
+                m = NK3_PATTERN.match(fname)
+                if not m:
+                    continue
+                if int(m.group("D")) != 3:
+                    continue
+                indices.append(int(m.group("i")))
+            if not indices:
+                continue
+            max_contig = 0
+            for i in sorted(set(indices)):
+                if i == max_contig:
+                    max_contig += 1
+                else:
+                    break
+            if max_contig < nb_instances:
+                continue
+            instances.append(dict(name="NK3", dim=dim, type_instance=t))
+    return instances
+
+
 def _load_instances(problem_cfg, device):
     script_dir = os.path.abspath(os.path.dirname(__file__))
     name = problem_cfg["name"]
@@ -290,15 +325,16 @@ def _load_instances(problem_cfg, device):
             tensor_matrix_contrib=None,
         )
 
-    if name == "NK":
-        D = 2
+    if name in ("NK", "NK3"):
+        D = 2 if name == "NK" else 3
         vectorIndex = np.zeros((type_instance + 1))
         for vi in range(type_instance + 1):
             vectorIndex[vi] = D ** (type_instance - vi)
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
-        base_path = os.path.join(script_dir, "instances", "nk", str(dim), str(type_instance)) + os.sep
+        subdir = "nk" if name == "NK" else "nk3"
+        base_path = os.path.join(script_dir, "instances", subdir, str(dim), str(type_instance)) + os.sep
         return dict(
-            type_problem="NK",
+            type_problem=name,
             dim=dim,
             type_instance=type_instance,
             tensor_Q_test=None,
@@ -352,6 +388,7 @@ def _run_once(
         advantage_cfg=advantage,
         kernel_config=kernel_config,
         no_interact=False,
+        is_nk3=(problem_ctx["type_problem"] == "NK3"),
     ).to(device)
 
     if problem_ctx["type_problem"] == "QUBO":
@@ -546,6 +583,8 @@ def _rank_vs_global_ranking_excluding_ppo(
         filename = f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
     elif problem == "NK":
         filename = f"NK_N_{dim}_K_{type_instance}_ranks.csv"
+    elif problem == "NK3":
+        filename = f"NK3_N_{dim}_K_{type_instance}_ranks.csv"
     else:
         return None, None, None, 0, None, None, None
 
@@ -620,6 +659,25 @@ def _is_cuda_oom(exc: Exception) -> bool:
     return "cuda out of memory" in msg or "outofmemoryerror" in msg
 
 
+def _metrics_ready(metrics_path: Path) -> bool:
+    try:
+        if not metrics_path.is_file():
+            return False
+        lines = [line for line in metrics_path.read_text().splitlines() if line.strip()]
+        return len(lines) >= 2
+    except Exception:
+        return False
+
+
+def _instance_already_done(inst_dir: str, problem: str, kernel_name: str) -> bool:
+    inst_path = Path(inst_dir)
+    metrics_path = inst_path / "best_metrics.csv"
+    if _metrics_ready(metrics_path):
+        return True
+    legacy_path = inst_path / f"{problem}_{kernel_name}_best_metrics.csv"
+    return _metrics_ready(legacy_path)
+
+
 def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_root: str):
     rows = []
     config_path = Path(config_dir)
@@ -642,6 +700,7 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
             top5_count=0,
             top10_count=0,
             top_1_nk=0,
+            top_1_nk3=0,
             top_1_qubo=0,
             win_rate_mean=None,
             mean_hamming_norm=None,
@@ -653,10 +712,15 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
     ranking_dir = Path(repo_root) / "additional_results" / "global_ranking"
     expected_instances = []
     for rank_file in ranking_dir.glob("*_ranks.csv"):
-        match = re.match(r"^(?P<problem>UBQP|NK)_N_(?P<dim>\d+)_K_(?P<t>\d+)_ranks\.csv$", rank_file.name)
+        match = re.match(r"^(?P<problem>UBQP|NK|NK3)_N_(?P<dim>\d+)_K_(?P<t>\d+)_ranks\.csv$", rank_file.name)
         if not match:
             continue
-        problem = "QUBO" if match.group("problem") == "UBQP" else "NK"
+        if match.group("problem") == "UBQP":
+            problem = "QUBO"
+        elif match.group("problem") == "NK3":
+            problem = "NK3"
+        else:
+            problem = "NK"
         dim = int(match.group("dim"))
         t = int(match.group("t"))
         expected_instances.append((problem, dim, t))
@@ -776,6 +840,7 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
     top5_count = sum(1 for r in rows if r.get("top5_count"))
     top10_count = sum(1 for r in rows if r.get("top10_count"))
     top_1_nk = sum(1 for r in rows if r.get("top1_count") and r.get("problem") == "NK")
+    top_1_nk3 = sum(1 for r in rows if r.get("top1_count") and r.get("problem") == "NK3")
     top_1_qubo = sum(1 for r in rows if r.get("top1_count") and r.get("problem") == "QUBO")
     win_rate_mean = float(np.mean(win_rates)) if win_rates else None
     mean_hamming_norm = float(np.mean(hamming_vals)) if hamming_vals else None
@@ -799,6 +864,7 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
         top5_count=top5_count,
         top10_count=top10_count,
         top_1_nk=top_1_nk,
+        top_1_nk3=top_1_nk3,
         top_1_qubo=top_1_qubo,
         win_rate_mean=win_rate_mean,
         mean_hamming_norm=mean_hamming_norm,
@@ -832,9 +898,10 @@ def main():
     instances_root = Path(repo_root) / "source_code" / "instances"
     qubo_instances = _discover_qubo_instances(instances_root / "QUBO", DEFAULTS["nb_instances_test"])
     nk_instances = _discover_nk_instances(instances_root / "nk", DEFAULTS["nb_instances_test"])
-    instances = qubo_instances + nk_instances
+    nk3_instances = _discover_nk3_instances(instances_root / "nk3", DEFAULTS["nb_instances_test"])
+    instances = qubo_instances + nk_instances + nk3_instances
     if not instances:
-        raise SystemExit("Aucune instance QUBO/NK compatible avec nb_instances_test.")
+        raise SystemExit("Aucune instance QUBO/NK/NK3 compatible avec nb_instances_test.")
 
     _set_seeds(DEFAULTS["seed"])
 
@@ -849,11 +916,15 @@ def main():
             # Separate QUBO and NK instances
             qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO']
             nk_pending = [inst for inst in pending_instances if inst['name'] == 'NK']
+            nk3_pending = [inst for inst in pending_instances if inst['name'] == 'NK3']
             
             # Run QUBO instances first
             for inst in qubo_pending:
                 inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
                 inst_dir = os.path.join(config_dir, inst_name)
+                if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
+                    print(f"  -> skip {inst_name} (already done)")
+                    continue
                 problem_ctx = _load_instances(inst, DEFAULTS["device"])
                 print(f"  -> run {inst_name}")
                 t0 = time.time()
@@ -910,6 +981,68 @@ def main():
             for inst in nk_pending:
                 inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
                 inst_dir = os.path.join(config_dir, inst_name)
+                if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
+                    print(f"  -> skip {inst_name} (already done)")
+                    continue
+                problem_ctx = _load_instances(inst, DEFAULTS["device"])
+                print(f"  -> run {inst_name}")
+                t0 = time.time()
+                nb_restarts = DEFAULTS["nb_restarts"]
+                success = False
+                while nb_restarts > 0 and not success:
+                    try:
+                        avg_score, history, meta, scores_array = _run_once(
+                            problem_ctx,
+                            params["kernel"],
+                            params["advantage"],
+                            params["M"],
+                            params["lambda_"],
+                            params["epsilon_svgd"],
+                            params["gamma"],
+                            params["decay_start_ratio"],
+                            params["decay_min_factor"],
+                            params.get("bandwith_kernel"),
+                            device=DEFAULTS["device"],
+                            nb_restarts=nb_restarts,
+                        )
+                        success = True
+                    except (torch.OutOfMemoryError, RuntimeError) as exc:
+                        if not _is_cuda_oom(exc):
+                            raise
+                        nb_restarts -= 1
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        if nb_restarts > 0:
+                            print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
+                        else:
+                            print("     [OOM] nb_restarts=0, skip instance.")
+
+                if not success:
+                    continue
+                dt = time.time() - t0
+                print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+                ranking = _rank_vs_global_ranking_excluding_ppo(
+                    repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
+                )
+                _save_history_csv(
+                    inst_dir,
+                    inst["name"],
+                    params["kernel"],
+                    {"history": history, "meta": meta},
+                    ranking=ranking,
+                    config_name=config_name,
+                )
+                _save_raw_scores_csv(inst_dir, scores_array)
+                if ranking and ranking[2] == 1:
+                    print("     -> TOP 1")
+
+            # Run NK3 instances
+            for inst in nk3_pending:
+                inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+                inst_dir = os.path.join(config_dir, inst_name)
+                if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
+                    print(f"  -> skip {inst_name} (already done)")
+                    continue
                 problem_ctx = _load_instances(inst, DEFAULTS["device"])
                 print(f"  -> run {inst_name}")
                 t0 = time.time()
@@ -965,7 +1098,10 @@ def main():
             # After each config, print stats
             stats = _collect_config_stats(config_dir, config_name, params, repo_root)
             print(f"\n  *** SUMMARY FOR CONFIG: {config_name} ***")
-            print(f"  NOMBRE DE TOP 1 : {stats['top1_count']} (NK: {stats['top_1_nk']}, QUBO: {stats['top_1_qubo']})")
+            print(
+                f"  NOMBRE DE TOP 1 : {stats['top1_count']} "
+                f"(NK: {stats['top_1_nk']}, NK3: {stats['top_1_nk3']}, QUBO: {stats['top_1_qubo']})"
+            )
             print(f"  NOMBRE DE TOP 3 : {stats['top3_count']}")
             print(f"  NOMBRE DE TOP 5 : {stats['top5_count']}")
             print(f"  NOMBRE DE TOP 10 : {stats['top10_count']}")

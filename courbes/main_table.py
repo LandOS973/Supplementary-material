@@ -8,7 +8,7 @@ import csv
 import re
 import textwrap
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
 
@@ -154,11 +154,11 @@ def load_ranking(path: Path) -> List[tuple[str, float]]:
     return rows
 
 
-def discover_instances() -> List[tuple[str, int, int, Path]]:
+def discover_instances() -> List[tuple[str, int, int, Optional[Path]]]:
     exp_root = ROOT / "results" / "experiments"
     if not exp_root.exists():
         return []
-    instances: List[tuple[str, int, int, Path]] = []
+    instances: List[tuple[str, int, int, Optional[Path]]] = []
     seen: set[tuple[str, int, int]] = set()
     for entry in exp_root.iterdir():
         if not entry.is_dir():
@@ -175,6 +175,25 @@ def discover_instances() -> List[tuple[str, int, int, Path]]:
         seen.add(key)
         instances.append((name, dim, type_instance, entry))
     return sorted(instances, key=lambda item: (item[0], item[1], item[2]))
+
+
+def discover_instances_from_rankings() -> List[tuple[str, int, int, Optional[Path]]]:
+    ranking_dir = ROOT / "additional_results" / "global_ranking"
+    if not ranking_dir.exists():
+        return []
+    instances: List[tuple[str, int, int, Optional[Path]]] = []
+    for rank_file in ranking_dir.glob("*_ranks.csv"):
+        match = re.match(r"^(?P<problem>UBQP|NK|NK3)_N_(?P<dim>\d+)_K_(?P<t>\d+)_ranks\.csv$", rank_file.name)
+        if not match:
+            continue
+        if match.group("problem") == "UBQP":
+            problem = "QUBO"
+        else:
+            problem = match.group("problem")
+        dim = int(match.group("dim"))
+        type_instance = int(match.group("t"))
+        instances.append((problem, dim, type_instance, None))
+    return instances
 
 
 def format_rank(rank: int | None, total: int | None) -> str:
@@ -217,6 +236,15 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
             key = (name, dim, type_instance)
             if key not in {(i[0], i[1], i[2]) for i in instances}:
                 instances.append((name, dim, type_instance, entry))
+
+    # Also gather instances present in global rankings (NK3, NK, QUBO)
+    ranking_instances = discover_instances_from_rankings()
+    existing_keys = {(i[0], i[1], i[2]) for i in instances}
+    for name, dim, type_instance, _ in ranking_instances:
+        key = (name, dim, type_instance)
+        if key not in existing_keys:
+            instances.append((name, dim, type_instance, None))
+            existing_keys.add(key)
 
     # sort instances for deterministic output
     instances = sorted(instances, key=lambda item: (item[0], item[1], item[2]))
@@ -359,6 +387,22 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
         mean_ranks = [[] for _ in rank_indices]
         mean_rel_scores = [[] for _ in score_indices]
 
+        # Find the most frequent "best method (others)" across rows.
+        best_method_counts: dict[str, int] = {}
+        for row in rows:
+            if len(row) <= 11:
+                continue
+            name_raw = row[11]
+            if not name_raw or name_raw == "—":
+                continue
+            name_flat = re.sub(r"\s+", "", name_raw)
+            if not name_flat:
+                continue
+            best_method_counts[name_flat] = best_method_counts.get(name_flat, 0) + 1
+        most_common_best = None
+        if best_method_counts:
+            most_common_best = max(best_method_counts.items(), key=lambda item: item[1])[0]
+
         for row in rows:
             scores = [_parse_score_value(row[i]) for i in score_indices]
             score_vals = [v for v in scores if v is not None]
@@ -377,8 +421,48 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                 return "—"
             return f"{sum(values) / len(values):.{ndigits}f}"
 
+        # Mean rank/score for the most frequent "best method (others)"
+        # computed across ALL instances (not only those where it was the best).
+        best_method_ranks = []
+        best_method_rel_scores = []
+        if most_common_best:
+            for row in rows:
+                if len(row) <= 13:
+                    continue
+                problem_name = row[0]
+                try:
+                    dim = int(row[1])
+                    type_instance = int(row[2])
+                except Exception:
+                    continue
+
+                ranking_file = ranking_path(problem_name, dim, type_instance)
+                ranking = load_ranking(ranking_file)
+                ranking = [
+                    (name, score)
+                    for name, score in ranking
+                    if name not in {"PPO-EDA", "Tabu", "TABU"}
+                ]
+
+                combined = list(ranking)
+                svgd_score = _parse_score_value(row[4])
+                if svgd_score is not None:
+                    combined.append(("SVGD", svgd_score))
+                combined.sort(key=lambda item: item[1], reverse=True)
+                if not combined:
+                    continue
+
+                best_score = max(score for _, score in combined)
+                rank_map = {name: (idx + 1, score) for idx, (name, score) in enumerate(combined)}
+                if most_common_best not in rank_map:
+                    continue
+                rank_val, score_val = rank_map[most_common_best]
+                best_method_ranks.append(float(rank_val))
+                if best_score:
+                    best_method_rel_scores.append(score_val / best_score)
+
         mean_row = [
-            "Global Others",
+            "SVGD EDA",
             "",
             "",
             fmt_mean(mean_ranks[0], 2),
@@ -389,9 +473,9 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
             fmt_mean(mean_rel_scores[2], 3),
             fmt_mean(mean_ranks[3], 2),
             fmt_mean(mean_rel_scores[3], 3),
-            "",
-            fmt_mean(mean_ranks[4], 2),
-            fmt_mean(mean_rel_scores[4], 3),
+            most_common_best or "—",
+            fmt_mean(best_method_ranks, 2),
+            fmt_mean(best_method_rel_scores, 3),
         ]
 
         for row in rows:
