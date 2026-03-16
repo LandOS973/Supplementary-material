@@ -549,7 +549,8 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
             "Rankings are computed by comparing the best score achieved after 50,000 objective function evaluations, "
             "averaged across 100 independent runs. The last row reports global mean ranks and mean relative scores "
             "(score normalized by the best score of each instance distribution) for \\texttt{SVGD-EDA} and for the "
-            "best competing method. Bold values highlight the best results among all competing methods.}\n"
+            "most frequently top-ranked method among the other algorithms, with that method's rank and relative "
+            "score averaged across all instances. Bold values highlight the best results among all competing methods.}\n"
         )
         f.write("    \\label{tab:results_portrait}\n")
         f.write("\\end{table}\n")
