@@ -42,6 +42,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         decay_enabled=False,
         advantage_cfg=None,
         kernel_config=None,
+        is_nk3=False,
     ):
         self.M = M
         self.N = N
@@ -60,6 +61,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.no_interact = bool(no_interact)
         self.no_repulsion = bool(no_repulsion)
         self.dim_variables = dim_variables
+        self.is_nk3 = bool(is_nk3)
         self.svgd_gamma = float(svgd_gamma)
         self.decay_start_ratio = float(decay_start_ratio)
         self.decay_min_factor = float(decay_min_factor)
@@ -84,11 +86,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
         self.kernel_params = {}
         self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
-        self.natural_grad = bool(self.kernel_config.get("natural_grad", False))
-        self._natural_grad_notice = False
-        if self.natural_grad:
-            # Natural gradient disables SVGD decay regardless of config.
-            self.decay_enabled = False
 
         # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
@@ -116,22 +113,26 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         """
         if self.theta is None:
             raise RuntimeError("reset_learned_parameters doit être appelé avant forward().")
+        if self.is_nk3:
+            probs = torch.softmax(self.theta, dim=-1)
+            probs = torch.nan_to_num(probs, nan=1.0 / 3.0)
+            probs = torch.clamp(probs, self.prob_eps_clamp, 1.0 - self.prob_eps_clamp)
+            probs = probs / probs.sum(dim=-1, keepdim=True)
+            self.probs = probs
+            return probs  # (B, M, N, D)
         probs = torch.sigmoid(self.theta)
         self.probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), self.prob_eps_clamp, 1 - self.prob_eps_clamp)
         return probs  # (B, M, N)
 
-    def kl_divergence(self, p, q):
-        eps = self.prob_eps_clamp
-        p = torch.clamp(torch.nan_to_num(p, nan=0.5), eps, 1 - eps)
-        q = torch.clamp(torch.nan_to_num(q, nan=0.5), eps, 1 - eps)
-        return p * (torch.log(p) - torch.log(q)) + (1 - p) * (torch.log(1 - p) - torch.log(1 - q))
-
     def reset_learned_parameters(self, nb_instances):
         self.nb_instances = nb_instances
 
-        # theta : (B, M, N)
-        init_sigma =0.1
-        init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
+        # theta : (B, M, N) or (B, M, N, D)
+        init_sigma = 0.1
+        if self.is_nk3:
+            init_theta = torch.randn((nb_instances, self.M, self.N, 3), device=self.device) * init_sigma
+        else:
+            init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
 
         # init_theta = torch.zeros((nb_instances, self.M, self.N), device=self.device)
         self.theta = nn.Parameter(init_theta)
@@ -161,7 +162,16 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         λa = self.lambda_per_agent
         λ_total = self.total_lambda
 
-        self.probs = self.forward()  # (B, M, N)
+        self.probs = self.forward()
+
+        if self.is_nk3:
+            probs = self.probs  # (B, M, N, D)
+            flat = probs.reshape(-1, 3)  # (B*M*N, D)
+            # TODO utiliser categorical
+            samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)  # (B*M*N, λa)
+            samples_agents = samples_flat.view(B, M, N, λa).permute(0, 1, 3, 2)  # (B, M, λa, N)
+            samples = samples_agents.reshape(B, λ_total, N).unsqueeze(-1).float()
+            return samples
 
         # u : (B, M, λa, N)
         u = torch.rand((B, M, λa, N), device=self.device)
@@ -194,22 +204,31 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         BM = B * M
         indivduals = solutionList.view(BM, λa, N)
         fitness = scoreList.view(BM, λa)
-        theta = self.theta.view(BM, N)
         baseline = self.baseline.view(BM)
 
         if self.baseline.numel() == 0:
             baseline = torch.zeros(BM, device=self.device)
 
-        all_Pi_Theta = self.probs.view(BM, N)  # (BM, N)
-        all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
+        if self.is_nk3:
+            if self.probs is None:
+                self.forward()
+            theta = self.theta.view(BM, N, 3)
+            all_Pi_Theta = self.probs.view(BM, N, 3)  # (BM, N, D)
+            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)  # (BM, λa, N, D)
+            log_probs = torch.log(all_Pi_Theta_expanded + 1e-10)
+            indices = indivduals.long().unsqueeze(-1)  # (BM, λa, N, 1)
+            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)  # (BM, λa)
+        else:
+            theta = self.theta.view(BM, N)
+            all_Pi_Theta = self.probs.view(BM, N)  # (BM, N)
+            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
 
-        Pi_selected = torch.where(
-            indivduals == 1.0,
-            all_Pi_Theta_expanded,
-            1.0 - all_Pi_Theta_expanded,
-        )  # (BM, λa, N)
-
-        log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
+            Pi_selected = torch.where(
+                indivduals == 1.0,
+                all_Pi_Theta_expanded,
+                1.0 - all_Pi_Theta_expanded,
+            )  # (BM, λa, N)
+            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
             baseline=baseline,
@@ -266,21 +285,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 self.kernel_metric_history.append(kernel_stats)
 
         with torch.no_grad():
-            if self.natural_grad:
-                print("Applying natural gradient scaling to SVGD update.")
-                probs = self.probs if self.probs is not None else self.forward()
-                coeff_inverse_fisher = 1.0 / (probs * (1.0 - probs))
-                self.theta += self.epsilon_svgd * phi * coeff_inverse_fisher
-            else:
-                self.theta += self.epsilon_svgd * phi
+            self.theta += self.epsilon_svgd * phi
             self.probs = None
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
-        if self.natural_grad:
-            if not self._natural_grad_notice:
-                print("natural grad activated, decay desactivated")
-                self._natural_grad_notice = True
-            return True
         if not self.decay_enabled or self.no_interact or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
             return
         progress = (current_iter + 1) / float(total_iters)

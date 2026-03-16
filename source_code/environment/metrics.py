@@ -74,11 +74,20 @@ class MetricsCalculator:
 
         eps = 1e-8
         with torch.no_grad():
-            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)  # (M,B,N)
-            p = torch.sigmoid(theta)
-            p = torch.nan_to_num(p, nan=0.5, posinf=1.0 - eps, neginf=eps)
-            p = torch.clamp(p, eps, 1 - eps)
-            ent = -(p * torch.log(p) + (1 - p) * torch.log1p(-p))  # (M,B,N)
+            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)
+            if theta.dim() == 4:
+                # Categorical entropy: -sum_c p log p per variable
+                p = torch.softmax(theta, dim=-1)
+                p = torch.nan_to_num(p, nan=1.0 / float(p.size(-1)))
+                p = torch.clamp(p, eps, 1.0 - eps)
+                p = p / p.sum(dim=-1, keepdim=True)
+                ent = -(p * torch.log(p)).sum(dim=-1)  # (M,B,N)
+            else:
+                # Bernoulli entropy
+                p = torch.sigmoid(theta)
+                p = torch.nan_to_num(p, nan=0.5, posinf=1.0 - eps, neginf=eps)
+                p = torch.clamp(p, eps, 1 - eps)
+                ent = -(p * torch.log(p) + (1 - p) * torch.log1p(-p))  # (M,B,N)
             if torch.isnan(ent).any() or torch.isinf(ent).any():
                 ent = torch.nan_to_num(ent, nan=0.0, posinf=0.0, neginf=0.0)
             ent = ent.sum(dim=-1).mean(dim=-1)  # (M,)

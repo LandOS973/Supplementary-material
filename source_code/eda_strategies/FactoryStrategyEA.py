@@ -29,6 +29,7 @@ class FactoryStrategyEA:
         kernel_config=None,
         no_interact=False,
         no_repulsion=False,
+        is_nk3=False,
     ):
         match typeStrategy:
             case "UMDA":
@@ -53,6 +54,7 @@ class FactoryStrategyEA:
                     kernel_config=kernel_config,
                     no_interact=no_interact,
                     no_repulsion=no_repulsion,
+                    is_nk3=is_nk3,
                 )
             case _:
                 raise ValueError(f"Unknown strategy type: {typeStrategy}")

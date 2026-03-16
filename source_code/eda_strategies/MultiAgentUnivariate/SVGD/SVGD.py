@@ -21,7 +21,10 @@ class SVGD:
         Standard SVGD update:
             φ_i = (1/M) * [ Σ_j k(θ_j, θ_i) * score_j  +  Σ_j ∇_θ_j k(θ_j, θ_i) ]
         """
-        B, M, N = thetas.shape
+        if thetas.dim() == 4:
+            B, M, N, _ = thetas.shape
+        else:
+            B, M, N = thetas.shape
         if M == 1:
             return score / self.gamma
         K, grad_term = self.kernel(thetas, probs=probs)  # (B, M, M), (B, M, N)
@@ -29,7 +32,12 @@ class SVGD:
             K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
         if torch.isnan(grad_term).any() or torch.isinf(grad_term).any():
             grad_term = torch.nan_to_num(grad_term, nan=0.0, posinf=0.0, neginf=0.0)
-        score_term = torch.matmul(K, score)
+        if score.dim() == 4:
+            # TODO regarder ça
+            # Expand K to align with (B, M, N, D) and sum over source agents.
+            score_term = (K.unsqueeze(-1).unsqueeze(-1) * score.unsqueeze(1)).sum(dim=2)
+        else:
+            score_term = torch.matmul(K, score)
         if self.no_repulsion:
             phi = (score_term / self.gamma) / M  # (B, M, N)
         else:

@@ -191,6 +191,7 @@ def main(cfg: DictConfig):
         kernel_config=kernel_cfg,
         no_interact=no_interact,
         no_repulsion=no_repulsion,
+        is_nk3=(type_problem == "NK3"),
     ).to(device)
 
     if type_problem == "QUBO":
