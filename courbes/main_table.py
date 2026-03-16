@@ -378,7 +378,7 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
             return f"{sum(values) / len(values):.{ndigits}f}"
 
         mean_row = [
-            "Global SVGD-EDA",
+            "Global Others",
             "",
             "",
             fmt_mean(mean_ranks[0], 2),
@@ -389,7 +389,7 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
             fmt_mean(mean_rel_scores[2], 3),
             fmt_mean(mean_ranks[3], 2),
             fmt_mean(mean_rel_scores[3], 3),
-            "Global Others",
+            "",
             fmt_mean(mean_ranks[4], 2),
             fmt_mean(mean_rel_scores[4], 3),
         ]
