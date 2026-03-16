@@ -35,7 +35,7 @@ def find_instances(results_root: Path) -> Dict[Tuple[str, int, int], Dict[str, P
             if not problem_dir.is_dir():
                 continue
             problem = problem_dir.name.upper()
-            if problem not in ("NK", "QUBO"):
+            if problem not in ("NK", "NK3", "QUBO"):
                 continue
             for dim_dir in problem_dir.iterdir():
                 if not dim_dir.is_dir():
@@ -95,6 +95,8 @@ def mean(values: Iterable[float]) -> float:
 def filename_for(problem: str, dim: int, type_instance: int) -> str:
     if problem.upper() == "QUBO":
         return f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+    if problem.upper() == "NK3":
+        return f"NK3_N_{dim}_K_{type_instance}_ranks.csv"
     return f"NK_N_{dim}_K_{type_instance}_ranks.csv"
 
 
