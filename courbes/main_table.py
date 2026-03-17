@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import re
 import textwrap
 from pathlib import Path
@@ -31,7 +32,10 @@ def parse_float(value: str | None) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            return None
+        return parsed
     except ValueError:
         return None
 
@@ -261,6 +265,12 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
             if exp_summary:
                 avg_score = parse_float(exp_summary.get("avg_score"))
 
+        row: List[str] = [problem_name, str(dim), str(type_instance)]
+
+        # Load SVGD score and optional rank from config
+        svgd_raw_score, svgd_rank_from_config = load_svgd_score(config_dir, problem_name, dim, type_instance)
+        svgd_score = normalize_score(problem_name, svgd_raw_score)
+
         ranking_file = ranking_path(problem_name, dim, type_instance)
         ranking = load_ranking(ranking_file)
         ranking = [
@@ -268,20 +278,14 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
             for name, score in ranking
             if name not in {"PPO-EDA", "Tabu", "TABU"}
         ]
-
-        row: List[str] = [problem_name, str(dim), str(type_instance)]
-
-        # Load SVGD score and optional rank from config
-        svgd_raw_score, svgd_rank_from_config = load_svgd_score(config_dir, problem_name, dim, type_instance)
-        svgd_score = normalize_score(problem_name, svgd_raw_score)
-
-        # Build combined ranking including SVGD
+        ranking = sorted(ranking, key=lambda item: item[1], reverse=True)
         combined = list(ranking)
         if svgd_score is not None:
             combined.append(("SVGD", svgd_score))
         combined.sort(key=lambda item: item[1], reverse=True)
+        total_competitors = len(ranking)
         total = len(combined) if combined else None
-
+        # Ranking including SVGD (SVGD participates in the ranking)
         rank_map: dict[str, tuple[int, float]] = {}
         for idx, (name, score) in enumerate(combined, start=1):
             rank_map[name] = (idx, score)
@@ -303,8 +307,8 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
         best_rank = None
         best_score = None
         if combined:
-            excluded = {"SVGD"}
-            excluded.update(methods)
+            excluded = set(methods)
+            excluded.add("SVGD")
             for idx, (name, score) in enumerate(combined, start=1):
                 if name in excluded:
                     continue
@@ -443,39 +447,39 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                     for name, score in ranking
                     if name not in {"PPO-EDA", "Tabu", "TABU"}
                 ]
+                ranking = sorted(ranking, key=lambda item: item[1], reverse=True)
+                if not ranking:
+                    continue
 
+                svgd_score = _parse_score_value(row[4]) if len(row) > 4 else None
                 combined = list(ranking)
-                svgd_score = _parse_score_value(row[4])
                 if svgd_score is not None:
                     combined.append(("SVGD", svgd_score))
                 combined.sort(key=lambda item: item[1], reverse=True)
-                if not combined:
-                    continue
-
-                best_score = max(score for _, score in combined)
                 rank_map = {name: (idx + 1, score) for idx, (name, score) in enumerate(combined)}
                 if most_common_best not in rank_map:
                     continue
                 rank_val, score_val = rank_map[most_common_best]
+                best_score = combined[0][1]
                 best_method_ranks.append(float(rank_val))
                 if best_score:
                     best_method_rel_scores.append(score_val / best_score)
 
         mean_row = [
-            "SVGD EDA",
+            "",
             "",
             "",
             fmt_mean(mean_ranks[0], 2),
-            fmt_mean(mean_rel_scores[0], 3),
+            fmt_mean(mean_rel_scores[0], 2),
             fmt_mean(mean_ranks[1], 2),
-            fmt_mean(mean_rel_scores[1], 3),
+            fmt_mean(mean_rel_scores[1], 2),
             fmt_mean(mean_ranks[2], 2),
-            fmt_mean(mean_rel_scores[2], 3),
+            fmt_mean(mean_rel_scores[2], 2),
             fmt_mean(mean_ranks[3], 2),
-            fmt_mean(mean_rel_scores[3], 3),
+            fmt_mean(mean_rel_scores[3], 2),
             most_common_best or "—",
             fmt_mean(best_method_ranks, 2),
-            fmt_mean(best_method_rel_scores, 3),
+            fmt_mean(best_method_rel_scores, 2),
         ]
 
         for row in rows:
