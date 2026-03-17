@@ -34,7 +34,6 @@ class RBF(nn.Module):
         """
         Thetas = Thetas.requires_grad_(True)
 
-        print(Thetas.size())
         if Thetas.dim() == 4:
             B, M, N, D = Thetas.shape
         else:

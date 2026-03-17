@@ -33,17 +33,15 @@ DEFAULTS = dict(
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
 DEFAULT_GRIDS = [
-    # Grid 1: petit balayage fin autour de la config de base
     dict(
-        kernels=["fr"],
+        kernels=["rbf"],
         advantages=["globalrankweighted"],
-        M_values=[10],
-        lambda_values=[10],
-        epsilon_svgd=[0.05],
-        gamma=[0.004],
-        decay_start_ratio=[0.08],
-        decay_min_factor=[0.001],
-        bandwith_kernel=[None],
+        M_values=[7, 8],
+        lambda_values=[8, 10, 12],
+        epsilon_svgd=[0.08],
+        gamma=[0.02],
+        decay_start_ratio=[0.01],
+        decay_min_factor=[0.01],
     )
 ]
 

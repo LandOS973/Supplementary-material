@@ -29,6 +29,7 @@ SUMMARY_HEADERS = [
     "top5_count",
     "top10_count",
     "top_1_nk",
+    "top_1_nk3",
     "top_1_qubo",
     "win_rate_mean",
     "mean_hamming_norm",
