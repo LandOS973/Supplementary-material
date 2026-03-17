@@ -34,16 +34,29 @@ class RBF(nn.Module):
         """
         Thetas = Thetas.requires_grad_(True)
 
-        B, M, N = Thetas.shape 
+        print(Thetas.size())
+        if Thetas.dim() == 4:
+            B, M, N, D = Thetas.shape
+        else:
+            B, M, N = Thetas.shape
         # B : nombre d'instances 
         # M : nombre de particules
         # N : dimension des particules
 
+        if Thetas.dim() == 4:
+            theta_i = Thetas.unsqueeze(2).repeat([1, 1, M, 1,1])  # (B, M, M, N)
+            theta_j = Thetas.unsqueeze(1).repeat([1, M, 1, 1,1])  # (B, M, M, N)
 
-        theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
-        theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
+            dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1).sum(dim=-1)
 
-        dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
+
+        else:
+            theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
+            theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
+
+            dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
+
+
         if self.bandwith_kernel is None:
             # Estimation automatique de la bandwith via la median heuristic
             bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
@@ -52,10 +65,24 @@ class RBF(nn.Module):
 
         K = torch.exp(-bandwith_kernel * dnorm2)
 
-        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
+        if Thetas.dim() == 4:
+    
+            grad_Thetas = torch.zeros((B, M, N,D), device=Thetas.device)
 
-        for i in range(M):
-            Ki = K[:,:,i]
-            vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
-            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
+
+            for i in range(M):
+                Ki = K[:,:,i]
+                vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+                grad_Thetas[:,i,:,:] = torch.sum(vect_grad_Thetas, dim=1)
+                
+        else:
+            
+            grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
+
+            for i in range(M):
+                Ki = K[:,:,i]
+                vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
+                grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
+                
+                
         return K, grad_Thetas

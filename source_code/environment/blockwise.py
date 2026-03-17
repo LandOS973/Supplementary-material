@@ -89,7 +89,6 @@ def get_Score_trajectoriesBLOCK_cuda(
     avg_kernel_value_history = []
     avg_kernel_grad_history = []
     solutions_history = [] if enable_visualization else None
-    sample_scores_history = [] if enable_visualization else None
     metrics = MetricsCalculator()
     num_agents = len(agent_lambdas) if isinstance(agent_lambdas, (list, tuple)) else 0
     if num_agents == 0 and hasattr(strategy, "agents"):
@@ -110,8 +109,14 @@ def get_Score_trajectoriesBLOCK_cuda(
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
 
+    possible_solutions = ((torch.arange(2**num_blocks)[:, None] >> torch.arange(num_blocks)) & 1).flip(1).to(device)
+    seen_solutions = torch.zeros((total_cases,2**num_blocks)).to(device)
+
     for epoch in pbar:
+
         tensor_solution = strategy.sample_solutions()
+
+
         if solutions_history is not None:
             try:
                 sample_first = tensor_solution[0, :, :, 0].detach().cpu().numpy().astype(np.uint8)
@@ -120,27 +125,45 @@ def get_Score_trajectoriesBLOCK_cuda(
             solutions_history.append(sample_first)
 
         tensor_binary = tensor_solution.squeeze(3)
+
         tensor_blocks = tensor_binary.reshape(total_cases, size_pop, num_blocks, block_size)
         # Score par bloc: proportion de 0/1, puis "purite" via max(p, 1-p).
+
+
         block_counts = tensor_blocks.sum(dim=3)
+
         block_proportions = block_counts / float(block_size)
+
+
+        # Match exacts sur les optima
+        matches = (block_proportions[:, :, None, :] == possible_solutions[None, None, :, :]).all(dim=3)
+        # tolérance pour le match
+        #eps = 0.1
+        #matches = ((block_proportions[:, :, None, :] - possible_solutions[None, None, :, :]).abs()< eps).all(dim=3)
+
+        seen = matches.any(dim=1).int()
+        seen_solutions = torch.max(seen_solutions,seen)
+        pr_seen_solutions = seen_solutions.mean(1)
+
+
+
         block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
         # Fitness par solution: moyenne sur les blocs utiles (les dummy sont ignores).
+
         tensor_score = block_scores[:, :, :scoring_blocks].mean(dim=2)
-        if sample_scores_history is not None:
-            try:
-                sample_scores_history.append(tensor_score[0].detach().cpu().numpy().astype(np.float32))
-            except Exception:
-                sample_scores_history.append(None)
+
 
         sample_hamming_current = None
+
+
+
         if sample_hamming_history is not None:
             try:
                 with torch.no_grad():
                     samples = tensor_solution.squeeze(3)  # (B, total_lambda, N)
                     start_idx = 0
                     best_per_agent = []
-                    for agent_lambda in per_agent_lambdas:
+                    for idx, agent_lambda in enumerate(per_agent_lambdas):
                         end_idx = start_idx + agent_lambda
                         sub_samples = samples[:, start_idx:end_idx, :]
                         sub_scores = tensor_score[:, start_idx:end_idx]
@@ -148,6 +171,7 @@ def get_Score_trajectoriesBLOCK_cuda(
                         idx_expand = idx[:, None, None].expand(-1, 1, N)
                         best = torch.gather(sub_samples, 1, idx_expand).squeeze(1)  # (B, N)
                         best_per_agent.append(best)
+
                         start_idx = end_idx
                     pairwise = torch.zeros(num_agents, num_agents, device="cpu")
                     for i in range(num_agents):
@@ -273,6 +297,7 @@ def get_Score_trajectoriesBLOCK_cuda(
                 postfix["leader"] = leader_idx
                 postfix["avg_hamming"] = avg_hamming
                 postfix["avg_js"] = avg_js
+                postfix["pr_optima_seen"] = pr_seen_solutions.mean().item()
                 if sample_hamming_current is not None:
                     postfix["sample_hamming"] = sample_hamming_current
             pbar.set_postfix(**postfix)
@@ -284,6 +309,8 @@ def get_Score_trajectoriesBLOCK_cuda(
             avg_best = torch.mean(agent_best_overall[idx]).item()
             theta_mean = torch.mean(metrics.agent_theta_tensor(agent)).item()
             print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
+
+
 
     if enable_visualization:
         iterations = [(idx + 1) * size_pop for idx in range(len(avg_hamming_history))] if avg_hamming_history else []
@@ -299,11 +326,7 @@ def get_Score_trajectoriesBLOCK_cuda(
             agent_fitness_history,
             num_agents,
             theta_history,
-            {
-                "values": solutions_history,
-                "lambda_per_agent": size_pop // max(num_agents, 1),
-                "scores": sample_scores_history,
-            }
+            {"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
             if solutions_history is not None and num_agents > 0
             else None,
             hamming_pairwise_history,

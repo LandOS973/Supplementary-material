@@ -14,7 +14,14 @@ class NoInteractKernel(nn.Module):
             K : (B, M, M) identité par batch
             grad_Thetas : (B, M, N) nul
         """
-        B, M, N = Thetas.shape
+        if Thetas.dim() == 4:
+            B, M, N, D = Thetas.shape
+            grad_Thetas = torch.zeros((B, M, N, D), device=Thetas.device, dtype=Thetas.dtype)
+        else: 
+            B, M, N = Thetas.shape
+            grad_Thetas = torch.zeros((B, M, N), device=Thetas.device, dtype=Thetas.dtype)
+            
         K = torch.eye(M, device=Thetas.device, dtype=Thetas.dtype).expand(B, M, M)
-        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device, dtype=Thetas.dtype)
+        
+        
         return K, grad_Thetas
