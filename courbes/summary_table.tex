@@ -2,7 +2,7 @@
 \begin{table}[htbp]
     \centering
     \resizebox{\textwidth}{!}{%
-    \begin{tabular}{lll cc cc cc cc lcc}
+    \begin{tabular}{ccc cc cc cc cc lcc}
         \toprule
         \multicolumn{3}{c}{\textbf{Instances}} & 
         \multicolumn{2}{c}{\textbf{\texttt{SVGD-EDA}}} & 
@@ -13,50 +13,58 @@
         \cmidrule(r){1-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9} \cmidrule(lr){10-11} \cmidrule(l){12-14}
         Pb & $n$ & $t$ & Rank & Score & Rank & Score & Rank & Score & Rank & Score & Name & Rank & Score \\
         \midrule
-        NK & 64 & 1 & 2/83 & 0.7122 & 36/83 & 0.7097 & 54/83 & 0.7052 & 56/83 & 0.7008 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7126} \\
-        NK & 64 & 2 & 2/83 & 0.7471 & 10/83 & 0.7412 & 53/83 & 0.7312 & 56/83 & 0.7262 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7497} \\
-        NK & 64 & 4 & 2/83 & 0.7609 & 4/83 & 0.7492 & 54/83 & 0.7330 & 55/83 & 0.7316 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7658} \\
-        NK & 64 & 8 & \best{1/83} & \best{0.7546} & 8/83 & 0.7368 & 54/83 & 0.7176 & 55/83 & 0.7174 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7535 \\
-        NK & 128 & 1 & \best{1/83} & \best{0.7120} & 3/83 & 0.7085 & 54/83 & 0.6956 & 56/83 & 0.6928 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7094 \\
-        NK & 128 & 2 & \best{1/83} & \best{0.7418} & 3/83 & 0.7334 & 55/83 & 0.7147 & 56/83 & 0.7135 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7364 \\
-        NK & 128 & 4 & \best{1/83} & \best{0.7683} & 3/83 & 0.7514 & 54/83 & 0.7229 & 53/83 & 0.7285 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7535 \\
-        NK & 128 & 8 & \best{1/83} & \best{0.7429} & 3/83 & 0.7369 & 55/83 & 0.7034 & 56/83 & 0.6681 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7373 \\
-        NK & 256 & 1 & \best{1/83} & \best{0.7092} & 2/83 & 0.7048 & 56/83 & 0.6802 & 50/83 & 0.6863 & \mbox{\texttt{DiscreteDE}} & 3/83 & 0.7029 \\
-        NK & 256 & 2 & \best{1/83} & \best{0.7400} & 2/83 & 0.7314 & 54/83 & 0.6989 & 48/83 & 0.7093 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & 3/83 & 0.7269 \\
-        NK & 256 & 4 & \best{1/83} & \best{0.7585} & 2/83 & 0.7429 & 55/83 & 0.7019 & 47/83 & 0.7162 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & 3/83 & 0.7352 \\
-        NK & 256 & 8 & 2/83 & 0.7287 & \best{1/83} & \best{0.7315} & 55/83 & 0.6805 & 62/83 & 0.5852 & \mbox{\texttt{OnePtRecombiningDiscreteLenglerOnePlusOne}} & 3/83 & 0.7242 \\
-        NK3 & 64 & 1 & 2/83 & 0.7904 & — & — & 54/83 & 0.7659 & 55/83 & 0.7651 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7918} \\
-        NK3 & 64 & 2 & \best{1/83} & \best{0.8209} & — & — & 51/83 & 0.7825 & 54/83 & 0.7793 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8154 \\
-        NK3 & 64 & 4 & \best{1/83} & \best{0.8035} & — & — & 55/83 & 0.7645 & 58/83 & 0.7548 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8033 \\
-        NK3 & 64 & 8 & 14/83 & 0.7622 & — & — & 59/83 & 0.6583 & 57/83 & 0.7000 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7779} \\
-        NK3 & 128 & 1 & \best{1/83} & \best{0.7979} & — & — & 48/83 & 0.7600 & 50/83 & 0.7530 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7918 \\
-        NK3 & 128 & 2 & \best{1/83} & \best{0.8102} & — & — & 48/83 & 0.7621 & 55/83 & 0.7523 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7959 \\
-        NK3 & 128 & 4 & \best{1/83} & \best{0.7901} & — & — & 54/83 & 0.7469 & 56/83 & 0.7321 & \mbox{\texttt{RandRecombiningDiscreteLenglerOnePlusOne}} & 2/83 & 0.7829 \\
-        NK3 & 128 & 8 & 44/83 & 0.7449 & — & — & 63/83 & 0.6098 & 58/83 & 0.6297 & \mbox{\texttt{OnePtRecombiningDiscreteLenglerOnePlusOne}} & \best{1/83} & \best{0.7618} \\
-        NK3 & 256 & 1 & \best{1/83} & \best{0.7871} & — & — & 47/83 & 0.7363 & 49/83 & 0.7238 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7741 \\
-        NK3 & 256 & 2 & \best{1/83} & \best{0.7964} & — & — & 47/83 & 0.7393 & 49/83 & 0.7249 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7839 \\
-        NK3 & 256 & 4 & 31/83 & 0.7704 & — & — & 47/83 & 0.7265 & 54/83 & 0.7072 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{0.7783} \\
-        NK3 & 256 & 8 & 46/83 & 0.7266 & — & — & 63/83 & 0.5784 & 62/83 & 0.5790 & \mbox{\texttt{SmallLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{0.7552} \\
-        QUBO & 64 & 0 & 2/83 & 205.5 & 24/83 & 200.7 & 57/83 & 187.9 & 59/83 & 184.2 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{212.2} \\
-        QUBO & 64 & 1 & 2/83 & 151.1 & 5/83 & 149.7 & 25/83 & 145.7 & 46/83 & 144.3 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{154.6} \\
-        QUBO & 64 & 2 & 3/83 & 141.9 & 13/83 & 139.6 & 46/83 & 137.5 & 45/83 & 137.5 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{144.7} \\
-        QUBO & 64 & 3 & 2/83 & 423.9 & 36/83 & 412.8 & 59/83 & 375.6 & 58/83 & 379.7 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{445.3} \\
-        QUBO & 64 & 4 & 2/83 & 337.9 & 5/83 & 330.2 & 57/83 & 313.7 & 56/83 & 313.8 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{345.5} \\
-        QUBO & 64 & 5 & 2/83 & 317.1 & 19/83 & 310.6 & 56/83 & 297.3 & 58/83 & 296.7 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{326.1} \\
-        QUBO & 128 & 0 & 2/83 & 594.4 & 18/83 & 585.8 & 56/83 & 505.2 & 54/83 & 511.8 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{616.4} \\
-        QUBO & 128 & 1 & 2/83 & 452.2 & 4/83 & 445.5 & 55/83 & 410.9 & 54/83 & 412.6 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{465.8} \\
-        QUBO & 128 & 2 & 3/83 & 437.9 & 11/83 & 430.5 & 56/83 & 402.5 & 54/83 & 405.8 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{451.9} \\
-        QUBO & 128 & 3 & 4/83 & 1221.2 & 15/83 & 1211.7 & 57/83 & 1030.1 & 56/83 & 1048.9 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{1280.2} \\
-        QUBO & 128 & 4 & 3/83 & 960.0 & 7/83 & 936.2 & 56/83 & 841.7 & 55/83 & 865.7 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{994.7} \\
-        QUBO & 128 & 5 & 3/83 & 942.4 & 10/83 & 928.4 & 56/83 & 818.9 & 54/83 & 829.0 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{967.3} \\
-        QUBO & 256 & 0 & 35/83 & 1668.9 & 16/83 & 1680.4 & 56/83 & 1327.4 & 53/83 & 1418.7 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{1694.5} \\
-        QUBO & 256 & 1 & \best{1/83} & \best{1344.9} & 7/83 & 1322.3 & 56/83 & 1102.8 & 51/83 & 1191.6 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & 2/83 & 1340.1 \\
-        QUBO & 256 & 2 & 13/83 & 1272.5 & 11/83 & 1277.8 & 56/83 & 1085.0 & 51/83 & 1146.9 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{1293.5} \\
-        QUBO & 256 & 3 & 41/83 & 3380.1 & 29/83 & 3406.7 & 57/83 & 2646.0 & 54/83 & 2881.9 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{3453.3} \\
-        QUBO & 256 & 4 & 3/83 & 2704.6 & 7/83 & 2656.3 & 56/83 & 2245.8 & 54/83 & 2399.2 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{2717.2} \\
-        QUBO & 256 & 5 & 39/83 & 2640.6 & 7/83 & 2681.7 & 57/83 & 2177.0 & 53/83 & 2362.4 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{2712.2} \\
+        \multirow{12}{*}{NK} & \multirow{4}{*}{64} & 1 & 2/83 & 0.7122 & 36/83 & 0.7097 & 54/83 & 0.7052 & 56/83 & 0.7008 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7126} \\
+         &  & 2 & 2/83 & 0.7471 & 10/83 & 0.7412 & 53/83 & 0.7312 & 56/83 & 0.7262 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7497} \\
+         &  & 4 & 2/83 & 0.7609 & 4/83 & 0.7492 & 54/83 & 0.7330 & 55/83 & 0.7316 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7658} \\
+         &  & 8 & \best{1/83} & \best{0.7546} & 8/83 & 0.7368 & 54/83 & 0.7176 & 55/83 & 0.7174 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7535 \\
+        \cmidrule(lr){2-14}
+         & \multirow{4}{*}{128} & 1 & \best{1/83} & \best{0.7120} & 3/83 & 0.7085 & 54/83 & 0.6956 & 56/83 & 0.6928 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7094 \\
+         &  & 2 & \best{1/83} & \best{0.7418} & 3/83 & 0.7334 & 55/83 & 0.7147 & 56/83 & 0.7135 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7364 \\
+         &  & 4 & \best{1/83} & \best{0.7683} & 3/83 & 0.7514 & 54/83 & 0.7229 & 53/83 & 0.7285 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7535 \\
+         &  & 8 & \best{1/83} & \best{0.7429} & 3/83 & 0.7369 & 55/83 & 0.7034 & 56/83 & 0.6681 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7373 \\
+        \cmidrule(lr){2-14}
+         & \multirow{4}{*}{256} & 1 & \best{1/83} & \best{0.7092} & 2/83 & 0.7048 & 56/83 & 0.6802 & 50/83 & 0.6863 & \mbox{\texttt{DiscreteDE}} & 3/83 & 0.7029 \\
+         &  & 2 & \best{1/83} & \best{0.7400} & 2/83 & 0.7314 & 54/83 & 0.6989 & 48/83 & 0.7093 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & 3/83 & 0.7269 \\
+         &  & 4 & \best{1/83} & \best{0.7585} & 2/83 & 0.7429 & 55/83 & 0.7019 & 47/83 & 0.7162 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & 3/83 & 0.7352 \\
+         &  & 8 & 2/83 & 0.7287 & \best{1/83} & \best{0.7315} & 55/83 & 0.6805 & 62/83 & 0.5852 & \mbox{\texttt{OnePtRecombiningDiscreteLenglerOnePlusOne}} & 3/83 & 0.7242 \\
+        \midrule[1.2pt]
+        \multirow{12}{*}{NK3} & \multirow{4}{*}{64} & 1 & 2/83 & 0.7904 & — & — & 54/83 & 0.7659 & 55/83 & 0.7651 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7918} \\
+         &  & 2 & \best{1/83} & \best{0.8209} & — & — & 51/83 & 0.7825 & 54/83 & 0.7793 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8154 \\
+         &  & 4 & \best{1/83} & \best{0.8035} & — & — & 55/83 & 0.7645 & 58/83 & 0.7548 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8033 \\
+         &  & 8 & 14/83 & 0.7622 & — & — & 59/83 & 0.6583 & 57/83 & 0.7000 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7779} \\
+        \cmidrule(lr){2-14}
+         & \multirow{4}{*}{128} & 1 & \best{1/83} & \best{0.7979} & — & — & 48/83 & 0.7600 & 50/83 & 0.7530 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7918 \\
+         &  & 2 & \best{1/83} & \best{0.8102} & — & — & 48/83 & 0.7621 & 55/83 & 0.7523 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7959 \\
+         &  & 4 & \best{1/83} & \best{0.7901} & — & — & 54/83 & 0.7469 & 56/83 & 0.7321 & \mbox{\texttt{RandRecombiningDiscreteLenglerOnePlusOne}} & 2/83 & 0.7829 \\
+         &  & 8 & 44/83 & 0.7449 & — & — & 63/83 & 0.6098 & 58/83 & 0.6297 & \mbox{\texttt{OnePtRecombiningDiscreteLenglerOnePlusOne}} & \best{1/83} & \best{0.7618} \\
+        \cmidrule(lr){2-14}
+         & \multirow{4}{*}{256} & 1 & \best{1/83} & \best{0.7871} & — & — & 47/83 & 0.7363 & 49/83 & 0.7238 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7741 \\
+         &  & 2 & \best{1/83} & \best{0.7964} & — & — & 47/83 & 0.7393 & 49/83 & 0.7249 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7839 \\
+         &  & 4 & 31/83 & 0.7704 & — & — & 47/83 & 0.7265 & 54/83 & 0.7072 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{0.7783} \\
+         &  & 8 & 46/83 & 0.7266 & — & — & 63/83 & 0.5784 & 62/83 & 0.5790 & \mbox{\texttt{SmallLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{0.7552} \\
+        \midrule[1.2pt]
+        \multirow{18}{*}{QUBO} & \multirow{6}{*}{64} & 0 & 2/83 & 205.5 & 24/83 & 200.7 & 57/83 & 187.9 & 59/83 & 184.2 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{212.2} \\
+         &  & 1 & 2/83 & 151.1 & 5/83 & 149.7 & 25/83 & 145.7 & 46/83 & 144.3 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{154.6} \\
+         &  & 2 & 3/83 & 141.9 & 13/83 & 139.6 & 46/83 & 137.5 & 45/83 & 137.5 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{144.7} \\
+         &  & 3 & 2/83 & 423.9 & 36/83 & 412.8 & 59/83 & 375.6 & 58/83 & 379.7 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{445.3} \\
+         &  & 4 & 2/83 & 337.9 & 5/83 & 330.2 & 57/83 & 313.7 & 56/83 & 313.8 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{345.5} \\
+         &  & 5 & 2/83 & 317.1 & 19/83 & 310.6 & 56/83 & 297.3 & 58/83 & 296.7 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{326.1} \\
+        \cmidrule(lr){2-14}
+         & \multirow{6}{*}{128} & 0 & 2/83 & 594.4 & 18/83 & 585.8 & 56/83 & 505.2 & 54/83 & 511.8 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{616.4} \\
+         &  & 1 & 2/83 & 452.2 & 4/83 & 445.5 & 55/83 & 410.9 & 54/83 & 412.6 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{465.8} \\
+         &  & 2 & 3/83 & 437.9 & 11/83 & 430.5 & 56/83 & 402.5 & 54/83 & 405.8 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{451.9} \\
+         &  & 3 & 4/83 & 1221.2 & 15/83 & 1211.7 & 57/83 & 1030.1 & 56/83 & 1048.9 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{1280.2} \\
+         &  & 4 & 3/83 & 960.0 & 7/83 & 936.2 & 56/83 & 841.7 & 55/83 & 865.7 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{994.7} \\
+         &  & 5 & 3/83 & 942.4 & 10/83 & 928.4 & 56/83 & 818.9 & 54/83 & 829.0 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{967.3} \\
+        \cmidrule(lr){2-14}
+         & \multirow{6}{*}{256} & 0 & 35/83 & 1668.9 & 16/83 & 1680.4 & 56/83 & 1327.4 & 53/83 & 1418.7 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{1694.5} \\
+         &  & 1 & \best{1/83} & \best{1344.9} & 7/83 & 1322.3 & 56/83 & 1102.8 & 51/83 & 1191.6 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & 2/83 & 1340.1 \\
+         &  & 2 & 13/83 & 1272.5 & 11/83 & 1277.8 & 56/83 & 1085.0 & 51/83 & 1146.9 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{1293.5} \\
+         &  & 3 & 41/83 & 3380.1 & 29/83 & 3406.7 & 57/83 & 2646.0 & 54/83 & 2881.9 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & \best{1/83} & \best{3453.3} \\
+         &  & 4 & 3/83 & 2704.6 & 7/83 & 2656.3 & 56/83 & 2245.8 & 54/83 & 2399.2 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{2717.2} \\
+         &  & 5 & 39/83 & 2640.6 & 7/83 & 2681.7 & 57/83 & 2177.0 & 53/83 & 2362.4 & \mbox{\texttt{HugeLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{2712.2} \\
         \midrule
-        Global ranking &  &  & 7.67 & \best{0.99} & 10.70 & 0.97 & 53.88 & 0.90 & 54.10 & 0.90 & \mbox{\texttt{DiscreteDE}} & 10.10 & \best{0.99} \\
+        \multicolumn{3}{c}{\textbf{Global ranking}} & 7.67 & \best{0.99} & 10.70 & 0.97 & 53.88 & 0.90 & 54.10 & 0.90 & \mbox{\texttt{DiscreteDE}} & 10.10 & \best{0.99} \\
         \bottomrule
     \end{tabular}%
     }

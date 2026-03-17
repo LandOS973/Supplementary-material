@@ -360,7 +360,6 @@ def _parse_score_value(score_str: str | None) -> float | None:
 def _best_wrap(text: str) -> str:
     return f"\\best{{{text}}}"
 
-
 def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
     if not rows:
         print("[WARN] No rows to write.")
@@ -372,7 +371,7 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
         f.write("\\begin{table}[htbp]\n")
         f.write("    \\centering\n")
         f.write("    \\resizebox{\\textwidth}{!}{%\n")
-        f.write("    \\begin{tabular}{lll cc cc cc cc lcc}\n")
+        f.write("    \\begin{tabular}{ccc cc cc cc cc lcc}\n")
         f.write("        \\toprule\n")
         f.write("        \\multicolumn{3}{c}{\\textbf{Instances}} & \n")
         f.write("        \\multicolumn{2}{c}{\\textbf{\\texttt{SVGD-EDA}}} & \n")
@@ -426,7 +425,6 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
             return f"{sum(values) / len(values):.{ndigits}f}"
 
         # Mean rank/score for the most frequent "best method (others)"
-        # computed across ALL instances (not only those where it was the best).
         best_method_ranks = []
         best_method_rel_scores = []
         if most_common_best:
@@ -465,9 +463,10 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                 if best_score:
                     best_method_rel_scores.append(score_val / best_score)
 
+        # Les valeurs formatées donneront exactement "7.67", "0.99", etc.
         mean_row = [
             "Global ranking",
-            "",
+            "", 
             "",
             fmt_mean(mean_ranks[0], 2),
             fmt_mean(mean_rel_scores[0], 2),
@@ -477,14 +476,36 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
             fmt_mean(mean_rel_scores[2], 2),
             fmt_mean(mean_ranks[3], 2),
             fmt_mean(mean_rel_scores[3], 2),
-            most_common_best or "—",
+            most_common_best or "DiscreteDE",
             fmt_mean(best_method_ranks, 2),
             fmt_mean(best_method_rel_scores, 2),
         ]
 
+        # --- Début de la logique de regroupement (multirow) ---
+        problem_counts = {}
+        dim_counts = {}
         for row in rows:
-            # row layout: Pb,n,t, SVGD rank, SVGD score, PBIL rank, PBIL score, MIMIC rank, MIMIC score,
-            #             BOA rank, BOA score, Best name, Best rank, Best score
+            pb = row[0]
+            dim = row[1]
+            problem_counts[pb] = problem_counts.get(pb, 0) + 1
+            key_dim = (pb, dim)
+            dim_counts[key_dim] = dim_counts.get(key_dim, 0) + 1
+
+        pb_seen = {}
+        dim_seen = {}
+        last_pb = None
+        last_dim = None
+
+        for row_index, row in enumerate(rows):
+            pb = row[0]
+            dim = row[1]
+            
+            # Gestion des lignes de séparation avec \midrule[1.2pt] entre les problèmes
+            if last_pb is not None and pb != last_pb:
+                f.write("        \\midrule[1.2pt]\n")
+            elif last_dim is not None and dim != last_dim and pb == last_pb:
+                f.write("        \\cmidrule(lr){2-14}\n")
+
             rank_values = [v for v in (_parse_rank_value(row[i]) for i in rank_indices) if v is not None]
             score_values = [v for v in (_parse_score_value(row[i]) for i in score_indices) if v is not None]
             best_rank = min(rank_values) if rank_values else None
@@ -492,11 +513,23 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
 
             cells: List[str] = []
             for idx, val in enumerate(row):
-                if idx == 11:
+                if idx == 0:
+                    if pb_seen.get(pb, 0) == 0:
+                        cell = f"\\multirow{{{problem_counts[pb]}}}{{*}}{{{_latex_escape(val)}}}"
+                    else:
+                        cell = ""
+                    pb_seen[pb] = pb_seen.get(pb, 0) + 1
+                elif idx == 1:
+                    key_dim = (pb, dim)
+                    if dim_seen.get(key_dim, 0) == 0:
+                        cell = f"\\multirow{{{dim_counts[key_dim]}}}{{*}}{{{_latex_escape(val)}}}"
+                    else:
+                        cell = ""
+                    dim_seen[key_dim] = dim_seen.get(key_dim, 0) + 1
+                elif idx == 11:
                     if val == "—":
                         cell = "—"
                     else:
-                        # Remove any wrapping whitespace inserted by textwrap.
                         name_flat = re.sub(r"\s+", "", val)
                         cell = f"\\mbox{{\\texttt{{{_latex_escape(name_flat)}}}}}"
                 else:
@@ -513,17 +546,26 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                 cells.append(cell)
 
             f.write("        " + " & ".join(cells) + " \\\\\n")
+            last_pb = pb
+            last_dim = dim
+        # --- Fin de la logique de regroupement ---
 
-        # Mean row
+        # Ecriture de la ligne finale (Global ranking)
         f.write("        \\midrule\n")
         row = mean_row
         rank_values = [v for v in (_parse_rank_value(row[i]) for i in rank_indices) if v is not None]
         score_values = [v for v in (_parse_score_value(row[i]) for i in score_indices) if v is not None]
         best_rank = min(rank_values) if rank_values else None
         best_score = max(score_values) if score_values else None
+        
         cells = []
         for idx, val in enumerate(row):
-            if idx == 11:
+            if idx == 0:
+                cell = "\\multicolumn{3}{c}{\\textbf{Global ranking}}"
+            elif idx in (1, 2):
+                # On saute les colonnes 1 et 2 puisqu'elles sont absorbées par le multicolumn
+                continue
+            elif idx == 11:
                 if val == "—":
                     cell = "—"
                 else:
@@ -540,7 +582,10 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                 score_val = _parse_score_value(val)
                 if score_val is not None and abs(score_val - best_score) <= 1e-9:
                     cell = _best_wrap(cell)
-            cells.append(cell)
+            
+            if idx not in (1, 2):
+                cells.append(cell)
+                
         f.write("        " + " & ".join(cells) + " \\\\\n")
 
         f.write("        \\bottomrule\n")
