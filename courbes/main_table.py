@@ -466,7 +466,7 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                     best_method_rel_scores.append(score_val / best_score)
 
         mean_row = [
-            "",
+            "Global ranking",
             "",
             "",
             fmt_mean(mean_ranks[0], 2),
