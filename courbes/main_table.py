@@ -221,8 +221,11 @@ def wrap_name(name: str | None, width: int = 18) -> str:
     return textwrap.fill(name, width=width)
 
 
-def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], List[str]]:
+def build_rows(
+    methods: List[str], config_dir: Path
+) -> tuple[List[List[str]], List[str], dict[tuple[str, int, int], float | None]]:
     rows: List[List[str]] = []
+    raw_svgd_scores: dict[tuple[str, int, int], float | None] = {}
 
     # Gather instances from results/experiments
     instances = list(discover_instances())
@@ -270,6 +273,7 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
         # Load SVGD score and optional rank from config
         svgd_raw_score, svgd_rank_from_config = load_svgd_score(config_dir, problem_name, dim, type_instance)
         svgd_score = normalize_score(problem_name, svgd_raw_score)
+        raw_svgd_scores[(problem_name, dim, type_instance)] = svgd_score
 
         ranking_file = ranking_path(problem_name, dim, type_instance)
         ranking = load_ranking(ranking_file)
@@ -326,7 +330,7 @@ def build_rows(methods: List[str], config_dir: Path) -> tuple[List[List[str]], L
         )
         rows.append(row)
 
-    return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (1 + len(methods)) + ["Name", "Rank", "Score"]
+    return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (1 + len(methods)) + ["Name", "Rank", "Score"], raw_svgd_scores
 
 
 def _latex_escape(text: str) -> str:
@@ -360,7 +364,11 @@ def _parse_score_value(score_str: str | None) -> float | None:
 def _best_wrap(text: str) -> str:
     return f"\\best{{{text}}}"
 
-def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
+def write_latex_table(
+    rows: List[List[str]],
+    output_tex: Path,
+    raw_svgd_scores: dict[tuple[str, int, int], float | None] | None = None,
+) -> None:
     if not rows:
         print("[WARN] No rows to write.")
         return
@@ -408,6 +416,15 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
 
         for row in rows:
             scores = [_parse_score_value(row[i]) for i in score_indices]
+            if raw_svgd_scores is not None:
+                try:
+                    key = (row[0], int(row[1]), int(row[2]))
+                except Exception:
+                    key = None
+                if key is not None:
+                    svgd_raw = raw_svgd_scores.get(key)
+                    if svgd_raw is not None:
+                        scores[0] = svgd_raw
             score_vals = [v for v in scores if v is not None]
             best_score = max(score_vals) if score_vals else None
             for idx, col in enumerate(rank_indices):
@@ -449,7 +466,10 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                 if not ranking:
                     continue
 
-                svgd_score = _parse_score_value(row[4]) if len(row) > 4 else None
+                if raw_svgd_scores is not None:
+                    svgd_score = raw_svgd_scores.get((problem_name, dim, type_instance))
+                else:
+                    svgd_score = _parse_score_value(row[4]) if len(row) > 4 else None
                 combined = list(ranking)
                 if svgd_score is not None:
                     combined.append(("SVGD", svgd_score))
@@ -463,22 +483,22 @@ def write_latex_table(rows: List[List[str]], output_tex: Path) -> None:
                 if best_score:
                     best_method_rel_scores.append(score_val / best_score)
 
-        # Les valeurs formatées donneront exactement "7.67", "0.99", etc.
+        # Les valeurs formatées donneront exactement "7.670", "0.987", etc.
         mean_row = [
             "Global ranking",
             "", 
             "",
-            fmt_mean(mean_ranks[0], 2),
-            fmt_mean(mean_rel_scores[0], 2),
-            fmt_mean(mean_ranks[1], 2),
-            fmt_mean(mean_rel_scores[1], 2),
-            fmt_mean(mean_ranks[2], 2),
-            fmt_mean(mean_rel_scores[2], 2),
-            fmt_mean(mean_ranks[3], 2),
-            fmt_mean(mean_rel_scores[3], 2),
+            fmt_mean(mean_ranks[0], 3),
+            fmt_mean(mean_rel_scores[0], 3),
+            fmt_mean(mean_ranks[1], 3),
+            fmt_mean(mean_rel_scores[1], 3),
+            fmt_mean(mean_ranks[2], 3),
+            fmt_mean(mean_rel_scores[2], 3),
+            fmt_mean(mean_ranks[3], 3),
+            fmt_mean(mean_rel_scores[3], 3),
             most_common_best or "DiscreteDE",
-            fmt_mean(best_method_ranks, 2),
-            fmt_mean(best_method_rel_scores, 2),
+            fmt_mean(best_method_ranks, 3),
+            fmt_mean(best_method_rel_scores, 3),
         ]
 
         # --- Début de la logique de regroupement (multirow) ---
@@ -820,7 +840,7 @@ def main() -> None:
         return
 
     methods = ["PBIL", "MIMIC", "BOA"]
-    rows, col_labels = build_rows(methods, config_dir)
+    rows, col_labels, raw_svgd_scores = build_rows(methods, config_dir)
     if args.format in ("all", "csv"):
         write_csv(rows, col_labels, args.csv)
     if args.format in ("all", "image"):
@@ -828,7 +848,7 @@ def main() -> None:
     if args.format in ("all", "excel"):
         write_excel(rows, col_labels, args.xlsx)
     if args.format in ("all", "tex"):
-        write_latex_table(rows, args.tex)
+        write_latex_table(rows, args.tex, raw_svgd_scores=raw_svgd_scores)
 
 
 if __name__ == "__main__":
