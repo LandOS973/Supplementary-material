@@ -1,11 +1,11 @@
 name: REINFORCE-EDA
 updateMethod: REINFORCE
-M: 10
-lambda: 10
+M: 7
+lambda: 13
 advantage: globalrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
-kernel:  fr # rbf | hk | pk | ppk | jsd | fr | no_interact
+kernel:  rbf # rbf | hk | pk | ppk | jsd | fr | no_interact
 no_interact: false
 no_repulsion: false
-decay_start_ratio: 0.05
-min_factor: 0.05
+decay_start_ratio: 0.03
+min_factor: 0.01
 decay: true

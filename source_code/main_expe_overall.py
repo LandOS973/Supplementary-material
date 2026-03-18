@@ -34,7 +34,7 @@ DEFAULTS = dict(
 )
 DEFAULT_GRIDS = [
     dict(
-        kernels=["rbf"],
+        kernels=["jsd"],
         advantages=["globalrankweighted"],
         M_values=[10],
         lambda_values=[10, 14],
