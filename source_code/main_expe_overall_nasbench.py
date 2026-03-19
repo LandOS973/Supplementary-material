@@ -28,13 +28,13 @@ DEFAULTS = dict(
 
 DEFAULT_GRIDS = [
     dict(
-        kernels=["jsd"],
+        kernels=["rbf"],
         advantages=["globalrankweighted"],
-        M_values=[10],
-        lambda_values=[10, 14],
-        epsilon_svgd=[0.10, 0.12],
-        gamma=[0.01, 0.015],
-        decay_start_ratio=[0.03, 0.05],
+        M_values=[20],
+        lambda_values=[10],
+        epsilon_svgd=[0.08,0.05],
+        gamma=[0.005,0.015],
+        decay_start_ratio=[0.01],
         decay_min_factor=[0.01],
     )
 ]

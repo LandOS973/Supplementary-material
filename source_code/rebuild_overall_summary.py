@@ -21,6 +21,7 @@ SUMMARY_HEADERS = [
     "gamma",
     "decay_start_ratio",
     "decay_min_factor",
+    "nasbench_avg_score",
     "mean_rank",
     "median_rank",
     "std_percent",
@@ -93,6 +94,32 @@ def _has_raw_score(cfg_dir: Path) -> int:
     return 1 if any(cfg_dir.rglob("raw_scores.csv")) else 0
 
 
+def _nasbench_avg_score(cfg_dir: Path):
+    metrics_path = cfg_dir / "nasbench" / "best_metrics.csv"
+    if not metrics_path.is_file():
+        return None
+    try:
+        lines = [line.strip() for line in metrics_path.read_text().splitlines() if line.strip()]
+        if len(lines) < 2:
+            return None
+        header = [h.strip() for h in lines[0].split(",")]
+        last = [v.strip() for v in lines[-1].split(",")]
+
+        def pick(col: str):
+            if col in header:
+                idx = header.index(col)
+                if idx < len(last):
+                    return last[idx]
+            return None
+
+        val = pick("mean") or pick("median") or pick("best_fitness")
+        if val is None:
+            return None
+        return float(val)
+    except Exception:
+        return None
+
+
 def main():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     out_root = os.path.join(repo_root, "results", "config")
@@ -107,6 +134,7 @@ def main():
         if not params.get("kernel") or params.get("M") is None or params.get("lambda_") is None:
             continue
         stats = _collect_config_stats(str(cfg_dir), config_name, params, repo_root)
+        stats["nasbench_avg_score"] = _nasbench_avg_score(cfg_dir)
         stats["hasRawScore"] = _has_raw_score(cfg_dir)
         rows.append(stats)
 
