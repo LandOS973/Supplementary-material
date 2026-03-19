@@ -15,11 +15,10 @@ class NoInteractKernel(nn.Module):
             grad_Thetas : (B, M, N) nul
         """
         if Thetas.dim() == 4:
-            B, M, N, D = Thetas.shape
-            grad_Thetas = torch.zeros((B, M, N, D), device=Thetas.device, dtype=Thetas.dtype)
-        else: 
-            B, M, N = Thetas.shape
-            grad_Thetas = torch.zeros((B, M, N), device=Thetas.device, dtype=Thetas.dtype)
+            B, M, _, _ = Thetas.shape
+        else:
+            B, M, _ = Thetas.shape
+        grad_Thetas = torch.zeros_like(Thetas)
             
         K = torch.eye(M, device=Thetas.device, dtype=Thetas.dtype).expand(B, M, M)
         

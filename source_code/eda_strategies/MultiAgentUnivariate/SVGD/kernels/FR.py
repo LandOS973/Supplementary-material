@@ -72,6 +72,10 @@ class FisherRaoKernel(nn.Module):
             # g(x) = exp( -1 / (tau^2 * x * (1 - x)) + 4 / tau^2 )
             tau2 = self.tau ** 2
             g = torch.exp(-1.0 / (tau2 * probs * (1.0 - probs)) + (4.0 / tau2))  # (B, M, N, D)
+            mask = getattr(self, "mask", None)
+            if mask is not None:
+                mask = mask.to(probs.device, probs.dtype)
+                g = g * mask + (1.0 - mask)
             g_var = g.prod(dim=-1)  # (B, M, N)
             prod_g = g_var.prod(dim=-1)  # (B, M)
             g_pair = prod_g.unsqueeze(2) * prod_g.unsqueeze(1)  # (B, M, M)

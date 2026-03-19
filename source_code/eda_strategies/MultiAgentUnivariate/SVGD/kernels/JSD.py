@@ -61,6 +61,10 @@ class JSD(nn.Module):
         if Thetas.dim() == 4:
             probs_c = probs.clamp(min=eps, max=1.0 - eps)
             g = torch.exp(-1.0 / (tau2 * probs_c * (1.0 - probs_c)) + (4.0 / tau2))  # (B, M, N, D)
+            mask = getattr(self, "mask", None)
+            if mask is not None:
+                mask = mask.to(probs.device, probs.dtype)
+                g = g * mask + (1.0 - mask)
             g_var = g.prod(dim=-1)  # (B, M, N)
             prod_g = g_var.prod(dim=-1)  # (B, M)
         else:

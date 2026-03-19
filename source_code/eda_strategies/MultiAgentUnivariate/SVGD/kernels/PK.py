@@ -27,12 +27,16 @@ class ProbabilityKernel(nn.Module):
             raise ValueError("Probability kernel requires probs.")
         Thetas = Thetas.requires_grad_(True)
 
-        B, M, N = Thetas.shape
-
-        probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
-        probs_j = probs.unsqueeze(1)  # (B, 1, M, N)
-
-        dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1) # (B, M, M)
+        if Thetas.dim() == 4:
+            B, M, N, D = Thetas.shape
+            probs_i = probs.unsqueeze(2)  # (B, M, 1, N, D)
+            probs_j = probs.unsqueeze(1)  # (B, 1, M, N, D)
+            dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1).sum(dim=-1)  # (B, M, M)
+        else:
+            B, M, N = Thetas.shape
+            probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
+            probs_j = probs.unsqueeze(1)  # (B, 1, M, N)
+            dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1)  # (B, M, M)
 
         if self.bandwith_kernel is None:
             bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
@@ -41,12 +45,15 @@ class ProbabilityKernel(nn.Module):
 
         K = torch.exp(-bandwith_kernel * dnorm2)
 
-        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
+        grad_Thetas = torch.zeros_like(Thetas)
 
         for i in range(M):
             Ki = K[:,:,i]
             vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
-            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
+            if Thetas.dim() == 4:
+                grad_Thetas[:, i, :, :] = torch.sum(vect_grad_Thetas, dim=1)
+            else:
+                grad_Thetas[:, i, :] = torch.sum(vect_grad_Thetas, dim=1)
         return K, grad_Thetas
 
 

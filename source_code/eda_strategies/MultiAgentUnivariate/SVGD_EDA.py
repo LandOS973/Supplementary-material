@@ -62,6 +62,27 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.no_repulsion = bool(no_repulsion)
         self.dim_variables = dim_variables
         self.is_nk3 = bool(is_nk3)
+        self.use_categorical = bool(self.is_nk3 or self.dim_variables is not None)
+        self.max_dim = 3 if self.is_nk3 else None
+        if self.dim_variables is not None:
+            if len(self.dim_variables) != self.N:
+                raise ValueError(
+                    f"dim_variables length ({len(self.dim_variables)}) must match N={self.N}."
+                )
+            self.max_dim = int(max(self.dim_variables)) if self.dim_variables else None
+            if self.max_dim is None or self.max_dim < 2:
+                raise ValueError(f"Invalid categorical max_dim: {self.max_dim}")
+            mask = torch.ones(self.N, self.max_dim)
+            for idx, dim in enumerate(self.dim_variables):
+                if dim < self.max_dim:
+                    mask[idx, dim:] = 0.0
+            self.register_buffer(
+                "mask",
+                mask.unsqueeze(0).unsqueeze(0),
+                persistent=False,
+            )
+        else:
+            self.mask = None
         self.svgd_gamma = float(svgd_gamma)
         self.decay_start_ratio = float(decay_start_ratio)
         self.decay_min_factor = float(decay_min_factor)
@@ -93,6 +114,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         # interaction SVGD 
         kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
+        if self.mask is not None:
+            setattr(kernel_impl, "mask", self.mask)
         self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma, no_repulsion=self.no_repulsion)
         self.theta_history = []
         self.kernel_metric_history = []
@@ -110,14 +133,27 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
     def forward(self):
         """
         -theta (B, M, N) -> sigmoid -> probs (B, M, N) ] 0,1 [
+        -theta (B, M, N, D) -> softmax -> probs (B, M, N, D)
         """
         if self.theta is None:
             raise RuntimeError("reset_learned_parameters doit être appelé avant forward().")
-        if self.is_nk3:
-            probs = torch.softmax(self.theta, dim=-1)
-            probs = torch.nan_to_num(probs, nan=1.0 / 3.0)
+        if self.use_categorical:
+            logits = self.theta
+            if self.mask is not None:
+                logits = logits.masked_fill(self.mask == 0, float("-inf"))
+            probs = torch.softmax(logits, dim=-1)
+            probs = torch.nan_to_num(probs, nan=1.0 / float(probs.size(-1)))
+            if self.mask is not None:
+                probs = probs * self.mask
+                denom = probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                probs = probs / denom
             probs = torch.clamp(probs, self.prob_eps_clamp, 1.0 - self.prob_eps_clamp)
-            probs = probs / probs.sum(dim=-1, keepdim=True)
+            if self.mask is not None:
+                probs = probs * self.mask
+                denom = probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                probs = probs / denom
+            else:
+                probs = probs / probs.sum(dim=-1, keepdim=True)
             self.probs = probs
             return probs  # (B, M, N, D)
         probs = torch.sigmoid(self.theta)
@@ -129,8 +165,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         # theta : (B, M, N) or (B, M, N, D)
         init_sigma = 0.1
-        if self.is_nk3:
-            init_theta = torch.randn((nb_instances, self.M, self.N, 3), device=self.device) * init_sigma
+        if self.use_categorical:
+            max_dim = self.max_dim or 3
+            init_theta = torch.randn(
+                (nb_instances, self.M, self.N, max_dim), device=self.device
+            ) * init_sigma
         else:
             init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
 
@@ -164,10 +203,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         self.probs = self.forward()
 
-        if self.is_nk3:
+        if self.use_categorical:
             probs = self.probs  # (B, M, N, D)
-            flat = probs.reshape(-1, 3)  # (B*M*N, D)
-            # TODO utiliser categorical
+            D = probs.size(-1)
+            flat = probs.reshape(-1, D)  # (B*M*N, D)
             samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)  # (B*M*N, λa)
             samples_agents = samples_flat.view(B, M, N, λa).permute(0, 1, 3, 2)  # (B, M, λa, N)
             samples = samples_agents.reshape(B, λ_total, N).unsqueeze(-1).float()
@@ -209,11 +248,12 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if self.baseline.numel() == 0:
             baseline = torch.zeros(BM, device=self.device)
 
-        if self.is_nk3:
+        if self.use_categorical:
             if self.probs is None:
                 self.forward()
-            theta = self.theta.view(BM, N, 3)
-            all_Pi_Theta = self.probs.view(BM, N, 3)  # (BM, N, D)
+            D = self.probs.size(-1)
+            theta = self.theta.view(BM, N, D)
+            all_Pi_Theta = self.probs.view(BM, N, D)  # (BM, N, D)
             all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)  # (BM, λa, N, D)
             log_probs = torch.log(all_Pi_Theta_expanded + 1e-10)
             indices = indivduals.long().unsqueeze(-1)  # (BM, λa, N, 1)

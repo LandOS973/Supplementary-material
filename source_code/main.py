@@ -17,6 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
+from environment.nasbench import get_Score_trajectories_nasbench_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from environment.tsne_agents import plot_agents_tsne
@@ -52,6 +53,9 @@ def main(cfg: DictConfig):
             return None
 
     type_problem = cfg.problem.name if "problem" in cfg and "name" in cfg.problem else cfg.get("type_problem", "QUBO")
+    type_problem = str(type_problem)
+    type_problem_upper = type_problem.upper()
+    type_problem_lower = type_problem.lower()
     dim = (
         cfg.problem.n
         if "problem" in cfg and "n" in cfg.problem
@@ -140,7 +144,9 @@ def main(cfg: DictConfig):
     block_size = None
     dummy_blocks = int(cfg.problem.dummy_blocks) if "problem" in cfg and "dummy_blocks" in cfg.problem else 0
 
-    if type_problem == "QUBO":
+    is_nasbench = type_problem_lower in ("nasbench", "nasbench_full")
+
+    if type_problem_upper == "QUBO":
         instance_path = os.path.join(script_dir, "instances", "QUBO") + os.sep
         try:
             tensor_Q_test = getTensorInstances_QUBO(
@@ -153,23 +159,29 @@ def main(cfg: DictConfig):
             tensor_Q_test = getTensorInstances_QUBO(
                 instance_path, nb_instances_test, nb_restarts, dim, type_instance, device, "test"
             )
-    elif type_problem in ("NK", "NK3"):
-        D = 2 if type_problem == "NK" else 3
+    elif type_problem_upper in ("NK", "NK3"):
+        D = 2 if type_problem_upper == "NK" else 3
         vectorIndex = np.zeros((type_instance + 1))
         for i in range(type_instance + 1):
             vectorIndex[i] = D ** (type_instance - i)
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
-        nk_path = os.path.join(script_dir, "instances", "nk" if type_problem == "NK" else "nk3",
+        nk_path = os.path.join(script_dir, "instances", "nk" if type_problem_upper == "NK" else "nk3",
                                str(dim), str(type_instance)) + os.sep
         tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
             nk_path, nb_instances_test, nb_restarts, lambda_ * M, dim, D, type_instance, device
         )
-    elif type_problem == "BLOCK":
+    elif type_problem_upper == "BLOCK":
         block_size = type_instance
         if block_size <= 0:
             raise ValueError(f"block_size must be positive, got {block_size}")
         if dim % block_size != 0:
             raise ValueError(f"dim={dim} must be divisible by block_size={block_size}")
+    elif is_nasbench:
+        if dim != 26:
+            print(f"[WARN] nasbench uses dim=26, overriding dim={dim} -> 26")
+            dim = 26
+        dim_variables = [2 for _ in range(21)]
+        dim_variables.extend([3 for _ in range(5)])
     else:
         raise ValueError(f"Unsupported problem type: {type_problem}")
 
@@ -191,10 +203,10 @@ def main(cfg: DictConfig):
         kernel_config=kernel_cfg,
         no_interact=no_interact,
         no_repulsion=no_repulsion,
-        is_nk3=(type_problem == "NK3"),
+        is_nk3=(type_problem_upper == "NK3"),
     ).to(device)
 
-    if type_problem == "QUBO":
+    if type_problem_upper == "QUBO":
         result = get_Score_trajectoriesQUBO_cuda(
             strategy,
             dim,
@@ -209,7 +221,7 @@ def main(cfg: DictConfig):
             return_history=False,
         )
         list_scores = result
-    elif type_problem in ("NK", "NK3"):
+    elif type_problem_upper in ("NK", "NK3"):
         result = get_Score_trajectoriesNK_cuda(
             strategy,
             dim,
@@ -225,6 +237,41 @@ def main(cfg: DictConfig):
             device,
             verbose,
             return_history=False,
+        )
+        list_scores = result
+    elif is_nasbench:
+        try:
+            from bbdob import NasBench101
+        except Exception as exc:
+            raise RuntimeError(
+                "NasBench requires bbdob. Install it with `pip install -e .` in the BB-DOB repo."
+            ) from exc
+
+        nasbench_file = None
+        if "problem" in cfg and "data_file" in cfg.problem:
+            nasbench_file = str(cfg.problem.data_file)
+            if nasbench_file and not os.path.isabs(nasbench_file):
+                nasbench_file = os.path.join(script_dir, nasbench_file)
+        if nasbench_file is None:
+            nasbench_file = str(cfg.get("nasbench_file", "")) or None
+            if nasbench_file and not os.path.isabs(nasbench_file):
+                nasbench_file = os.path.join(script_dir, nasbench_file)
+        if not nasbench_file:
+            candidate = os.path.join(script_dir, "instances", "nasbench", "nasbench_full.tfrecord")
+            nasbench_file = candidate if os.path.exists(candidate) else "nasbench_full.tfrecord"
+
+        objective = NasBench101(filename=nasbench_file)
+        if nb_restarts != 1:
+            print(f"[WARN] nasbench ignores nb_restarts (got {nb_restarts}).")
+        result = get_Score_trajectories_nasbench_cuda(
+            objective,
+            strategy,
+            nb_instances_test,
+            budget,
+            lambda_,
+            device,
+            verbose,
+            name_file=None,
         )
         list_scores = result
     else:
@@ -247,15 +294,18 @@ def main(cfg: DictConfig):
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
 
-    try:
-        plot_agents_tsne(
-            strategy,
-            output_path=os.path.join(os.getcwd(), "agents_tsne.png"),
-            perplexity=None,
-            random_state=0,
-        )
-    except ValueError as exc:
-        print(f"[WARN] t-SNE agents skipped: {exc}")
+    if not is_nasbench:
+        try:
+            plot_agents_tsne(
+                strategy,
+                output_path=os.path.join(os.getcwd(), "agents_tsne.png"),
+                perplexity=None,
+                random_state=0,
+            )
+        except ValueError as exc:
+            print(f"[WARN] t-SNE agents skipped: {exc}")
+    else:
+        print("[INFO] t-SNE skipped for nasbench (categorical variables).")
 
 
 if __name__ == "__main__":

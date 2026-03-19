@@ -27,19 +27,21 @@ class HammingKernel(nn.Module):
             raise ValueError("Hamming kernel requires probs.")
         Thetas = Thetas.requires_grad_(True)
 
-        B, M, N = Thetas.shape
-
-        probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
-        probs_j = probs.detach().unsqueeze(1)  # (B, 1, M, N)
-
-        hamming = probs_i + probs_j.detach() - 2 * probs_i * probs_j.detach()  # (B, M, M, N)
-
-        D = hamming.sum(dim=-1)  # (B, M, M)
-
-
-
-        N = Thetas.size(-1) 
-        dist = (N - D) / float(N) # (B, M, M)
+        if Thetas.dim() == 4:
+            B, M, N, D = Thetas.shape
+            probs_i = probs.unsqueeze(2)  # (B, M, 1, N, D)
+            probs_j = probs.detach().unsqueeze(1)  # (B, 1, M, N, D)
+            match = (probs_i * probs_j).sum(dim=-1)  # (B, M, M, N)
+            hamming = 1.0 - match  # (B, M, M, N)
+            Dm = hamming.sum(dim=-1)  # (B, M, M)
+            dist = (N - Dm) / float(N)  # (B, M, M)
+        else:
+            B, M, N = Thetas.shape
+            probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
+            probs_j = probs.detach().unsqueeze(1)  # (B, 1, M, N)
+            hamming = probs_i + probs_j.detach() - 2 * probs_i * probs_j.detach()  # (B, M, M, N)
+            Dm = hamming.sum(dim=-1)  # (B, M, M)
+            dist = (N - Dm) / float(N)  # (B, M, M)
 
         if self.bandwith_kernel is None:
             bandwith_kernel = adaptative_bandwith(dist, eps=1e-8)
@@ -48,15 +50,14 @@ class HammingKernel(nn.Module):
 
         K = torch.exp(-bandwith_kernel * dist)
 
-        grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
-
+        grad_Thetas = torch.zeros_like(Thetas)
         for i in range(M):
-            Ki = K[:,:,i]
+            Ki = K[:, :, i]
             vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
-
-            grad_Thetas[:,i,:] = torch.sum(vect_grad_Thetas, dim=1)
-
-
+            if Thetas.dim() == 4:
+                grad_Thetas[:, i, :, :] = torch.sum(vect_grad_Thetas, dim=1)
+            else:
+                grad_Thetas[:, i, :] = torch.sum(vect_grad_Thetas, dim=1)
 
         return K, grad_Thetas
 
