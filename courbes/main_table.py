@@ -9,12 +9,16 @@ import math
 import re
 import textwrap
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parent.parent
+COMPETITOR_DIRS = [
+    Path("/home/landos/Downloads/results_nevergrad_ppsn"),
+]
+DEFAULT_BUDGET = 50000
 
 
 def parse_summary_file(path: Path) -> dict[str, str]:
@@ -59,6 +63,133 @@ def parse_rank_value(value: str | None) -> tuple[int, int] | None:
     if not match:
         return None
     return int(match.group(1)), int(match.group(2))
+
+
+def _normalize_scores(problem_name: str, scores: Sequence[float]) -> List[float]:
+    normalized: List[float] = []
+    for value in scores:
+        norm = normalize_score(problem_name, value)
+        if norm is None:
+            continue
+        normalized.append(norm)
+    return normalized
+
+
+def load_raw_scores_csv(path: Path) -> List[float]:
+    if not path.exists():
+        return []
+    scores: List[float] = []
+    try:
+        with path.open(newline="") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, None)
+            if header is None:
+                return []
+            header_lower = [h.strip().lower() for h in header]
+            if "score" in header_lower:
+                idx = header_lower.index("score")
+                for row in reader:
+                    if len(row) <= idx:
+                        continue
+                    value = parse_float(row[idx])
+                    if value is not None:
+                        scores.append(value)
+            else:
+                # Header is not explicit; attempt to parse header as data too.
+                for row in [header] + list(reader):
+                    if not row:
+                        continue
+                    value = parse_float(row[0])
+                    if value is not None:
+                        scores.append(value)
+    except Exception:
+        return []
+    return scores
+
+
+def read_last_numeric_score(path: Path) -> float | None:
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("runtime"):
+            continue
+        parts = [part.strip() for part in line.split(",") if part.strip()]
+        for part in reversed(parts):
+            try:
+                return float(part)
+            except ValueError:
+                continue
+    return None
+
+
+def _problem_variants(problem_name: str | None) -> List[str]:
+    if not problem_name:
+        return ["UBQP", "QUBO", "qubo", "ubqp"]
+    normalized = problem_name.upper()
+    if normalized in ("QUBO", "UBQP"):
+        return ["UBQP", "QUBO", "qubo", "ubqp"]
+    return [normalized, normalized.lower()]
+
+
+def find_competitor_run_files(
+    algo: str,
+    dim: int,
+    type_instance: int,
+    problem_name: str | None = None,
+    budget: int = DEFAULT_BUDGET,
+) -> List[Path]:
+    candidate_files: List[Path] = []
+    problem_variants = _problem_variants(problem_name)
+    for root in COMPETITOR_DIRS:
+        algo_dir = root / algo
+        if not algo_dir.exists():
+            continue
+        for problem in problem_variants:
+            candidate_dir = algo_dir / problem / str(dim) / str(type_instance)
+            if not candidate_dir.exists():
+                continue
+            files = sorted(candidate_dir.glob(f"*_budget_{budget}_*.txt"))
+            if not files:
+                files = sorted(candidate_dir.glob("*.txt"))
+            candidate_files.extend(files)
+        if candidate_files:
+            break
+
+        # Fallback: recursive search under algo dir.
+        patterns: List[str] = []
+        for problem in problem_variants:
+            patterns.extend(
+                (
+                    f"**/results_nevergrad_{algo}_{problem}_{dim}_{type_instance}_*.txt",
+                    f"**/*{algo}*{problem}*{dim}*{type_instance}*.txt",
+                )
+            )
+        for pattern in patterns:
+            candidate_files.extend(algo_dir.glob(pattern))
+        if candidate_files:
+            break
+
+    return sorted(set(candidate_files))
+
+
+def load_competitor_final_scores(
+    algo: str,
+    dim: int,
+    type_instance: int,
+    problem_name: str | None = None,
+) -> List[float]:
+    paths = find_competitor_run_files(algo, dim, type_instance, problem_name)
+    scores: List[float] = []
+    for path in paths:
+        value = read_last_numeric_score(path)
+        if value is not None:
+            scores.append(value)
+    return scores
 
 
 def load_best_summary(experiment_dir: Path, problem_name: str) -> dict[str, str] | None:
@@ -223,9 +354,15 @@ def wrap_name(name: str | None, width: int = 18) -> str:
 
 def build_rows(
     methods: List[str], config_dir: Path
-) -> tuple[List[List[str]], List[str], dict[tuple[str, int, int], float | None]]:
+) -> tuple[
+    List[List[str]],
+    List[str],
+    dict[tuple[str, int, int], float | None],
+    dict[tuple[str, int, int], str | None],
+]:
     rows: List[List[str]] = []
     raw_svgd_scores: dict[tuple[str, int, int], float | None] = {}
+    best_other_map: dict[tuple[str, int, int], str | None] = {}
 
     # Gather instances from results/experiments
     instances = list(discover_instances())
@@ -320,6 +457,7 @@ def build_rows(
                 best_rank = idx
                 best_score = score
                 break
+        best_other_map[(problem_name, dim, type_instance)] = None if best_name == "—" else best_name
 
         row.extend(
             [
@@ -330,7 +468,12 @@ def build_rows(
         )
         rows.append(row)
 
-    return rows, ["Pb", "n", "t"] + ["Rank", "Score"] * (1 + len(methods)) + ["Name", "Rank", "Score"], raw_svgd_scores
+    return (
+        rows,
+        ["Pb", "n", "t"] + ["Rank", "Score"] * (1 + len(methods)) + ["Name", "Rank", "Score"],
+        raw_svgd_scores,
+        best_other_map,
+    )
 
 
 def _latex_escape(text: str) -> str:
@@ -355,8 +498,13 @@ def _parse_rank_value(rank_str: str | None) -> int | None:
 def _parse_score_value(score_str: str | None) -> float | None:
     if not score_str or score_str == "—":
         return None
+    # Accept optional LaTeX decorations such as $^{*}$.
+    cleaned = score_str.replace("$^{*}$", "").replace("\\textsuperscript{*}", "")
+    match = re.search(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", cleaned)
+    if not match:
+        return None
     try:
-        return float(score_str)
+        return float(match.group(0))
     except Exception:
         return None
 
@@ -368,10 +516,125 @@ def write_latex_table(
     rows: List[List[str]],
     output_tex: Path,
     raw_svgd_scores: dict[tuple[str, int, int], float | None] | None = None,
+    config_dir: Path | None = None,
+    best_other_map: dict[tuple[str, int, int], str | None] | None = None,
 ) -> None:
     if not rows:
         print("[WARN] No rows to write.")
         return
+
+    try:
+        from scipy import stats as scipy_stats
+    except Exception:
+        scipy_stats = None
+
+    warned: set[str] = set()
+    svgd_scores_cache: dict[tuple[str, int, int], List[float]] = {}
+    competitor_scores_cache: dict[tuple[str, str, int, int], List[float]] = {}
+
+    def warn_once(key: str, message: str) -> None:
+        if key in warned:
+            return
+        warned.add(key)
+        print(f"[WARN] {message}")
+
+    def _finite(values: Sequence[float]) -> List[float]:
+        return [v for v in values if math.isfinite(v)]
+
+    def _load_svgd_scores(problem_name: str, dim: int, type_instance: int) -> List[float]:
+        key = (problem_name, dim, type_instance)
+        if key in svgd_scores_cache:
+            return svgd_scores_cache[key]
+        if config_dir is None:
+            return []
+        raw_path = config_dir / f"{problem_name}_dim{dim}_t{type_instance}" / "raw_scores.csv"
+        scores = _normalize_scores(problem_name, load_raw_scores_csv(raw_path))
+        scores = _finite(scores)
+        if not scores:
+            warn_once(
+                f"svgd_missing_{problem_name}_{dim}_{type_instance}",
+                f"Missing or empty raw_scores.csv for SVGD ({problem_name} dim={dim} t={type_instance}).",
+            )
+        svgd_scores_cache[key] = scores
+        return scores
+
+    def _load_competitor_scores(
+        algo: str, problem_name: str, dim: int, type_instance: int
+    ) -> List[float]:
+        key = (algo, problem_name, dim, type_instance)
+        if key in competitor_scores_cache:
+            return competitor_scores_cache[key]
+        scores = _normalize_scores(
+            problem_name, load_competitor_final_scores(algo, dim, type_instance, problem_name)
+        )
+        scores = _finite(scores)
+        if not scores:
+            warn_once(
+                f"comp_missing_{algo}_{problem_name}_{dim}_{type_instance}",
+                f"Missing competitor scores for {algo} ({problem_name} dim={dim} t={type_instance}).",
+            )
+        competitor_scores_cache[key] = scores
+        return scores
+
+    def _star_target(
+        problem_name: str,
+        dim: int,
+        type_instance: int,
+        best_algo: str | None,
+        svgd_display: float | None,
+        best_display: float | None,
+    ) -> str | None:
+        if best_algo is None:
+            return None
+        if scipy_stats is None:
+            warn_once("scipy_missing", "scipy is not installed; skipping t-tests.")
+            return None
+        svgd_scores = _load_svgd_scores(problem_name, dim, type_instance)
+        competitor_scores = _load_competitor_scores(best_algo, problem_name, dim, type_instance)
+        if len(svgd_scores) < 2 or len(competitor_scores) < 2:
+            warn_once(
+                f"ttest_missing_{problem_name}_{dim}_{type_instance}",
+                f"Insufficient scores for t-test ({problem_name} dim={dim} t={type_instance}).",
+            )
+            return None
+        result = scipy_stats.ttest_ind(
+            svgd_scores, competitor_scores, equal_var=True, nan_policy="omit"
+        )
+        pvalue = getattr(result, "pvalue", None)
+        if pvalue is None or not math.isfinite(pvalue):
+            return None
+        if pvalue >= 0.001:
+            return None
+        if svgd_display is None or best_display is None:
+            return None
+        # Use the displayed (aggregated) values to decide which score gets the star.
+        if svgd_display > best_display:
+            return "svgd"
+        if best_display > svgd_display:
+            return "best"
+        return None
+
+    def _pvalue_against(
+        algo: str | None,
+        problem_name: str,
+        dim: int,
+        type_instance: int,
+    ) -> float | None:
+        if algo is None:
+            return None
+        if scipy_stats is None:
+            return None
+        svgd_scores = _load_svgd_scores(problem_name, dim, type_instance)
+        competitor_scores = _load_competitor_scores(algo, problem_name, dim, type_instance)
+        if len(svgd_scores) < 2 or len(competitor_scores) < 2:
+            return None
+        result = scipy_stats.ttest_ind(
+            svgd_scores, competitor_scores, equal_var=True, nan_policy="omit"
+        )
+        pvalue = getattr(result, "pvalue", None)
+        if pvalue is None or not math.isfinite(pvalue):
+            return None
+        return float(pvalue)
 
     output_tex.parent.mkdir(parents=True, exist_ok=True)
     with output_tex.open("w") as f:
@@ -531,8 +794,55 @@ def write_latex_table(
             best_rank = min(rank_values) if rank_values else None
             best_score = max(score_values) if score_values else None
 
+            star = None
+            try:
+                dim_int = int(dim)
+                type_int = int(row[2])
+            except Exception:
+                dim_int = None
+                type_int = None
+            if dim_int is not None and type_int is not None:
+                key = (pb, dim_int, type_int)
+                best_algo = None
+                if best_other_map is not None:
+                    best_algo = best_other_map.get(key)
+                if best_algo is None:
+                    name_raw = row[11] if len(row) > 11 else None
+                    if name_raw and name_raw != "—":
+                        best_algo = re.sub(r"\s+", "", name_raw)
+                svgd_display = _parse_score_value(row[4]) if len(row) > 4 else None
+                best_display = _parse_score_value(row[13]) if len(row) > 13 else None
+                star = _star_target(
+                    pb,
+                    dim_int,
+                    type_int,
+                    best_algo,
+                    svgd_display,
+                    best_display,
+                )
+
+                # Print p-values for this line (SVGD vs PBIL/MIMIC/BOA and best method).
+                p_pbil = _pvalue_against("PBIL", pb, dim_int, type_int)
+                p_mimic = _pvalue_against("MIMIC", pb, dim_int, type_int)
+                p_boa = _pvalue_against("BOA", pb, dim_int, type_int)
+                p_best = _pvalue_against(best_algo, pb, dim_int, type_int)
+                print(
+                    "PVAL",
+                    f"{pb} dim={dim_int} t={type_int}",
+                    "| SVGD vs PBIL:", "NA" if p_pbil is None else f"{p_pbil:.6g}",
+                    "| SVGD vs MIMIC:", "NA" if p_mimic is None else f"{p_mimic:.6g}",
+                    "| SVGD vs BOA:", "NA" if p_boa is None else f"{p_boa:.6g}",
+                    "| SVGD vs", best_algo or "—", ":", "NA" if p_best is None else f"{p_best:.6g}",
+                )
+
+            row_display = list(row)
+            if star == "svgd" and len(row_display) > 4 and row_display[4] != "—":
+                row_display[4] = f"{row_display[4]}$^{{*}}$"
+            elif star == "best" and len(row_display) > 13 and row_display[13] != "—":
+                row_display[13] = f"{row_display[13]}$^{{*}}$"
+
             cells: List[str] = []
-            for idx, val in enumerate(row):
+            for idx, val in enumerate(row_display):
                 if idx == 0:
                     if pb_seen.get(pb, 0) == 0:
                         cell = f"\\multirow{{{problem_counts[pb]}}}{{*}}{{{_latex_escape(val)}}}"
@@ -840,7 +1150,7 @@ def main() -> None:
         return
 
     methods = ["PBIL", "MIMIC", "BOA"]
-    rows, col_labels, raw_svgd_scores = build_rows(methods, config_dir)
+    rows, col_labels, raw_svgd_scores, best_other_map = build_rows(methods, config_dir)
     if args.format in ("all", "csv"):
         write_csv(rows, col_labels, args.csv)
     if args.format in ("all", "image"):
@@ -848,7 +1158,13 @@ def main() -> None:
     if args.format in ("all", "excel"):
         write_excel(rows, col_labels, args.xlsx)
     if args.format in ("all", "tex"):
-        write_latex_table(rows, args.tex, raw_svgd_scores=raw_svgd_scores)
+        write_latex_table(
+            rows,
+            args.tex,
+            raw_svgd_scores=raw_svgd_scores,
+            config_dir=config_dir,
+            best_other_map=best_other_map,
+        )
 
 
 if __name__ == "__main__":
