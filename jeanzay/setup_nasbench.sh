@@ -4,8 +4,8 @@ set -euo pipefail
 REPO="${WORK:-$HOME}/Supplementary-material"
 export REPO
 ENV_NAME="ppo_env"
-DATASET_DIR="${DATASET_DIR:-${WORK:-$HOME}/datasets}"
-DATASET_FILE="${DATASET_FILE:-${DATASET_DIR}/nasbench_only108.tfrecord}"
+DATASET_DIR="${DATASET_DIR:-$REPO/source_code/instances/nasbench}"
+DATASET_FILE="${DATASET_FILE:-${DATASET_DIR}/nasbench_full.tfrecord}"
 
 if [ ! -d "$REPO" ]; then
   echo "[ERR] Repo not found at $REPO" >&2
@@ -98,7 +98,19 @@ PY
 
 if [ ! -f "$DATASET_FILE" ]; then
   mkdir -p "$DATASET_DIR"
-  wget -O "$DATASET_FILE" https://storage.googleapis.com/nasbench/nasbench_only108.tfrecord
+  DATASET_NAME="$(basename "$DATASET_FILE")"
+  DATASET_URL="${DATASET_URL:-https://storage.googleapis.com/nasbench/${DATASET_NAME}}"
+  curl -L -o "$DATASET_FILE" "$DATASET_URL"
+fi
+
+if [[ "$(basename "$DATASET_FILE")" == *full* ]]; then
+  MIN_BYTES="${MIN_BYTES:-1500000000}"
+  ACTUAL_BYTES="$(stat -c %s "$DATASET_FILE")"
+  if [ "$ACTUAL_BYTES" -lt "$MIN_BYTES" ]; then
+    echo "[ERR] Dataset size too small for full: ${ACTUAL_BYTES} bytes." >&2
+    echo "      Expected ~1.9GB. Check DATASET_URL or redownload." >&2
+    exit 1
+  fi
 fi
 
 echo "[OK] NASBench env ready. Dataset: $DATASET_FILE"
