@@ -16,20 +16,35 @@ paru -S --needed --noconfirm python311 || { echo "[ERR] paru failed"; exit 1; }
 /usr/bin/python3.11 -m venv "$VENV"
 source "$VENV/bin/activate"
 
-# 3) TF + protobuf
+# 3) TF + protobuf + project deps
 pip install --upgrade pip
 pip install tensorflow==2.15.0 protobuf==3.20.3
+pip install -r "$REPO/source_code/requirement.txt"
 
 # 4) Clone & install BB-DOB
 cd "$REPO"
+if [ -d "$REPO/BB-DOB" ] && [ -z "$(ls -A "$REPO/BB-DOB")" ]; then
+  rmdir "$REPO/BB-DOB"
+fi
 if [ ! -d "$REPO/BB-DOB" ]; then
   git clone https://github.com/e5120/BB-DOB
+fi
+if [ ! -f "$REPO/BB-DOB/setup.py" ] && [ ! -f "$REPO/BB-DOB/pyproject.toml" ]; then
+  echo "[ERR] $REPO/BB-DOB missing setup.py/pyproject.toml. Remove the folder and re-run." >&2
+  exit 1
 fi
 pip install -e "$REPO/BB-DOB"
 
 # 5) Clone & install nasbench
+if [ -d "$REPO/nasbench" ] && [ -z "$(ls -A "$REPO/nasbench")" ]; then
+  rmdir "$REPO/nasbench"
+fi
 if [ ! -d "$REPO/nasbench" ]; then
   git clone https://github.com/google-research/nasbench
+fi
+if [ ! -f "$REPO/nasbench/setup.py" ] && [ ! -f "$REPO/nasbench/pyproject.toml" ]; then
+  echo "[ERR] $REPO/nasbench missing setup.py/pyproject.toml. Remove the folder and re-run." >&2
+  exit 1
 fi
 pip install -e "$REPO/nasbench"
 
