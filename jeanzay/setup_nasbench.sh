@@ -21,7 +21,9 @@ if ! conda env list | awk '{print $1}' | grep -Fxq "$ENV_NAME"; then
   conda env create -f "$REPO/jeanzay/environment.yml"
 fi
 
+set +u
 conda activate "$ENV_NAME"
+set -u
 
 python -m pip install --upgrade pip
 python -m pip install tensorflow==2.15.0 protobuf==3.20.3
