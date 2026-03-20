@@ -880,42 +880,34 @@ def write_latex_table(
             last_dim = dim
         # --- Fin de la logique de regroupement ---
 
-        # Ecriture de la ligne finale (Global ranking)
+        # Ecriture de la ligne finale (résumé formaté)
         f.write("        \\midrule\n")
         row = mean_row
-        rank_values = [v for v in (_parse_rank_value(row[i]) for i in rank_indices) if v is not None]
-        score_values = [v for v in (_parse_score_value(row[i]) for i in score_indices) if v is not None]
-        best_rank = min(rank_values) if rank_values else None
-        best_score = max(score_values) if score_values else None
-        
-        cells = []
-        for idx, val in enumerate(row):
-            if idx == 0:
-                cell = "\\multicolumn{3}{c}{\\textbf{Global ranking}}"
-            elif idx in (1, 2):
-                # On saute les colonnes 1 et 2 puisqu'elles sont absorbées par le multicolumn
-                continue
-            elif idx == 11:
-                if val == "—":
-                    cell = "—"
-                else:
-                    name_flat = re.sub(r"\s+", "", val)
-                    cell = f"\\mbox{{\\texttt{{{_latex_escape(name_flat)}}}}}"
-            else:
-                cell = _latex_escape(val)
+        svgd_mean_rank = _latex_escape(row[3])
+        svgd_mean_rel = _latex_escape(row[4])
 
-            if idx in rank_indices and best_rank is not None:
-                rank_val = _parse_rank_value(val)
-                if rank_val == best_rank:
-                    cell = _best_wrap(cell)
-            if idx in score_indices and best_score is not None:
-                score_val = _parse_score_value(val)
-                if score_val is not None and abs(score_val - best_score) <= 1e-9:
-                    cell = _best_wrap(cell)
-            
-            if idx not in (1, 2):
-                cells.append(cell)
-                
+        best_name_raw = row[11]
+        if best_name_raw == "—":
+            best_name_cell = "—"
+        else:
+            name_flat = re.sub(r"\s+", "", best_name_raw)
+            best_name_cell = f"\\textbf{{{_latex_escape(name_flat)}}}"
+
+        best_mean_rank = _latex_escape(row[12])
+        best_mean_rel = _latex_escape(row[13])
+
+        cells = [
+            "\\multicolumn{3}{c}{\\textbf{SVGD-EDA}}",
+            f"{svgd_mean_rank}",
+            f"{svgd_mean_rel}",
+            "\\multicolumn{2}{c}{}",
+            "\\multicolumn{2}{c}{}",
+            "\\multicolumn{2}{c}{}",
+            best_name_cell,
+            f"{best_mean_rank}",
+            f"{best_mean_rel}",
+        ]
+
         f.write("        " + " & ".join(cells) + " \\\\\n")
 
         f.write("        \\bottomrule\n")
@@ -1142,7 +1134,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Ask for config
-    config_name = input("Enter config name (e.g., krbf__advnormalizedfitness__M2__L14__eps0p025__g0p007__ds0p15__dm0p01): ").strip()
+    config_name = input("Enter config name (e.g., krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01): ").strip()
     config_dir = ROOT / "results" / "config" / config_name
     
     if not config_dir.exists():
