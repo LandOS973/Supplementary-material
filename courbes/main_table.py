@@ -289,6 +289,21 @@ def load_ranking(path: Path) -> List[tuple[str, float]]:
     return rows
 
 
+def collect_algos_from_rankings(pattern: str) -> set[str]:
+    ranking_dir = ROOT / "additional_results" / "global_ranking"
+    if not ranking_dir.exists():
+        return set()
+    algos: set[str] = set()
+    for rank_file in ranking_dir.glob(pattern):
+        with rank_file.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                name = (row.get("name_algo") or row.get("name") or row.get("algo") or "").strip()
+                if name:
+                    algos.add(name)
+    return algos
+
+
 def discover_instances() -> List[tuple[str, int, int, Optional[Path]]]:
     exp_root = ROOT / "results" / "experiments"
     if not exp_root.exists():
@@ -393,6 +408,29 @@ def build_rows(
     # sort instances for deterministic output
     instances = sorted(instances, key=lambda item: (item[0], item[1], item[2]))
 
+    excluded_from_count = {"PPO-EDA", "Tabu", "TABU"}
+
+    # Print algos missing from the /83 count per problem (based on global ranking files).
+    all_rank_algos = collect_algos_from_rankings("*_ranks.csv")
+    if all_rank_algos:
+        pb_algos_map: dict[str, set[str]] = {}
+        for pb in ("NK", "NK3", "QUBO"):
+            key = "UBQP" if pb == "QUBO" else pb
+            pb_algos_map[pb] = collect_algos_from_rankings(f"{key}_N_*_K_*_ranks.csv")
+
+        for pb in ("NK", "NK3", "QUBO"):
+            pb_algos = pb_algos_map[pb]
+            missing = sorted(all_rank_algos - pb_algos)
+            missing_text = ", ".join(missing) if missing else "aucun"
+            print(f"{pb} => algos non comptabilises dans le /83: {missing_text}")
+            for algo in missing:
+                present_in = [k for k, v in pb_algos_map.items() if algo in v]
+                if present_in:
+                    reason = f"absent des fichiers {pb} (present dans: {', '.join(present_in)})"
+                else:
+                    reason = f"absent de tous les fichiers de ranking"
+                print(f"{pb} => raison: {algo} : {reason}")
+
     for problem_name, dim, type_instance, exp_dir in instances:
         # Exclude specific problematic instance per user request
         if problem_name.upper() == "BLOCK" and dim == 2064 and type_instance == 16:
@@ -417,7 +455,7 @@ def build_rows(
         ranking = [
             (name, score)
             for name, score in ranking
-            if name not in {"PPO-EDA", "Tabu", "TABU"}
+            if name not in excluded_from_count
         ]
         ranking = sorted(ranking, key=lambda item: item[1], reverse=True)
         combined = list(ranking)
@@ -891,7 +929,7 @@ def write_latex_table(
             best_name_cell = "—"
         else:
             name_flat = re.sub(r"\s+", "", best_name_raw)
-            best_name_cell = f"\\textbf{{{_latex_escape(name_flat)}}}"
+            best_name_cell = f"\\multicolumn{{1}}{{r}}{{\\textbf{{{_latex_escape(name_flat)}}}}}"
 
         best_mean_rank = _latex_escape(row[12])
         best_mean_rel = _latex_escape(row[13])
