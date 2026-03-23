@@ -236,9 +236,6 @@ def main():
         print(f"  -> run {inst_name}")
         problem_ctx = _load_instances(inst, DEFAULTS["device"])
         nb_restarts = DEFAULTS["nb_restarts"]
-        if inst["name"] == "NK" and inst["dim"] >= 256 and inst["type_instance"] >= 8:
-            nb_restarts = min(nb_restarts, 3)
-            print(f"     [PRE] NK big instance, start nb_restarts={nb_restarts}")
 
         success = False
         t0 = time.time()

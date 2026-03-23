@@ -16,6 +16,7 @@ from environment.nk import get_Score_trajectoriesNK_cuda, getTensorInstances_NK
 from environment.qubo import get_Score_trajectoriesQUBO_cuda
 from main_expe_overall import (
     DEFAULTS,
+    _discover_nk3_instances,
     _discover_nk_instances,
     _discover_qubo_instances,
     _is_cuda_oom,
@@ -218,6 +219,79 @@ def _read_last_metric_score(metrics_path: Path):
         return None, None
 
 
+def _normalize_score_sign_local(problem_name: str, values):
+    if not values:
+        return values
+    if problem_name.upper() in ("QUBO", "UBQP"):
+        return [-val for val in values]
+    return values
+
+
+def _format_score(problem_name: str, value: float) -> str:
+    if problem_name.upper() in ("QUBO", "UBQP"):
+        return f"{value:.2f}"
+    return f"{value:.4f}"
+
+
+def _write_latex_table(config_dir: Path, rows: list[dict]) -> None:
+    if not rows:
+        return
+
+    order_problem = {"QUBO": 0, "UBQP": 0, "NK": 1, "NK3": 2}
+    rows_sorted = sorted(
+        rows, key=lambda r: (order_problem.get(r["problem"], 99), r["dim"], r["type_instance"])
+    )
+
+    lines = []
+    lines.append(r"\begin{table}[H]")
+    lines.append(r"\centering")
+    lines.append(r"\small")
+    lines.append(
+        r"\caption{Detailed comparison between Interacting Agents (SVGD-EDA) and Independent Agents. Bold values indicate the best average score between the two methods.}"
+    )
+    lines.append(r"\label{tab:interact_vs_no_interact}")
+    lines.append(r"\begin{tabular}{lrrccc}")
+    lines.append(r"\toprule")
+    lines.append(r"Problem & Dim (n) & Type/K & Score (Interact) & Score (No Interact) & Gap (\%) \\")
+    lines.append(r"\midrule")
+
+    prev_problem = None
+    prev_dim = None
+    for row in rows_sorted:
+        problem = row["problem"]
+        dim = row["dim"]
+        t = row["type_instance"]
+        score_int = row["score_interact"]
+        score_no = row["score_no_interact"]
+        gap_pct = row["gap_pct"]
+
+        if prev_problem is not None:
+            if problem != prev_problem or dim != prev_dim:
+                lines.append(r"\midrule")
+
+        best_int = row["best"] in ("interact", "both")
+        best_no = row["best"] in ("no_interact", "both")
+        s_int = _format_score(problem, score_int)
+        s_no = _format_score(problem, score_no)
+        if best_int:
+            s_int = rf"\best{{{s_int}}}"
+        if best_no:
+            s_no = rf"\best{{{s_no}}}"
+
+        gap_str = f"{gap_pct:+.2f}\\%"
+        lines.append(f"{problem} & {dim} & {t} & {s_int} & {s_no} & {gap_str} \\\\")
+
+        prev_problem = problem
+        prev_dim = dim
+
+    lines.append(r"\bottomrule")
+    lines.append(r"\end{tabular}")
+    lines.append(r"\end{table}")
+
+    latex_path = config_dir / "interact_vs_no_interact.tex"
+    latex_path.write_text("\n".join(lines) + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run no_interact batch with a given config.")
     parser.add_argument("--budget", type=int, default=RUN_BUDGET, help="Budget (default: 10000).")
@@ -249,9 +323,10 @@ def main() -> None:
     instances_root = repo_root / "source_code" / "instances"
     qubo_instances = _discover_qubo_instances(instances_root / "QUBO", DEFAULTS["nb_instances_test"])
     nk_instances = _discover_nk_instances(instances_root / "nk", DEFAULTS["nb_instances_test"])
-    instances = qubo_instances + nk_instances
+    nk3_instances = _discover_nk3_instances(instances_root / "nk3", DEFAULTS["nb_instances_test"])
+    instances = qubo_instances + nk_instances + nk3_instances
     if not instances:
-        raise SystemExit("Aucune instance QUBO/NK compatible avec nb_instances_test.")
+        raise SystemExit("Aucune instance QUBO/NK/NK3 compatible avec nb_instances_test.")
 
     _set_seeds(DEFAULTS["seed"])
     start_all = time.time()
@@ -267,9 +342,6 @@ def main() -> None:
         print(f"  -> run {inst_name}")
         problem_ctx = _load_instances(inst, DEFAULTS["device"])
         nb_restarts = DEFAULTS["nb_restarts"]
-        if inst["name"] == "NK" and inst["dim"] >= 256 and inst["type_instance"] >= 8:
-            nb_restarts = min(nb_restarts, 3)
-            print(f"     [PRE] NK big instance, start nb_restarts={nb_restarts}")
 
         success = False
         t0 = time.time()
@@ -318,6 +390,7 @@ def main() -> None:
     gap_values = []
     ranks_interact = []
     ranks_no = []
+    rows_for_latex = []
 
     for inst in instances:
         inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
@@ -330,13 +403,6 @@ def main() -> None:
         no_score, _ = _read_last_metric_score(no_metrics)
         if normal_score is None or no_score is None:
             continue
-
-        def _normalize_score_sign_local(problem_name: str, values):
-            if not values:
-                return values
-            if problem_name.upper() in ("QUBO", "UBQP"):
-                return [-val for val in values]
-            return values
 
         norm_norm = _normalize_score_sign_local(inst["name"], [normal_score])[0]
         norm_no = _normalize_score_sign_local(inst["name"], [no_score])[0]
@@ -371,6 +437,24 @@ def main() -> None:
         if rank_no is not None:
             ranks_no.append(rank_no)
 
+        # For LaTeX table
+        best = "both"
+        if norm_norm > norm_no:
+            best = "interact"
+        elif norm_no > norm_norm:
+            best = "no_interact"
+        rows_for_latex.append(
+            dict(
+                problem=inst["name"],
+                dim=inst["dim"],
+                type_instance=inst["type_instance"],
+                score_interact=norm_norm,
+                score_no_interact=norm_no,
+                gap_pct=gap_pct,
+                best=best,
+            )
+        )
+
     summary_path = config_dir / "interact_vs_no_interact.txt"
     with summary_path.open("w") as f:
         f.write("Interact vs No_Interact summary\n")
@@ -390,6 +474,8 @@ def main() -> None:
         for line in gap_lines:
             f.write(f"{line}\n")
     print(f"[DONE] Wrote summary to {summary_path}")
+    _write_latex_table(config_dir, rows_for_latex)
+    print(f"[DONE] Wrote LaTeX table to {config_dir / 'interact_vs_no_interact.tex'}")
     print(f"[DONE] no_interact batch finished in {time.time() - start_all:.2f}s")
 
 

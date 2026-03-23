@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 
 from main_plot import (
     _normalize_score_sign,
+    clip_series_to_budget,
     aggregate_quantile_stats,
     find_competitor_files,
     load_mean_across_runs,
@@ -32,6 +33,7 @@ from main_plot import (
 
 ROOT = Path(__file__).resolve().parent.parent
 INSTANCE_DIR_RE = re.compile(r"^(?P<problem>QUBO|NK)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
+MAX_BUDGET = 50000
 
 
 def _build_instance_list(config_dir: Path):
@@ -82,6 +84,7 @@ def _plot_comparison_vs_algos(instance, config_name: str, my_metrics: Path, outp
                 x_vals, y_vals = load_xy_from_csv(paths[0], has_header=True, x_key="runtime", y_key="mean")
         else:
             x_vals, y_vals = load_xy_from_csv(paths[0], has_header=False)
+        x_vals, y_vals = clip_series_to_budget(x_vals, y_vals, max_budget=MAX_BUDGET)
         y_vals = _normalize_score_sign(problem, y_vals)
         ax.plot(
             x_vals,
@@ -98,6 +101,7 @@ def _plot_comparison_vs_algos(instance, config_name: str, my_metrics: Path, outp
     my_filtered = [(x, y) for x, y in zip(my_x, my_y) if x >= 100]
     if my_filtered:
         my_x, my_y = zip(*my_filtered)
+        my_x, my_y = clip_series_to_budget(list(my_x), list(my_y), max_budget=MAX_BUDGET)
         my_y = _normalize_score_sign(problem, list(my_y))
         ax.plot(
             my_x,

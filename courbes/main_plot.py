@@ -17,8 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_KERNEL = "rbf"
 COMPETITOR_DIRS = [
-    Path("/home/landos/Downloads/resultAlgos/results_nevergrad_final"),
-    Path("/home/landos/Downloads/resultAlgos/results_EDAs_final"),
+    Path("/home/landos/Downloads/results_nevergrad_ppsn"),
 ]
 
 
@@ -234,6 +233,49 @@ def sort_by_x(x_vals: List[float], y_vals: List[float]) -> Tuple[List[float], Li
     return [p[0] for p in pairs], [p[1] for p in pairs]
 
 
+def clip_series_to_budget(
+    x_vals: List[float],
+    y_vals: List[float],
+    max_budget: float,
+    extend_last: bool = False,
+) -> Tuple[List[float], List[float]]:
+    if not x_vals:
+        return [], []
+
+    x_vals, y_vals = sort_by_x(x_vals, y_vals)
+    out_x: List[float] = []
+    out_y: List[float] = []
+
+    for x, y in zip(x_vals, y_vals):
+        if x < max_budget:
+            out_x.append(x)
+            out_y.append(y)
+            continue
+        if x == max_budget:
+            out_x.append(x)
+            out_y.append(y)
+            return out_x, out_y
+
+        # x > max_budget -> interpolate if possible
+        if out_x:
+            x0, y0 = out_x[-1], out_y[-1]
+            if x > x0:
+                yb = y0 + (y - y0) * (max_budget - x0) / (x - x0)
+            else:
+                yb = y0
+        else:
+            yb = y
+        out_x.append(max_budget)
+        out_y.append(yb)
+        return out_x, out_y
+
+    # All points are < max_budget
+    if extend_last:
+        out_x.append(max_budget)
+        out_y.append(out_y[-1])
+    return out_x, out_y
+
+
 def sort_by_x_with_std(
     x_vals: List[float], y_vals: List[float], std_vals: List[float]
 ) -> Tuple[List[float], List[float], List[float]]:
@@ -331,6 +373,7 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
     problem_name = str(context["problem_name"])
     dim = int(context["dim"])
     type_instance = int(context["type_instance"])
+    max_budget = int(context.get("max_budget", 50000))
 
     algos = load_top_algorithms(Path(ranking_path), limit=10, skip=("PPO-EDA",))
     best_kernel = find_best_kernel_summary(Path(experiment_dir), problem_name)
@@ -356,6 +399,7 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
                 )
         else:
             x_vals, y_vals = load_xy_from_csv(paths[0], has_header=False)
+        x_vals, y_vals = clip_series_to_budget(x_vals, y_vals, max_budget=max_budget)
         y_vals = _normalize_score_sign(problem_name, y_vals)
         ax.plot(
             x_vals,
@@ -376,6 +420,7 @@ def plot_comparison(context: dict[str, Path | str | int]) -> None:
     if not my_filtered:
         raise ValueError("No reinforce svgd data at step >= 100")
     my_x, my_y = zip(*my_filtered)
+    my_x, my_y = clip_series_to_budget(list(my_x), list(my_y), max_budget=max_budget)
     my_y = _normalize_score_sign(problem_name, list(my_y))
     ax.plot(
         my_x,
@@ -411,6 +456,7 @@ def plot_comparison_decay(context: dict[str, Path | str | int]) -> None:
     problem_name = str(context["problem_name"])
     dim = int(context["dim"])
     type_instance = int(context["type_instance"])
+    max_budget = int(context.get("max_budget", 50000))
 
     algos = load_top_algorithms(Path(ranking_path), limit=10, skip=("PPO-EDA",))
     best_kernel = find_best_kernel_summary(decay_dir, problem_name)
@@ -436,6 +482,7 @@ def plot_comparison_decay(context: dict[str, Path | str | int]) -> None:
                 )
         else:
             x_vals, y_vals = load_xy_from_csv(paths[0], has_header=False)
+        x_vals, y_vals = clip_series_to_budget(x_vals, y_vals, max_budget=max_budget)
         y_vals = _normalize_score_sign(problem_name, y_vals)
         ax.plot(
             x_vals,
@@ -456,6 +503,7 @@ def plot_comparison_decay(context: dict[str, Path | str | int]) -> None:
     if not my_filtered:
         raise ValueError("No reinforce svgd decay data at step >= 100")
     my_x, my_y = zip(*my_filtered)
+    my_x, my_y = clip_series_to_budget(list(my_x), list(my_y), max_budget=max_budget)
     my_y = _normalize_score_sign(problem_name, list(my_y))
     ax.plot(
         my_x,
