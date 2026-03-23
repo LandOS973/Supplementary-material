@@ -22,7 +22,7 @@ COMPETITOR_DIRS = [
 
 
 def _is_maximization_problem(problem_name: str) -> bool:
-    return problem_name.upper() in ("NK", "BLOCK")
+    return problem_name.upper() in ("NK", "NK3", "BLOCK")
 
 
 def _normalize_score_sign(problem_name: str, values: List[float]) -> List[float]:

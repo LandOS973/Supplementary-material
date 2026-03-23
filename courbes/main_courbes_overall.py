@@ -32,7 +32,7 @@ from main_plot import (
 
 
 ROOT = Path(__file__).resolve().parent.parent
-INSTANCE_DIR_RE = re.compile(r"^(?P<problem>QUBO|NK)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
+INSTANCE_DIR_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
 MAX_BUDGET = 50000
 
 
@@ -420,19 +420,32 @@ def main():
             continue
 
         output_dir = inst_dir / "plots"
+        output_dir.mkdir(parents=True, exist_ok=True)
         print(f"[INFO] Plotting {inst_dir.name} -> {output_dir}")
-        _plot_comparison_vs_algos(inst, config_name, my_metrics, output_dir)
-        _plot_top5_boxplot(inst, my_metrics, output_dir)
+        try:
+            _plot_comparison_vs_algos(inst, config_name, my_metrics, output_dir)
+        except Exception as exc:
+            print(f"[WARN] comparison failed for {inst_dir.name}: {exc}")
+        try:
+            _plot_top5_boxplot(inst, my_metrics, output_dir)
+        except Exception as exc:
+            print(f"[WARN] top5 boxplot failed for {inst_dir.name}: {exc}")
 
         no_interact_metrics = inst_dir / "no_interact" / "best_metrics.csv"
         if no_interact_metrics.exists():
-            _plot_interact_vs_no_interact(inst, my_metrics, no_interact_metrics, output_dir)
+            try:
+                _plot_interact_vs_no_interact(inst, my_metrics, no_interact_metrics, output_dir)
+            except Exception as exc:
+                print(f"[WARN] interact/no_interact failed for {inst_dir.name}: {exc}")
         else:
             print(f"[WARN] Missing {no_interact_metrics}. Skipping interact/no_interact plots.")
 
         no_repulsion_metrics = inst_dir / "no_repulsion" / "best_metrics.csv"
         if no_repulsion_metrics.exists():
-            _plot_normal_vs_no_repulsion(inst, my_metrics, no_repulsion_metrics, output_dir)
+            try:
+                _plot_normal_vs_no_repulsion(inst, my_metrics, no_repulsion_metrics, output_dir)
+            except Exception as exc:
+                print(f"[WARN] normal/no_repulsion failed for {inst_dir.name}: {exc}")
         else:
             print(f"[WARN] Missing {no_repulsion_metrics}. Skipping normal/no_repulsion plots.")
 
