@@ -22,7 +22,7 @@ from matplotlib import cm
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_ROOT = ROOT / "results" / "config"
-DEFAULT_M_VALUES = list(range(1, 21))
+DEFAULT_M_VALUES = list(range(1, 17))
 
 
 # -----------------------------
