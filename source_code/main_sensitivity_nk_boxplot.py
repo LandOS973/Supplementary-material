@@ -270,7 +270,7 @@ def main() -> None:
                 f"{stats.get('whishi'):.6f}" if stats.get("whishi") is not None else "",
             ])
 
-    output_dir = ROOT / "courbes" / "sensitivity_from_config" / config_name
+    output_dir = ROOT / "results" / "config" / config_name / "sensitivity"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary_csv = output_dir / "sensitivity_nk_from_config.csv"
