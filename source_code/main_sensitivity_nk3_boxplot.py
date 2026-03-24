@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Plot sensitivity boxplots for NK from existing config results.
+Plot sensitivity boxplots for NK3 from existing config results.
 
 This script does NOT run experiments. It:
 1) Asks for a config name that contains an "__M<value>" segment.
 2) Searches for M=1..20 variants under results/config.
-3) For each NK instance folder (NK_dimN_tK), reads the LAST row of best_metrics.csv.
+3) For each NK3 instance folder (NK3_dimN_tK), reads the LAST row of best_metrics.csv.
 4) Builds boxplots using the stored quantiles (2%, 25%, 50%, 75%, 98%) and mean.
 5) Writes a summary CSV + saves plots.
 """
@@ -102,7 +102,7 @@ def _build_box_stats(row: Dict[str, str]) -> Optional[Dict[str, float]]:
 
     whislo = _get_first_float(row, ["2%", "5%", "min"]) or q1
     whishi = _get_first_float(row, ["98%", "95%", "max"]) or q3
-    mean = _get_first_float(row, ["mean", "avg_score", "avg", "score_mean"]) 
+    mean = _get_first_float(row, ["mean", "avg_score", "avg", "score_mean"])
 
     return {
         "q1": q1,
@@ -119,13 +119,13 @@ def _build_box_stats(row: Dict[str, str]) -> Optional[Dict[str, float]]:
 # Data loading
 # -----------------------------
 
-def load_nk_stats_for_config(config_dir: Path) -> Dict[Tuple[int, int], Dict[str, float]]:
+def load_nk3_stats_for_config(config_dir: Path) -> Dict[Tuple[int, int], Dict[str, float]]:
     """Return {(N, K): stats} for a single config directory."""
     stats_by_instance: Dict[Tuple[int, int], Dict[str, float]] = {}
     for entry in config_dir.iterdir():
         if not entry.is_dir():
             continue
-        match = re.match(r"^NK_dim(?P<n>\d+)_t(?P<t>\d+)$", entry.name)
+        match = re.match(r"^NK3_dim(?P<n>\d+)_t(?P<t>\d+)$", entry.name)
         if not match:
             continue
         n = int(match.group("n"))
@@ -202,7 +202,7 @@ def plot_boxplots(stats_map: Dict[Tuple[int, int], Dict[int, Dict[str, float]]],
             if mean is not None:
                 ax.hlines(mean, m - half_w, m + half_w, colors="#000000", linewidth=2.0, zorder=3)
 
-        ax.set_title(f"NK (N={n}, K={k})", fontsize=18, fontweight="bold", pad=20)
+        ax.set_title(f"NK3 (N={n}, K={k})", fontsize=18, fontweight="bold", pad=20)
         ax.set_xlabel("Number of Agents (m)", fontsize=20, fontweight="bold")
         ax.set_ylabel("Fitness", fontsize=20, fontweight="bold")
         ax.set_xticks(m_values)
@@ -211,7 +211,7 @@ def plot_boxplots(stats_map: Dict[Tuple[int, int], Dict[int, Dict[str, float]]],
         ax.set_axisbelow(True)
         plt.tight_layout()
 
-        plot_path = output_dir / f"boxplot_NK_{n}_{k}.png"
+        plot_path = output_dir / f"boxplot_NK3_{n}_{k}.png"
         fig.savefig(plot_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
@@ -253,12 +253,12 @@ def main() -> None:
     summary_rows: List[List[str]] = []
 
     for m, cfg_dir in variants:
-        per_instance = load_nk_stats_for_config(cfg_dir)
+        per_instance = load_nk3_stats_for_config(cfg_dir)
         for (n, k), stats in per_instance.items():
             stats_map.setdefault((n, k), {})[m] = stats
 
             summary_rows.append([
-                "NK",
+                "NK3",
                 str(n),
                 str(k),
                 str(m),
@@ -273,7 +273,7 @@ def main() -> None:
     output_dir = ROOT / "results" / "config" / config_name / "sensitivity"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    summary_csv = output_dir / "sensitivity_nk_from_config.csv"
+    summary_csv = output_dir / "sensitivity_nk3_from_config.csv"
     write_summary_csv(summary_rows, summary_csv)
 
     plot_boxplots(stats_map, output_dir / "boxplots")
