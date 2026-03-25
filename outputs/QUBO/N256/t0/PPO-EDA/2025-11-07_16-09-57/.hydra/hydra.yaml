@@ -120,11 +120,11 @@ hydra:
     - agent.K_steps=4
     - agent.Beta_adapt=true
     - agent.M=1
-    - budget=10000
+    - budget=50000
   job:
     name: main_ppo_eda
     chdir: null
-    override_dirname: agent.Beta_adapt=true,agent.K_steps=4,agent.M=1,agent=ppo,budget=10000,device=cuda:0,dim=256,problem=qubo,type_instance=0
+    override_dirname: agent.Beta_adapt=true,agent.K_steps=4,agent.M=1,agent=ppo,budget=50000,device=cuda:0,dim=256,problem=qubo,type_instance=0
     id: ???
     num: ???
     config_name: config

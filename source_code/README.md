@@ -10,6 +10,16 @@ An example of python command to run the (sigma,simga')-RL-EDA version (reference
 
 python main_ppo_eda.py QUBO 128 0 --verbose 
 
+## Timing (CPU/GPU)
+
+To report compute times on your hardware (CPU vs GPU) for 1 and 100 instances, use:
+
+```
+python main_time.py
+```
+
+The script is interactive: it asks for the problem, dimension, budget, number of restarts, and whether to benchmark CPU and/or GPU. It runs SVGD-EDA (PPO-EDA) with the current default hyperparameters from `config/` and writes a summary to `results/timing/time_summary.csv`. Timing depends on hardware and chosen hyperparameters.
+
 
 ## Nevergrad competing algorithms
 

@@ -6,6 +6,7 @@ Outputs plots inside each instance directory.
 
 from __future__ import annotations
 
+import csv
 import os
 import re
 from itertools import cycle
@@ -24,6 +25,7 @@ from main_plot import (
     load_quantile_stats_at_final_step,
     load_top_algorithms,
     load_xy_from_csv,
+    parse_float,
     normalize_box_stats,
     plot_interact_vs_no_interact_series,
     plot_pair_series,
@@ -53,6 +55,85 @@ def _build_instance_list(config_dir: Path):
             )
         )
     return instances
+
+
+def _read_score_at_budget(path: Path, budget: int) -> float | None:
+    """Return score at exact budget if present, else the last available score."""
+    try:
+        with path.open(newline="") as handle:
+            reader = csv.reader(handle)
+            header = next(reader, None)
+            runtime_idx = 0
+            score_idx = 1
+            first_data_row: list[str] | None = None
+            if header:
+                lower = [cell.strip().lower() for cell in header]
+                if "runtime" in lower or "score" in lower:
+                    if "runtime" in lower:
+                        runtime_idx = lower.index("runtime")
+                    if "score" in lower:
+                        score_idx = lower.index("score")
+                else:
+                    # Headerless file: treat first row as data if numeric.
+                    if parse_float(header[0].strip()) is not None and parse_float(header[1].strip()) is not None:
+                        first_data_row = header
+
+            last_score: float | None = None
+            score_at_budget: float | None = None
+            if first_data_row is not None:
+                runtime = parse_float(first_data_row[runtime_idx].strip())
+                score = parse_float(first_data_row[score_idx].strip())
+                if runtime is not None and score is not None:
+                    last_score = score
+                    if abs(runtime - budget) < 1e-9:
+                        score_at_budget = score
+            for row in reader:
+                if len(row) <= max(runtime_idx, score_idx):
+                    continue
+                runtime = parse_float(row[runtime_idx].strip())
+                score = parse_float(row[score_idx].strip())
+                if runtime is None or score is None:
+                    continue
+                last_score = score
+                if abs(runtime - budget) < 1e-9:
+                    score_at_budget = score
+            return score_at_budget if score_at_budget is not None else last_score
+    except OSError:
+        return None
+
+
+def _percentile(sorted_values: list[float], p: float) -> float:
+    if not sorted_values:
+        raise ValueError("Empty list")
+    if p <= 0:
+        return sorted_values[0]
+    if p >= 1:
+        return sorted_values[-1]
+    k = (len(sorted_values) - 1) * p
+    f = int(k)
+    c = min(f + 1, len(sorted_values) - 1)
+    if f == c:
+        return sorted_values[f]
+    return sorted_values[f] * (c - k) + sorted_values[c] * (k - f)
+
+
+def _aggregate_final_scores_from_runs(paths: list[Path], budget: int) -> dict[str, float] | None:
+    scores: list[float] = []
+    for path in paths:
+        score = _read_score_at_budget(path, budget)
+        if score is not None:
+            scores.append(score)
+    if not scores:
+        return None
+    scores.sort()
+    return {
+        "low": _percentile(scores, 0.02),
+        "q1": _percentile(scores, 0.25),
+        "med": _percentile(scores, 0.50),
+        "q3": _percentile(scores, 0.75),
+        "high": _percentile(scores, 0.98),
+        "mean": sum(scores) / len(scores),
+    }
 
 
 def _plot_comparison_vs_algos(instance, config_name: str, my_metrics: Path, output_dir: Path):
@@ -154,9 +235,19 @@ def _plot_top5_boxplot(instance, my_metrics: Path, output_dir: Path):
             print(f"[WARN] {exc}. Skipping.")
             continue
         if not has_header:
-            print(f"[WARN] Missing quantile headers for {algo}. Skipping.")
-            continue
-        stats = aggregate_quantile_stats(paths, problem_name=problem)
+            run_stats = _aggregate_final_scores_from_runs(paths, MAX_BUDGET)
+            if not run_stats:
+                print(f"[WARN] Missing quantiles for {algo}. Skipping.")
+                continue
+            stats = normalize_box_stats(problem, run_stats)
+        else:
+            stats = aggregate_quantile_stats(paths, problem_name=problem)
+            if not stats:
+                run_stats = _aggregate_final_scores_from_runs(paths, MAX_BUDGET)
+                if not run_stats:
+                    print(f"[WARN] Missing quantiles for {algo}. Skipping.")
+                    continue
+                stats = normalize_box_stats(problem, run_stats)
         if not stats:
             print(f"[WARN] Missing quantiles for {algo}. Skipping.")
             continue
@@ -204,7 +295,7 @@ def _plot_interact_vs_no_interact(instance, interact_path: Path, no_interact_pat
         y_int,
         x_no,
         y_no,
-        title=f"Average Score: interact vs no_interact ({problem} N={dim}, K={t}, budget=10000)",
+        title=f"Average Score: interact vs no_interact ({problem} N={dim}, K={t}, budget=50000)",
         ylabel="Average score",
         output_path=output_dir / "avg_score_interact_vs_no_interact.png",
         std_int=std_int,
@@ -217,7 +308,7 @@ def _plot_interact_vs_no_interact(instance, interact_path: Path, no_interact_pat
             std_int,
             x_no,
             std_no,
-            title=f"Std: interact vs no_interact ({problem} N={dim}, K={t}, budget=10000)",
+            title=f"Std: interact vs no_interact ({problem} N={dim}, K={t}, budget=50000)",
             ylabel="Std",
             output_path=output_dir / "std_interact_vs_no_interact.png",
         )

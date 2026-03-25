@@ -95,6 +95,6 @@ if [ ! -f "$DATA_DIR/nasbench_full.tfrecord" ]; then
 fi
 
 # 9) Quick smoke test
-python "$REPO/source_code/main.py" problem=nasbench nb_instances_test=1 budget=10000
+python "$REPO/source_code/main.py" problem=nasbench nb_instances_test=1 budget=50000
 
 echo "[DONE] NASBench env setup complete."

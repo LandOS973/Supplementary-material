@@ -1225,7 +1225,7 @@ def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) ->
     )
 
     title = (
-        f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=10000)"
+        f"Average Score: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=50000)"
     )
     plot_interact_vs_no_interact_series(
         x_int,
@@ -1253,7 +1253,7 @@ def plot_kernel_interact_vs_no_interact(context: dict[str, Path | str | int]) ->
             std_int,
             x_no,
             std_no,
-            title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            title=f"Std: interact vs no_interact ({problem_name} N={dim}, K={type_instance}, budget=50000)",
             ylabel="Std",
             output_path=output_dir / "std_interact_vs_no_interact.png",
         )
@@ -1295,7 +1295,7 @@ def plot_decay_comparison(context: dict[str, Path | str | int]) -> None:
     )
 
     title = (
-        f"Average Score: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)"
+        f"Average Score: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=50000)"
     )
     label_norm = f"normal ({best_kernel_normal})"
     label_decay = f"decay ({best_kernel_decay})"
@@ -1336,7 +1336,7 @@ def plot_decay_comparison(context: dict[str, Path | str | int]) -> None:
             std_norm,
             x_decay,
             std_decay,
-            title=f"Std: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            title=f"Std: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=50000)",
             ylabel="Std",
             output_path=output_dir / "std_normal_vs_decay.png",
             label_a=label_norm,
@@ -1358,7 +1358,7 @@ def plot_decay_comparison(context: dict[str, Path | str | int]) -> None:
             y_norm_h,
             x_decay_h,
             y_decay_h,
-            title=f"Average Hamming: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            title=f"Average Hamming: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=50000)",
             ylabel="Average hamming",
             output_path=output_dir / "hamming_normal_vs_decay.png",
             label_a=label_norm,
@@ -1378,7 +1378,7 @@ def plot_decay_comparison(context: dict[str, Path | str | int]) -> None:
             y_norm_l1,
             x_decay_l1,
             y_decay_l1,
-            title=f"Average L1: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=10000)",
+            title=f"Average L1: normal vs decay ({problem_name} N={dim}, K={type_instance}, budget=50000)",
             ylabel="Average L1",
             output_path=output_dir / "l1_normal_vs_decay.png",
             label_a=label_norm,

@@ -13017,7 +13017,7 @@ Run main_expe
 [INFO] Instance NK_dim64_t4
   [SKIP] NK_dim64_t4 deja present dans no_interact
 [INFO] Instance NK_dim64_t8
-  -> kernel=jsd M=5 lambda=15 eps=0.01 gamma=0.0005 budget=10000
+  -> kernel=jsd M=5 lambda=15 eps=0.01 gamma=0.0005 budget=50000
     avg_score=0.726897 runtime=1.74s
 [INFO] Instance NK_dim128_t4
   [SKIP] NK_dim128_t4 deja present dans no_interact
@@ -13042,7 +13042,7 @@ Run main_expe
 [INFO] Instance QUBO_dim128_t1
   [SKIP] QUBO_dim128_t1 deja present dans no_interact
 [INFO] Instance QUBO_dim128_t2
-  -> kernel=jsd M=10 lambda=15 eps=0.01 gamma=0.0001 budget=10000
+  -> kernel=jsd M=10 lambda=15 eps=0.01 gamma=0.0001 budget=50000
     avg_score=-306.779999 runtime=0.83s
 [INFO] Instance QUBO_dim128_t3
   [SKIP] QUBO_dim128_t3 deja present dans no_interact

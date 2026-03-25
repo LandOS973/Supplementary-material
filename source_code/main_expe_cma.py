@@ -60,7 +60,7 @@ DEFAULTS = dict(
     seed=0,
     nb_instances_test=10,
     nb_restarts=10,
-    budget=10000,
+    budget=50000,
     visualization=False,
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
