@@ -19,6 +19,7 @@ COMPETITOR_DIRS = [
     Path("/home/landos/Downloads/results_nevergrad_ppsn"),
 ]
 DEFAULT_BUDGET = 50000
+EXCLUDED_TABLE_PROBLEMS = {"QUBO", "UBQP"}
 
 
 def parse_summary_file(path: Path) -> dict[str, str]:
@@ -367,6 +368,10 @@ def wrap_name(name: str | None, width: int = 18) -> str:
     return textwrap.fill(name, width=width)
 
 
+def include_problem_in_table(problem_name: str) -> bool:
+    return problem_name.upper() not in EXCLUDED_TABLE_PROBLEMS
+
+
 def build_rows(
     methods: List[str], config_dir: Path
 ) -> tuple[
@@ -380,7 +385,7 @@ def build_rows(
     best_other_map: dict[tuple[str, int, int], str | None] = {}
 
     # Gather instances from results/experiments
-    instances = list(discover_instances())
+    instances = [item for item in discover_instances() if include_problem_in_table(item[0])]
 
     # Also gather instances present in the config directory (to ensure none missing)
     if config_dir.exists():
@@ -390,16 +395,20 @@ def build_rows(
             if not match:
                 continue
             name = match.group("name")
+            if not include_problem_in_table(name):
+                continue
             dim = int(match.group("dim"))
             type_instance = int(match.group("t"))
             key = (name, dim, type_instance)
             if key not in {(i[0], i[1], i[2]) for i in instances}:
                 instances.append((name, dim, type_instance, entry))
 
-    # Also gather instances present in global rankings (NK3, NK, QUBO)
+    # Also gather instances present in global rankings, then keep only included problems.
     ranking_instances = discover_instances_from_rankings()
     existing_keys = {(i[0], i[1], i[2]) for i in instances}
     for name, dim, type_instance, _ in ranking_instances:
+        if not include_problem_in_table(name):
+            continue
         key = (name, dim, type_instance)
         if key not in existing_keys:
             instances.append((name, dim, type_instance, None))
@@ -410,15 +419,19 @@ def build_rows(
 
     excluded_from_count = {"PPO-EDA", "Tabu", "TABU"}
 
-    # Print algos missing from the /83 count per problem (based on global ranking files).
-    all_rank_algos = collect_algos_from_rankings("*_ranks.csv")
+    # Print algos missing from the /83 count per retained problem (based on global ranking files).
+    included_ranking_problems = [pb for pb in ("NK", "NK3", "QUBO") if include_problem_in_table(pb)]
+    all_rank_algos: set[str] = set()
+    for pb in included_ranking_problems:
+        key = "UBQP" if pb == "QUBO" else pb
+        all_rank_algos |= collect_algos_from_rankings(f"{key}_N_*_K_*_ranks.csv")
     if all_rank_algos:
         pb_algos_map: dict[str, set[str]] = {}
-        for pb in ("NK", "NK3", "QUBO"):
+        for pb in included_ranking_problems:
             key = "UBQP" if pb == "QUBO" else pb
             pb_algos_map[pb] = collect_algos_from_rankings(f"{key}_N_*_K_*_ranks.csv")
 
-        for pb in ("NK", "NK3", "QUBO"):
+        for pb in included_ranking_problems:
             pb_algos = pb_algos_map[pb]
             missing = sorted(all_rank_algos - pb_algos)
             missing_text = ", ".join(missing) if missing else "aucun"
@@ -432,6 +445,8 @@ def build_rows(
                 print(f"{pb} => raison: {algo} : {reason}")
 
     for problem_name, dim, type_instance, exp_dir in instances:
+        if not include_problem_in_table(problem_name):
+            continue
         # Exclude specific problematic instance per user request
         if problem_name.upper() == "BLOCK" and dim == 2064 and type_instance == 16:
             continue

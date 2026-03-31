@@ -221,6 +221,20 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         samples = samples_agents.view(B, λ_total, N).unsqueeze(-1)
         return samples
 
+    def sample_greedy_agent_solutions(self):
+        """
+        Génère une solution déterministe par agent :
+        - binaire : arrondi (p >= 0.5)
+        - catégoriel : argmax.
+        Retourne (B, M, N, 1).
+        """
+        probs = self.forward()
+        if self.use_categorical:
+            greedy = torch.argmax(probs, dim=-1)  # (B, M, N)
+            return greedy.unsqueeze(-1).float()
+        greedy = (probs >= 0.5).float()  # (B, M, N)
+        return greedy.unsqueeze(-1)
+
     def updateDistribution(self, solutionList, scoreList):
         """
         Applique la mise à jour REINFORCE suivie de SVGD entre agents (si activé).

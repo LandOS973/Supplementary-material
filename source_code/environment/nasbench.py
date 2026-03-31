@@ -24,10 +24,64 @@ def get_Score_trajectories_nasbench_cuda(
 
     bestScore = torch.ones(nb_instances, device=device) * (-99999)
     size_pop = strategy.lambda_
-    nb_iterations = budget // size_pop
+    greedy_sampler = getattr(strategy, "sample_greedy_agent_solutions", None)
+    greedy_agent_count = int(getattr(strategy, "M", 0))
+    agent_lambdas = getattr(strategy, "agent_lambdas", None)
+    track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
+    agent_best_overall = None
+    if track_leader:
+        agent_best_overall = [torch.ones(nb_instances, device=device) * (-99999) for _ in agent_lambdas]
+    if greedy_agent_count <= 0 and isinstance(agent_lambdas, (list, tuple)):
+        greedy_agent_count = len(agent_lambdas)
+    use_greedy_final = callable(greedy_sampler) and greedy_agent_count > 0 and budget >= greedy_agent_count
+
+    stochastic_budget = budget - greedy_agent_count if use_greedy_final else budget
+    nb_iterations = stochastic_budget // size_pop
+    stochastic_remainder = stochastic_budget - (nb_iterations * size_pop)
 
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
+
+    def _evaluate_population(tensor_solution):
+        pop_size = tensor_solution.size(1)
+        tensor_solution_oh = torch.nn.functional.one_hot(
+            tensor_solution.squeeze(-1).long(), num_classes=3
+        ).float()
+        tensor_solution_cpu = tensor_solution_oh.cpu().numpy()
+        tensor_score = torch.zeros((nb_instances, pop_size), device=device)
+        for i in range(nb_instances):
+            for j in range(pop_size):
+                solution = tensor_solution_cpu[i, j].astype(np.float32)
+                evals, _info = objective(solution)
+                tensor_score[i, j] = -float(evals[0])
+        return tensor_score
+
+    def _update_agent_best_overall(tensor_score, greedy_one_per_agent=False):
+        if not (track_leader and agent_best_overall is not None):
+            return
+        if greedy_one_per_agent:
+            num_agents = min(len(agent_lambdas), tensor_score.size(1))
+            for idx in range(num_agents):
+                agent_scores = tensor_score[:, idx]
+                agent_best_overall[idx] = torch.where(
+                    agent_scores > agent_best_overall[idx],
+                    agent_scores,
+                    agent_best_overall[idx],
+                )
+            return
+        start_idx = 0
+        for idx, agent_lambda in enumerate(agent_lambdas):
+            if start_idx >= tensor_score.size(1):
+                break
+            end_idx = min(start_idx + agent_lambda, tensor_score.size(1))
+            agent_scores = tensor_score[:, start_idx:end_idx]
+            agent_best_values, _ = torch.max(agent_scores, dim=1)
+            agent_best_overall[idx] = torch.where(
+                agent_best_values > agent_best_overall[idx],
+                agent_best_values,
+                agent_best_overall[idx],
+            )
+            start_idx = end_idx
 
     runtime_steps = []
     best_fitness_history = []
@@ -55,17 +109,8 @@ def get_Score_trajectories_nasbench_cuda(
 
     for epoch in pbar:
         tensor_solution = strategy.sample_solutions()  # (B, lambda, N, 1)
-        tensor_solution_oh = torch.nn.functional.one_hot(
-            tensor_solution.squeeze(-1).long(), num_classes=3
-        ).float()
-        tensor_solution_cpu = tensor_solution_oh.cpu().numpy()
-
-        tensor_score = torch.zeros((nb_instances, size_pop), device=device)
-        for i in range(nb_instances):
-            for j in range(size_pop):
-                solution = tensor_solution_cpu[i, j].astype(np.float32)
-                evals, _info = objective(solution)
-                tensor_score[i, j] = -float(evals[0])
+        tensor_score = _evaluate_population(tensor_solution)
+        _update_agent_best_overall(tensor_score, greedy_one_per_agent=False)
 
         current_score = torch.max(tensor_score, dim=1).values
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
@@ -118,6 +163,46 @@ def get_Score_trajectories_nasbench_cuda(
                     f"{_2per},{_5per},{_10per},{_25per},{median},"
                     f"{_75per},{_90per},{_95per},{_98per}\n"
                 )
+
+    if use_greedy_final and stochastic_remainder > 0:
+        tensor_solution = strategy.sample_solutions()[:, :stochastic_remainder, :, :]
+        tensor_score = _evaluate_population(tensor_solution)
+        _update_agent_best_overall(tensor_score, greedy_one_per_agent=False)
+        current_score = torch.max(tensor_score, dim=1).values
+        bestScore = torch.where(current_score > bestScore, current_score, bestScore)
+
+    if use_greedy_final:
+        agent_best_before_greedy = None
+        if track_leader and agent_best_overall is not None:
+            agent_best_before_greedy = [agent_scores.clone() for agent_scores in agent_best_overall]
+        tensor_solution = strategy.sample_greedy_agent_solutions()[:, :greedy_agent_count, :, :]
+        tensor_score = _evaluate_population(tensor_solution)
+        if agent_best_before_greedy is not None and tensor_score.size(1) > 0:
+            num_agents_for_count = min(len(agent_best_before_greedy), tensor_score.size(1))
+            gains = []
+            for agent_idx in range(num_agents_for_count):
+                gains.append(tensor_score[:, agent_idx] - agent_best_before_greedy[agent_idx])
+            gains = torch.stack(gains, dim=1)
+            improved_mask = gains > 0
+            improved_agents_count = improved_mask.sum(dim=1).detach().cpu()
+            positive_gain_sum = torch.where(improved_mask, gains, torch.zeros_like(gains)).sum(dim=1).detach().cpu()
+
+            if verbose:
+                print("Agents qui ameliorent leur score final par instance:")
+                for inst_idx in range(int(improved_agents_count.numel())):
+                    count = int(improved_agents_count[inst_idx].item())
+                    mean_gain = (
+                        float(positive_gain_sum[inst_idx].item()) / float(count)
+                        if count > 0
+                        else 0.0
+                    )
+                    print(
+                        f"Instance {inst_idx + 1} => nb d'agent qui ameliorent le score "
+                        f"{count} ({mean_gain:+.4f} de score en moyenne)"
+                    )
+        _update_agent_best_overall(tensor_score, greedy_one_per_agent=True)
+        current_score = torch.max(tensor_score, dim=1).values
+        bestScore = torch.where(current_score > bestScore, current_score, bestScore)
 
     bestScore_np = bestScore.detach().cpu().numpy()
     if return_history:

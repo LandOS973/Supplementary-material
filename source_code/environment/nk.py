@@ -145,7 +145,15 @@ def get_Score_trajectoriesNK_cuda(
 
 
 
-    nb_iterations = budget//size_pop
+    greedy_sampler = getattr(strategy, "sample_greedy_agent_solutions", None)
+    greedy_agent_count = int(getattr(strategy, "M", 0))
+    if greedy_agent_count <= 0 and isinstance(agent_lambdas, (list, tuple)):
+        greedy_agent_count = len(agent_lambdas)
+    use_greedy_final = callable(greedy_sampler) and greedy_agent_count > 0 and budget >= greedy_agent_count
+
+    stochastic_budget = budget - greedy_agent_count if use_greedy_final else budget
+    nb_iterations = stochastic_budget // size_pop
+    stochastic_remainder = stochastic_budget - (nb_iterations * size_pop)
 
 
     avg_hamming_history = []
@@ -182,6 +190,51 @@ def get_Score_trajectoriesNK_cuda(
     use_tqdm = bool(verbose and enable_visualization)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
 
+    def _evaluate_population(tensor_solution):
+        pop_size = tensor_solution.size(1)
+        tensor_solution_rep = torch.transpose(tensor_solution, 2, 3).repeat([1, 1, N, 1])
+        tensor_solution_locus = torch.gather(
+            input=tensor_solution_rep,
+            dim=3,
+            index=tensor_matrix_locus[:, :pop_size, :, :],
+        )
+        tensor_solution_locus = tensor_solution_locus.float()
+        index_th = torch.sum(tensor_solution_locus * vectorIndex, dim=3).type(torch.int64).unsqueeze(3)
+        contrib = tensor_matrix_contrib
+        if contrib.dim() == 3:
+            contrib = contrib.unsqueeze(1)
+        if contrib.size(1) != pop_size:
+            contrib = contrib.expand(-1, pop_size, -1, -1)
+        return torch.sum(contrib.gather(3, index_th), dim=2).squeeze(2)
+
+    def _update_agent_best_overall(tensor_score, greedy_one_per_agent=False):
+        if not (track_leader and agent_best_overall is not None):
+            return
+        if greedy_one_per_agent:
+            num_agents = min(len(agent_lambdas), tensor_score.size(1))
+            for idx in range(num_agents):
+                agent_scores = tensor_score[:, idx]
+                agent_best_overall[idx] = torch.where(
+                    agent_scores > agent_best_overall[idx],
+                    agent_scores,
+                    agent_best_overall[idx],
+                )
+            return
+        start_idx = 0
+        for idx, agent_lambda in enumerate(agent_lambdas):
+            if start_idx >= tensor_score.size(1):
+                break
+            end_idx = min(start_idx + agent_lambda, tensor_score.size(1))
+            agent_scores = tensor_score[:, start_idx:end_idx]
+            agent_best_values, _ = torch.max(agent_scores, dim=1)
+            agent_best_overall[idx] = torch.where(
+                agent_best_values > agent_best_overall[idx],
+                agent_best_values,
+                agent_best_overall[idx],
+            )
+            start_idx = end_idx
+
+    bestGlobalSolution = None
 
 
 
@@ -210,16 +263,7 @@ def get_Score_trajectoriesNK_cuda(
         # #
 
         #Compute score
-        tensor_solution_rep = torch.transpose(tensor_solution, 2,3).repeat([1, 1, N, 1])
-        tensor_solution_locus = torch.gather(input=tensor_solution_rep, dim=3, index=tensor_matrix_locus)
-        tensor_solution_locus = tensor_solution_locus.float()
-        index_th = torch.sum(tensor_solution_locus*vectorIndex, dim=3).type(torch.int64).unsqueeze(3)
-        contrib = tensor_matrix_contrib
-        if contrib.dim() == 3:
-            contrib = contrib.unsqueeze(1)
-        if contrib.size(1) != index_th.size(1):
-            contrib = contrib.expand(-1, index_th.size(1), -1, -1)
-        tensor_score = torch.sum(contrib.gather(3, index_th), dim=2).squeeze(2)
+        tensor_score = _evaluate_population(tensor_solution)
 
 
         #print("tensor score")
@@ -256,7 +300,7 @@ def get_Score_trajectoriesNK_cuda(
         index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1,1,N,1)
         best_current_solution = torch.gather(tensor_solution, 1 , index_solution).squeeze(3).squeeze(1)
 
-        if(epoch == 0):
+        if bestGlobalSolution is None:
             bestGlobalSolution = best_current_solution
         else:
             tmp_current_score = current_score.unsqueeze(1).repeat(1,N)
@@ -362,6 +406,83 @@ def get_Score_trajectoriesNK_cuda(
             pbar.set_postfix(**postfix)
 
 
+
+    if use_greedy_final and stochastic_remainder > 0:
+        tensor_solution = strategy.sample_solutions()[:, :stochastic_remainder, :, :]
+        tensor_score = _evaluate_population(tensor_solution)
+        _update_agent_best_overall(tensor_score, greedy_one_per_agent=False)
+        current_score = torch.max(tensor_score, dim=1).values
+        index_solution = torch.argmax(tensor_score, dim=1)
+        index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1, 1, N, 1)
+        best_current_solution = torch.gather(tensor_solution, 1, index_solution).squeeze(3).squeeze(1)
+        if bestGlobalSolution is None:
+            bestGlobalSolution = best_current_solution
+        else:
+            tmp_current_score = current_score.unsqueeze(1).repeat(1, N)
+            tmp_bestScore = bestScore.unsqueeze(1).repeat(1, N)
+            bestGlobalSolution = torch.where(tmp_current_score > tmp_bestScore, best_current_solution, bestGlobalSolution)
+        bestScore = torch.where(current_score > bestScore, current_score, bestScore)
+
+    if use_greedy_final:
+        best_before_greedy = bestScore.clone()
+        agent_best_before_greedy = None
+        if track_leader and agent_best_overall is not None:
+            agent_best_before_greedy = [agent_scores.clone() for agent_scores in agent_best_overall]
+        tensor_solution = strategy.sample_greedy_agent_solutions()[:, :greedy_agent_count, :, :]
+        tensor_score = _evaluate_population(tensor_solution)
+        current_score = torch.max(tensor_score, dim=1).values
+        if agent_best_before_greedy is not None and tensor_score.size(1) > 0:
+            num_agents_for_count = min(len(agent_best_before_greedy), tensor_score.size(1))
+            gains = []
+            for agent_idx in range(num_agents_for_count):
+                gains.append(tensor_score[:, agent_idx] - agent_best_before_greedy[agent_idx])
+            gains = torch.stack(gains, dim=1)
+            improved_mask = gains > 0
+            improved_agents_count = improved_mask.sum(dim=1).detach().cpu()
+            positive_gain_sum = torch.where(improved_mask, gains, torch.zeros_like(gains)).sum(dim=1).detach().cpu()
+
+            total_cases = int(improved_agents_count.numel())
+            restarts_group = int(nb_restarts) if (int(nb_restarts) > 0 and total_cases % int(nb_restarts) == 0) else 1
+            grouped_instances = total_cases // restarts_group
+
+            if verbose:
+                suffix = f" (moyenne sur {restarts_group} restarts)" if restarts_group > 1 else ""
+                print(f"Agents qui ameliorent leur score final par instance{suffix}:")
+                for inst_idx in range(grouped_instances):
+                    start = inst_idx * restarts_group
+                    end = start + restarts_group
+                    count_slice = improved_agents_count[start:end].float()
+                    gain_slice = positive_gain_sum[start:end]
+                    mean_count = float(count_slice.mean().item())
+                    improved_total = float(count_slice.sum().item())
+                    mean_gain_raw = float(gain_slice.sum().item() / improved_total) if improved_total > 0 else 0.0
+                    mean_gain = mean_gain_raw / float(N)
+                    count_str = (
+                        f"{mean_count:.2f}".rstrip("0").rstrip(".")
+                        if restarts_group > 1
+                        else str(int(mean_count))
+                    )
+                    print(
+                        f"Instance {inst_idx + 1} => nb d'agent qui ameliorent le score "
+                        f"{count_str} ({mean_gain:+.4f} de score normalise en moyenne)"
+                    )
+        _update_agent_best_overall(tensor_score, greedy_one_per_agent=True)
+        improved_idx = torch.where(current_score > best_before_greedy)[0]
+        if verbose and improved_idx.numel() > 0:
+            idx = int(improved_idx[0].item())
+            print("--- DEBUG GREEDY ---")
+            print(f"Record historique (meilleur des {budget}) : {-best_before_greedy[idx].item()/N}")
+            print(f"Score de la solution 'Pure' (Greedy)  : {-current_score[idx].item()/N}")
+        index_solution = torch.argmax(tensor_score, dim=1)
+        index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1, 1, N, 1)
+        best_current_solution = torch.gather(tensor_solution, 1, index_solution).squeeze(3).squeeze(1)
+        if bestGlobalSolution is None:
+            bestGlobalSolution = best_current_solution
+        else:
+            tmp_current_score = current_score.unsqueeze(1).repeat(1, N)
+            tmp_bestScore = bestScore.unsqueeze(1).repeat(1, N)
+            bestGlobalSolution = torch.where(tmp_current_score > tmp_bestScore, best_current_solution, bestGlobalSolution)
+        bestScore = torch.where(current_score > bestScore, current_score, bestScore)
 
     bestScore_np = -bestScore.detach().cpu().numpy()/N
     if track_leader and enable_visualization and agent_best_overall is not None and hasattr(strategy, "agents"):

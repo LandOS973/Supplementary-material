@@ -1,5 +1,5 @@
 defaults:
-  - problem: qubo # qubo / nk / blockwise
+  - problem: nk3 # qubo / nk / blockwise
   - agent: reinforce
   - _self_
 
@@ -10,7 +10,7 @@ output_dir: outputs
 nb_instances_test: 10
 nb_restarts: 10
 budget: 50000
-visualization: true
+visualization: false
 
 strategy_variants:
   - label: Baseline

@@ -260,6 +260,7 @@ def _run_once(
             tensor_matrix_contrib,
             device,
             verbose=False,
+            enable_visualization=False,
             return_history=False,
         )
     elif type_problem == "BLOCK":
@@ -451,9 +452,8 @@ def main() -> None:
 
     # Global run parameters (no extra prompts)
     budget = int(base_cfg.get("budget", 50000))
-    nb_restarts = int(base_cfg.get("nb_restarts", 10))
     instance_counts = [1, 100]
-    repeats = 1
+    repeats = 3
 
     # Devices (always yes)
     devices = [torch.device("cpu")]
@@ -496,13 +496,26 @@ def main() -> None:
         for (dim, type_instance, available) in problem_pairs:
             for device in devices:
                 for count in instance_counts:
+                    target_count = int(count)
+                    if target_count <= 0:
+                        continue
+
                     if available is None:
-                        used_instances = count
+                        max_unique_instances = min(target_count, 10)
                     else:
-                        used_instances = min(count, int(available))
-                    if used_instances <= 0:
+                        max_unique_instances = min(int(available), target_count, 10)
+
+                    if max_unique_instances <= 0:
                         print(f"[SKIP] {problem_name} dim={dim} t={type_instance} (no instances)")
                         continue
+
+                    if target_count == 1:
+                        used_instances = 1
+                        current_restarts = 1
+                    else:
+                        used_instances = max_unique_instances
+                        current_restarts = max(1, int(round(target_count / float(used_instances))))
+
                     times = []
                     for _ in range(repeats):
                         try:
@@ -512,7 +525,7 @@ def main() -> None:
                                 dim=dim,
                                 type_instance=type_instance,
                                 nb_instances=used_instances,
-                                nb_restarts=nb_restarts,
+                                nb_restarts=current_restarts,
                                 budget=budget,
                                 lambda_=int(cfg["lambda"]),
                                 m_agents=int(cfg["M"]),
@@ -542,9 +555,9 @@ def main() -> None:
                         "problem": problem_name,
                         "dim": dim,
                         "type_instance": type_instance,
-                        "instances_req": count,
+                        "instances_req": target_count,
                         "instances_used": used_instances,
-                        "restarts": nb_restarts,
+                        "restarts": current_restarts,
                         "budget": budget,
                         "M": int(cfg["M"]),
                         "lambda": int(cfg["lambda"]),

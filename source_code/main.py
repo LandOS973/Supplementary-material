@@ -80,6 +80,10 @@ def main(cfg: DictConfig):
     no_interact = bool(agent_val("no_interact") or cfg.get("no_interact") or False)
     no_repulsion = bool(agent_val("no_repulsion") or cfg.get("no_repulsion") or False)
     decay_enabled = bool(agent_val("decay") or cfg.get("decay") or False)
+    enable_greedy_final = agent_val("enable_greedy_final")
+    if enable_greedy_final is None:
+        enable_greedy_final = cfg.get("enable_greedy_final", True)
+    enable_greedy_final = bool(enable_greedy_final)
     M = int(agent_val("M") or cfg.get("M") or 1)
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
@@ -127,7 +131,8 @@ def main(cfg: DictConfig):
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
         f"M={M} lambda={lambda_} eps={epsilon_svgd} gamma={svgd_gamma} | "
-        f"kernel={kernel_name} advantage={advantage_cfg} decay={decay_enabled}"
+        f"kernel={kernel_name} advantage={advantage_cfg} decay={decay_enabled} "
+        f"greedy_final={enable_greedy_final}"
     )
     if decay_enabled:
         print(f"Decay params: start_ratio={decay_start_ratio} min_factor={decay_min_factor}")
@@ -205,6 +210,9 @@ def main(cfg: DictConfig):
         no_repulsion=no_repulsion,
         is_nk3=(type_problem_upper == "NK3"),
     ).to(device)
+    if not enable_greedy_final:
+        # Disable deterministic end extraction while keeping the same strategy class.
+        strategy.sample_greedy_agent_solutions = None
 
     if type_problem_upper == "QUBO":
         result = get_Score_trajectoriesQUBO_cuda(
@@ -236,6 +244,7 @@ def main(cfg: DictConfig):
             tensor_matrix_contrib,
             device,
             verbose,
+            enable_visualization=visualization_enabled,
             return_history=False,
         )
         list_scores = result

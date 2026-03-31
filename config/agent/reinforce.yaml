@@ -6,6 +6,7 @@ advantage: globalrankweighted # peragentrankweighted | globalrankweighted | base
 kernel:  rbf # rbf | hk | pk | ppk | jsd | fr | no_interact
 no_interact: false
 no_repulsion: false
+enable_greedy_final: false
 decay_start_ratio: 0.03
-min_factor: 0.01
+min_factor: 0.1
 decay: true
