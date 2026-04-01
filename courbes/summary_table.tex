@@ -43,10 +43,10 @@
          &  & 4 & \best{1/83} & \best{0.7823$^{*}$} & — & — & 47/83 & 0.7265 & 54/83 & 0.7072 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7783 \\
          &  & 8 & 46/83 & 0.7285 & — & — & 63/83 & 0.5784 & 62/83 & 0.5790 & \mbox{\texttt{SmallLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{0.7552$^{*}$} \\
         \midrule
-        \multicolumn{3}{c}{\textbf{SVGD-EDA}} & 5.375 & 0.996 & \multicolumn{2}{c}{} & \multicolumn{2}{c}{} & \multicolumn{2}{c}{} & \multicolumn{1}{r}{\textbf{DiscreteDE}} & 10.625 & 0.986 \\
+        \multicolumn{3}{c}{\textbf{SVGD-EDA}} & 5.375 & 0.763 & \multicolumn{2}{c}{} & \multicolumn{2}{c}{} & \multicolumn{2}{c}{} & \multicolumn{1}{r}{\textbf{DiscreteDE}} & 10.625 & 0.756 \\
         \bottomrule
     \end{tabular}%
     }
-    \caption{Global rankings and average scores obtained by \texttt{SVGD-EDA} and the other EDAs (\texttt{PBIL}, \texttt{MIMIC}, and \texttt{BOA}) are reported. The last columns present the ranking and average score of the best-performing method among the additional algorithms considered. Rankings are computed by comparing the best score achieved after 50,000 objective function evaluations, averaged across 100 independent runs. The last row reports global mean ranks and mean relative scores (score normalized by the best score of each instance distribution) for \texttt{SVGD-EDA} and for the most frequently top-ranked method among the other algorithms, with that method's rank and relative score averaged across all instances. Bold values highlight the best results among all competing methods.}
+    \caption{Global rankings and average scores at 50,000 evaluations (100 runs). \textbf{Bold} values indicate the best mean score. An asterisk ($^*$) denotes a statistically significant improvement over the second-best method (Welch's t-test, $p < 0.001$). The final row summarizes the global mean ranks and mean scores across all instances.}
     \label{tab:results_portrait}
 \end{table}

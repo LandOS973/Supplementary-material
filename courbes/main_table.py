@@ -708,11 +708,11 @@ def write_latex_table(
         f.write("        Pb & $n$ & $t$ & Rank & Score & Rank & Score & Rank & Score & Rank & Score & Name & Rank & Score \\\\\n")
         f.write("        \\midrule\n")
 
-        # Compute mean ranks and mean relative scores (score / best score per row)
+        # Compute mean scores (raw) and mean ranks
         rank_indices = [3, 5, 7, 9, 12]
         score_indices = [4, 6, 8, 10, 13]
         mean_ranks = [[] for _ in rank_indices]
-        mean_rel_scores = [[] for _ in score_indices]
+        mean_scores = [[] for _ in score_indices]
 
         # Find the most frequent "best method (others)" across rows.
         best_method_counts: dict[str, int] = {}
@@ -741,16 +741,15 @@ def write_latex_table(
                     svgd_raw = raw_svgd_scores.get(key)
                     if svgd_raw is not None:
                         scores[0] = svgd_raw
+            for idx, s in enumerate(scores):
+                if s is not None:
+                    mean_scores[idx].append(s)
             score_vals = [v for v in scores if v is not None]
             best_score = max(score_vals) if score_vals else None
             for idx, col in enumerate(rank_indices):
                 r = _parse_rank_value(row[col])
                 if r is not None:
                     mean_ranks[idx].append(float(r))
-            if best_score:
-                for idx, s in enumerate(scores):
-                    if s is not None:
-                        mean_rel_scores[idx].append(s / best_score)
 
         def fmt_mean(values, ndigits):
             if not values:
@@ -759,7 +758,7 @@ def write_latex_table(
 
         # Mean rank/score for the most frequent "best method (others)"
         best_method_ranks = []
-        best_method_rel_scores = []
+        best_method_scores = []
         if most_common_best:
             for row in rows:
                 if len(row) <= 13:
@@ -796,25 +795,24 @@ def write_latex_table(
                 rank_val, score_val = rank_map[most_common_best]
                 best_score = combined[0][1]
                 best_method_ranks.append(float(rank_val))
-                if best_score:
-                    best_method_rel_scores.append(score_val / best_score)
+                best_method_scores.append(score_val)
 
-        # Les valeurs formatées donneront exactement "7.670", "0.987", etc.
+        # Les valeurs formatées donneront exactement "5.375", "0.751", etc.
         mean_row = [
             "Global ranking",
             "", 
             "",
             fmt_mean(mean_ranks[0], 3),
-            fmt_mean(mean_rel_scores[0], 3),
+            fmt_mean(mean_scores[0], 3),
             fmt_mean(mean_ranks[1], 3),
-            fmt_mean(mean_rel_scores[1], 3),
+            fmt_mean(mean_scores[1], 3),
             fmt_mean(mean_ranks[2], 3),
-            fmt_mean(mean_rel_scores[2], 3),
+            fmt_mean(mean_scores[2], 3),
             fmt_mean(mean_ranks[3], 3),
-            fmt_mean(mean_rel_scores[3], 3),
+            fmt_mean(mean_scores[3], 3),
             most_common_best or "DiscreteDE",
             fmt_mean(best_method_ranks, 3),
-            fmt_mean(best_method_rel_scores, 3),
+            fmt_mean(best_method_scores, 3),
         ]
 
         # --- Début de la logique de regroupement (multirow) ---
@@ -937,7 +935,7 @@ def write_latex_table(
         f.write("        \\midrule\n")
         row = mean_row
         svgd_mean_rank = _latex_escape(row[3])
-        svgd_mean_rel = _latex_escape(row[4])
+        svgd_mean_score = _latex_escape(row[4])
 
         best_name_raw = row[11]
         if best_name_raw == "—":
@@ -947,18 +945,18 @@ def write_latex_table(
             best_name_cell = f"\\multicolumn{{1}}{{r}}{{\\textbf{{{_latex_escape(name_flat)}}}}}"
 
         best_mean_rank = _latex_escape(row[12])
-        best_mean_rel = _latex_escape(row[13])
+        best_mean_score = _latex_escape(row[13])
 
         cells = [
             "\\multicolumn{3}{c}{\\textbf{SVGD-EDA}}",
             f"{svgd_mean_rank}",
-            f"{svgd_mean_rel}",
+            f"{svgd_mean_score}",
             "\\multicolumn{2}{c}{}",
             "\\multicolumn{2}{c}{}",
             "\\multicolumn{2}{c}{}",
             best_name_cell,
             f"{best_mean_rank}",
-            f"{best_mean_rel}",
+            f"{best_mean_score}",
         ]
 
         f.write("        " + " & ".join(cells) + " \\\\\n")
@@ -967,14 +965,10 @@ def write_latex_table(
         f.write("    \\end{tabular}%\n")
         f.write("    }\n")
         f.write(
-            "    \\caption{Global rankings and average scores obtained by \\texttt{SVGD-EDA} and the other EDAs "
-            "(\\texttt{PBIL}, \\texttt{MIMIC}, and \\texttt{BOA}) are reported. The last columns present the ranking "
-            "and average score of the best-performing method among the additional algorithms considered. "
-            "Rankings are computed by comparing the best score achieved after 50,000 objective function evaluations, "
-            "averaged across 100 independent runs. The last row reports global mean ranks and mean relative scores "
-            "(score normalized by the best score of each instance distribution) for \\texttt{SVGD-EDA} and for the "
-            "most frequently top-ranked method among the other algorithms, with that method's rank and relative "
-            "score averaged across all instances. Bold values highlight the best results among all competing methods.}\n"
+            "    \\caption{Global rankings and average scores at 50,000 evaluations (100 runs). "
+            "\\textbf{Bold} values indicate the best mean score. An asterisk ($^*$) denotes a statistically "
+            "significant improvement over the second-best method (Welch's t-test, $p < 0.001$). "
+            "The final row summarizes the global mean ranks and mean scores across all instances.}\n"
         )
         f.write("    \\label{tab:results_portrait}\n")
         f.write("\\end{table}\n")
