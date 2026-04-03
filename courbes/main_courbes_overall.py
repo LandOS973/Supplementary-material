@@ -194,8 +194,8 @@ def _plot_comparison_vs_algos(instance, config_name: str, my_metrics: Path, outp
         )
 
     ax.set_title("")
-    ax.set_xlabel("Evaluations", fontsize=12)
-    ax.set_ylabel("Average score", fontsize=12)
+    ax.set_xlabel("Evaluations", fontsize=16)
+    ax.set_ylabel("Average score", fontsize=16)
     ax.legend(fontsize=11, ncol=2, frameon=False)
     ax.tick_params(axis="both", labelsize=12)
     ax.grid(True, linestyle=":", linewidth=0.6, alpha=0.5)
