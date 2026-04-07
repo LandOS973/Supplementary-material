@@ -14,9 +14,11 @@ def get_Score_trajectories_designbench_cuda(
     device,
     verbose,
     oracle_batch_size=2048,
+    alphabet_size=20,
     enable_visualization=False,
     name_file=None,
     return_history=False,
+    warm_start=False,
 ):
     """
     DesignBench online evaluation loop (GFP-v0).
@@ -31,6 +33,13 @@ def get_Score_trajectories_designbench_cuda(
         raise ValueError("nb_instances must be >= 1.")
 
     strategy.reset_learned_parameters(nb_instances=nb_instances)
+    if warm_start:
+        init_fn = getattr(strategy, "initialize_from_dataset", None)
+        x_attr = getattr(task, "x", None)
+        if callable(init_fn) and x_attr is not None:
+            ok = init_fn(x_attr)
+            if verbose and ok:
+                print("[WarmStart] initialized theta from task.x distribution")
 
     best_score = torch.full((nb_instances,), -float("inf"), device=device)
     size_pop = int(strategy.lambda_)
@@ -87,7 +96,7 @@ def get_Score_trajectories_designbench_cuda(
         )
     oracle_state = {"input_mode": None}
 
-    def _tokens_to_onehot(tokens: np.ndarray, num_classes: int = 20) -> np.ndarray:
+    def _tokens_to_onehot(tokens: np.ndarray, num_classes: int) -> np.ndarray:
         eye = np.eye(num_classes, dtype=np.float32)
         return eye[tokens]
 
@@ -96,7 +105,7 @@ def get_Score_trajectories_designbench_cuda(
         if mode == "tokens":
             return np.asarray(oracle_fn(flat_sequences), dtype=np.float32)
         if mode == "onehot":
-            return np.asarray(oracle_fn(_tokens_to_onehot(flat_sequences)), dtype=np.float32)
+            return np.asarray(oracle_fn(_tokens_to_onehot(flat_sequences, num_classes=alphabet_size)), dtype=np.float32)
 
         # Auto-detect input format once, then reuse it.
         try:
@@ -106,7 +115,7 @@ def get_Score_trajectories_designbench_cuda(
                 print("[DesignBench] oracle_input_mode=tokens")
             return scores
         except Exception:
-            scores = np.asarray(oracle_fn(_tokens_to_onehot(flat_sequences)), dtype=np.float32)
+            scores = np.asarray(oracle_fn(_tokens_to_onehot(flat_sequences, num_classes=alphabet_size)), dtype=np.float32)
             oracle_state["input_mode"] = "onehot"
             if verbose:
                 print("[DesignBench] oracle_input_mode=onehot")
@@ -137,7 +146,7 @@ def get_Score_trajectories_designbench_cuda(
             if verbose:
                 print("[DesignBench] oracle_input_mode=tokens (detected)")
         except Exception:
-            np.asarray(oracle_fn(_tokens_to_onehot(probe)), dtype=np.float32)
+            np.asarray(oracle_fn(_tokens_to_onehot(probe, num_classes=alphabet_size)), dtype=np.float32)
             oracle_state["input_mode"] = "onehot"
             if verbose:
                 print("[DesignBench] oracle_input_mode=onehot (detected)")
@@ -146,7 +155,7 @@ def get_Score_trajectories_designbench_cuda(
         pop_size = tensor_solution.size(1)
         # (B, lambda, N, 1) -> (B*lambda, N)
         sequences = tensor_solution[..., 0].detach().cpu().numpy().astype(np.int64)
-        sequences = np.clip(sequences, 0, 19)
+        sequences = np.clip(sequences, 0, max(0, int(alphabet_size) - 1))
         flat_sequences = sequences.reshape(-1, sequences.shape[-1])
         _detect_oracle_input_mode(flat_sequences)
         total_flat = flat_sequences.shape[0]

@@ -1,3 +1,5 @@
+import math
+import numpy as np
 import torch
 import torch.nn as nn
 from types import SimpleNamespace
@@ -107,6 +109,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
         self.kernel_params = {}
         self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
+        self.debug_svgd = bool(self.kernel_config.get("debug_svgd", True))
+        self.debug_every = int(self.kernel_config.get("debug_every", 10))
+        self._debug_step = 0
+        self._last_debug_stats = None
+        self._last_phi_stats = None
 
         # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
@@ -239,12 +246,15 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         """
         Applique la mise à jour REINFORCE suivie de SVGD entre agents (si activé).
         """
+        self._debug_step += 1
         # RL update (vectorisé sur (B, M))
         total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
         # SVGD entre agents 
         self._apply_svgd()
         if self.enable_visualization:
             self._record_theta()
+        if self._should_debug():
+            self._print_debug()
         return total_loss
 
     # =======================
@@ -294,6 +304,29 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         )  # (BM, λa)
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
         loss = loss_per_instance.sum()
+        if self.debug_svgd:
+            with torch.no_grad():
+                self._last_debug_stats = {
+                    "loss_mean": float(loss_per_instance.mean().item()),
+                    "adv_mean": float(advantages.mean().item()),
+                    "adv_std": float(advantages.std().item()),
+                    "adv_min": float(advantages.min().item()),
+                    "adv_max": float(advantages.max().item()),
+                    "fit_mean": float(fitness.mean().item()),
+                    "fit_std": float(fitness.std().item()),
+                    "fit_min": float(fitness.min().item()),
+                    "fit_max": float(fitness.max().item()),
+                    "baseline_mean": float(baseline.mean().item()) if baseline.numel() else float("nan"),
+                    "baseline_std": float(baseline.std().item()) if baseline.numel() > 1 else 0.0,
+                    "logpi_mean": float(log_Pi.mean().item()),
+                    "logpi_min": float(log_Pi.min().item()),
+                    "logpi_max": float(log_Pi.max().item()),
+                    "prob_mean": float(all_Pi_Theta.mean().item()),
+                    "prob_min": float(all_Pi_Theta.min().item()),
+                    "prob_max": float(all_Pi_Theta.max().item()),
+                    "adv_nan": bool(torch.isnan(advantages).any().item()),
+                    "prob_nan": bool(torch.isnan(all_Pi_Theta).any().item()),
+                }
         with torch.no_grad():
             reshaped_adv = advantages.detach().view(B, M, λa)
             per_instance = reshaped_adv.view(B, self.lambda_)
@@ -301,6 +334,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         grad_theta, = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
         self.last_theta_grad = grad_theta.detach().clone()
+        if self.debug_svgd and self._last_debug_stats is not None:
+            with torch.no_grad():
+                self._last_debug_stats["theta_grad_norm"] = float(grad_theta.norm().item())
 
         with torch.no_grad():
             baseline_new = fitness.mean(dim=1)  # (BM,)
@@ -337,10 +373,66 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             kernel_stats = self.svgd.get_last_kernel_stats()
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
+            if self.debug_svgd:
+                with torch.no_grad():
+                    self._last_phi_stats = {
+                        "phi_mean": float(phi.mean().item()),
+                        "phi_std": float(phi.std().item()),
+                        "phi_norm": float(phi.norm().item()),
+                        "phi_max_abs": float(phi.abs().max().item()),
+                        "phi_nan": bool(torch.isnan(phi).any().item()),
+                    }
 
         with torch.no_grad():
             self.theta += self.epsilon_svgd * phi
             self.probs = None
+
+    def _should_debug(self) -> bool:
+        if not self.debug_svgd:
+            return False
+        if self.debug_every < 1:
+            return False
+        if self._debug_step == 1:
+            return True
+        return (self._debug_step % self.debug_every) == 0
+
+    @staticmethod
+    def _fmt(val) -> str:
+        if val is None:
+            return "na"
+        if isinstance(val, bool):
+            return "1" if val else "0"
+        if isinstance(val, (int, float)):
+            if isinstance(val, float) and not math.isfinite(val):
+                return str(val)
+            return f"{float(val):.4g}"
+        return str(val)
+
+    def _print_debug(self) -> None:
+        stats = self._last_debug_stats or {}
+        phi_stats = self._last_phi_stats or {}
+        msg = (
+            f"[SVGD_EDA][step {self._debug_step}] "
+            f"loss={self._fmt(stats.get('loss_mean'))} "
+            f"adv(m/s/min/max)={self._fmt(stats.get('adv_mean'))}/"
+            f"{self._fmt(stats.get('adv_std'))}/"
+            f"{self._fmt(stats.get('adv_min'))}/"
+            f"{self._fmt(stats.get('adv_max'))} "
+            f"fit(m/s/min/max)={self._fmt(stats.get('fit_mean'))}/"
+            f"{self._fmt(stats.get('fit_std'))}/"
+            f"{self._fmt(stats.get('fit_min'))}/"
+            f"{self._fmt(stats.get('fit_max'))} "
+            f"prob(mn/mx)={self._fmt(stats.get('prob_min'))}/{self._fmt(stats.get('prob_max'))} "
+            f"logpi(mn/mx)={self._fmt(stats.get('logpi_min'))}/{self._fmt(stats.get('logpi_max'))} "
+            f"grad_norm={self._fmt(stats.get('theta_grad_norm'))} "
+            f"phi_norm={self._fmt(phi_stats.get('phi_norm'))} "
+            f"eps={self._fmt(self.epsilon_svgd)} gamma={self._fmt(self.svgd.gamma)} "
+            f"kernel={self.kernel_name} no_interact={int(self.no_interact)} "
+            f"no_repulsion={int(self.no_repulsion)} "
+            f"nan_adv={self._fmt(stats.get('adv_nan'))} nan_prob={self._fmt(stats.get('prob_nan'))} "
+            f"nan_phi={self._fmt(phi_stats.get('phi_nan'))}"
+        )
+        print(msg, flush=True)
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
         if not self.decay_enabled or self.no_interact or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
@@ -412,3 +504,48 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         raise ValueError(
             f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk, jsd, fr, no_interact."
         )
+
+    def initialize_from_dataset(self, x_data, max_samples: int = 50000, noise_std: float = 0.01) -> bool:
+        """
+        Initialize categorical logits from empirical per-position distribution.
+        Works with tokens (B, N) or onehot (B, N, D).
+        """
+        if not self.use_categorical or self.theta is None:
+            return False
+        try:
+            x_np = np.asarray(x_data)
+        except Exception:
+            return False
+        if x_np.ndim not in (2, 3):
+            return False
+        if x_np.shape[0] > max_samples:
+            idx = np.random.choice(x_np.shape[0], size=max_samples, replace=False)
+            x_np = x_np[idx]
+        if x_np.ndim == 3:
+            if self.max_dim is None or x_np.shape[-1] != self.max_dim:
+                return False
+            p = x_np.mean(axis=0).astype(np.float32)
+        else:
+            if self.max_dim is None:
+                return False
+            n_samples, n_dim = x_np.shape
+            if n_dim != self.N:
+                return False
+            p = np.zeros((n_dim, self.max_dim), dtype=np.float32)
+            for j in range(n_dim):
+                counts = np.bincount(x_np[:, j].astype(np.int64), minlength=self.max_dim).astype(np.float32)
+                total = float(counts.sum())
+                if total > 0:
+                    p[j] = counts / total
+        p = np.clip(p, self.prob_eps_clamp, 1.0)
+        p = p / np.sum(p, axis=-1, keepdims=True)
+        logits = np.log(p)
+        base = torch.as_tensor(logits, device=self.device, dtype=torch.float32)
+        with torch.no_grad():
+            expanded = base.unsqueeze(0).unsqueeze(0).expand(self.nb_instances, self.M, -1, -1)
+            if noise_std and noise_std > 0:
+                expanded = expanded + (noise_std * torch.randn_like(expanded))
+            self.theta.copy_(expanded)
+            self.probs = None
+        self._refresh_agent_views()
+        return True

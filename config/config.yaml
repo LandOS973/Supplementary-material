@@ -1,5 +1,5 @@
 defaults:
-  - problem: nk3 # qubo / nk / blockwise
+  - problem: anr
   - agent: reinforce
   - _self_
 
@@ -7,10 +7,11 @@ defaults:
 seed: 0
 verbose: true
 output_dir: outputs
-nb_instances_test: 10
-nb_restarts: 10
-budget: 1000
+nb_instances_test: 1
+nb_restarts: 1
+budget: 10000
 visualization: true
+nevergrad_algo: DiscreteDE
 
 strategy_variants:
   - label: Baseline
