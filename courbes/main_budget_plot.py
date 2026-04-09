@@ -263,7 +263,8 @@ def _plot_metric_triplet(
     x_decay, y_decay = load_metric_series(decay_path, x_field="step", y_field=metric_field)
     x_no, y_no = load_metric_series(no_interact_path, x_field="step", y_field=metric_field)
     if square_values:
-        y_int = [val * val for val in y_int]
+        y_norm = [val * val for val in y_norm]
+        y_decay = [val * val for val in y_decay]
         y_no = [val * val for val in y_no]
 
     fig, ax = plt.subplots(figsize=(9.2, 5.2), dpi=180)

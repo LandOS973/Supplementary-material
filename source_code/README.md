@@ -42,17 +42,3 @@ python main_baseline_edas_and_tabu.py QUBO PBIL 128 0
 ## Note on problem instances
 
 In this supplementary material, the instances of the NK3 problem with N > 64 and K > 4 have been remove because their were to big. They will be added after the submission process in a github repository.
-
-### Test grid overrides
-
-When running from the **repo root**, call:
-
-```
-python source_code/main_univ.py --grid-settings grid/my_grid.json --visualization=false
-```
-
-If you are already inside `source_code/`, drop the extra prefix:
-
-```
-python main_univ.py --grid-settings ../grid/my_grid.json --visualization=false
-```

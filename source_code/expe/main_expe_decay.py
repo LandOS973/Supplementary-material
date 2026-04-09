@@ -13,13 +13,13 @@ if SOURCE_CODE_DIR not in sys.path:
 
 import numpy as np
 import torch
+from omegaconf import OmegaConf
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from utils.main_utils import rank_vs_global_ranking
-from main_ppo_eda import _find_best_kernel_summary, _load_kernel_config
 
 
 DECAY_START_RATIO_GRID = [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.8]
@@ -49,6 +49,104 @@ DEFAULTS = dict(
     visualization=False,
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
+
+
+def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
+    kernel_dir = Path(repo_root) / "config" / "kernel"
+    kernel_path = kernel_dir / f"{kernel_name}.yaml"
+    if not kernel_path.exists():
+        available = ", ".join(sorted(p.stem for p in kernel_dir.glob("*.yaml"))) if kernel_dir.exists() else "none"
+        raise FileNotFoundError(
+            f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. Kernels disponibles: {available}"
+        )
+    cfg = OmegaConf.load(str(kernel_path))
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True) or {}
+    if "name" not in cfg_dict:
+        cfg_dict["name"] = kernel_name
+    return cfg_dict
+
+
+def _parse_summary_config(summary_path: Path) -> dict:
+    cfg = {}
+    try:
+        with summary_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                key = key.strip().lower()
+                value = value.strip()
+                if not value:
+                    continue
+                lowered = value.lower()
+                if lowered in ("none", "null", "n/a"):
+                    parsed = None
+                elif lowered in ("true", "false"):
+                    parsed = lowered == "true"
+                else:
+                    try:
+                        if any(token in value for token in (".", "e", "E")):
+                            parsed = float(value)
+                        else:
+                            parsed = int(value)
+                    except ValueError:
+                        parsed = value
+                cfg[key] = parsed
+    except OSError:
+        return {}
+    return cfg
+
+
+def _find_best_kernel_summary(summary_dir: str, problem_type: str):
+    summary_root = Path(summary_dir)
+    if not summary_root.is_dir():
+        return None, None
+
+    best_kernel = None
+    best_cfg = None
+    best_score = None
+    maximize = _is_maximization_problem(str(problem_type).upper())
+    pattern = f"{str(problem_type).upper()}_*_best_summary.txt"
+
+    for summary_path in sorted(summary_root.glob(pattern)):
+        if not summary_path.is_file():
+            continue
+        cfg = _parse_summary_config(summary_path)
+        if not cfg:
+            continue
+        score = cfg.get("avg_score")
+        try:
+            score = float(score)
+        except (TypeError, ValueError):
+            continue
+
+        kernel = cfg.get("kernel")
+        if kernel is None:
+            stem = summary_path.stem
+            prefix = f"{str(problem_type).upper()}_"
+            suffix = "_best_summary"
+            if stem.startswith(prefix) and stem.endswith(suffix):
+                kernel = stem[len(prefix):-len(suffix)]
+            else:
+                continue
+
+        if best_score is None:
+            best_score = score
+            best_kernel = str(kernel)
+            best_cfg = cfg
+            continue
+
+        if maximize:
+            is_better = score > best_score
+        else:
+            is_better = score < best_score
+        if is_better:
+            best_score = score
+            best_kernel = str(kernel)
+            best_cfg = cfg
+
+    return best_kernel, best_cfg
 
 
 def _is_maximization_problem(problem_type: str) -> bool:
