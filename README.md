@@ -8,6 +8,11 @@ This repository contains the experiments for:
 
 Thomas Landais, Olivier Goudet, Adrien Goëffon, Frédéric Saubion, and Sylvain Lamprier.
 
+<p align="center">
+  <img src="results/SVGD_PPSN.png" alt="SVGD PPSN" width="48%" />
+  <img src="results/Schema_espaces.png" alt="Schema espaces" width="48%" />
+</p>
+
 ## Installation
 
 Create a virtual environment:
@@ -67,11 +72,11 @@ python curves/main_table_interact_vs_no_interact.py \
 ### 2) Generate curves
 
 ```bash
-python curves/main_courbes_overall.py
+python curves/main_curves_overall.py
 ```
 
 ## Default Configuration
 
 When a script asks for a config name and the input is empty, the default value is:
 
-`krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01`
+`krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01` (the only configuration included in the repository due to storage constraints)
