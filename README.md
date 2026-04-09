@@ -1,50 +1,77 @@
 # Supplementary Material
 
-## Point d'entrée principal
+## Experiment Reference
 
-Le script de base est `source_code/main.py`.
+This repository contains the experiments for:
 
-Il s'appuie sur la configuration Hydra dans `config/` :
+**Stein Variational Black-Box Combinatorial Optimization**
 
-- `config/config.yaml` : configuration globale (problème, budget, seed, etc.)
-- `config/problem/*.yaml` : paramètres des problèmes
-- `config/agent/*.yaml` : paramètres des stratégies
-- `config/kernel/*.yaml` : paramètres des kernels
+Thomas Landais, Olivier Goudet, Adrien Goëffon, Frédéric Saubion, and Sylvain Lamprier.
 
-Exécution standard :
+## Installation
+
+Create a virtual environment:
+
+```bash
+python3 -m venv .venv
+```
+
+Activate the environment:
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r source_code/requirement.txt
+```
+
+## Main Entry Point
+
+The main script is `source_code/main.py`.
+
+It relies on Hydra configuration files in `config/`:
+
+- `config/config.yaml`: global settings (problem, budget, seed, etc.)
+- `config/problem/*.yaml`: problem settings
+- `config/agent/*.yaml`: strategy settings
+- `config/kernel/*.yaml`: kernel settings
+
+Standard run:
 
 ```bash
 python source_code/main.py
 ```
 
-## Structure du dépôt
+## Repository Structure
 
-- `source_code/` : code d'entraînement, scripts d'expériences et sensibilité.
-- `courbes/` : génération des courbes, tableaux et exports LaTeX.
-- `additional_results/` : scripts d'agrégation (scores finaux, ranking global).
-- `results/` : sorties expérimentales.
-  - `results/nevergrad/` : résultats baselines par algo/problème.
-  - `results/config/` : résultats SVGD-EDA par configuration.
+- `source_code/`: training code, experiment scripts, and sensitivity scripts.
+- `curves/`: curve/table generation and LaTeX exports.
+- `additional_results/`: aggregation scripts (final scores, global ranking).
+- `results/`: experiment outputs.
+- `results/nevergrad/`: baseline results by algorithm/problem.
+- `results/config/`: SVGD-EDA results by configuration.
 
-## Pipeline review
+## Review Pipeline
 
-### 1) Génération des tables
+### 1) Generate tables
 
 ```bash
-python courbes/main_table.py --format all
-python courbes/main_table_interact_vs_no_interact.py \
+python curves/main_table.py --format all
+python curves/main_table_interact_vs_no_interact.py \
   --config krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01
 ```
 
-### 2) Génération des courbes
+### 2) Generate curves
 
 ```bash
-python courbes/main_courbes_overall.py
+python curves/main_courbes_overall.py
 ```
 
-## Configuration par défaut
+## Default Configuration
 
-Quand un script demande un nom de config et que l'entrée est vide, la valeur par défaut est :
+When a script asks for a config name and the input is empty, the default value is:
 
 `krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01`
-
