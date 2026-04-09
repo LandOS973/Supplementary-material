@@ -15,6 +15,7 @@ from omegaconf import DictConfig, OmegaConf
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_KERNEL = "rbf"
+DEFAULT_COMPETITOR_BUDGET = 50000
 COMPETITOR_DIRS = [
     ROOT / "results" / "nevergrad",
 ]
@@ -313,7 +314,13 @@ def find_competitor_files(
     for problem in problem_variants:
         candidate_dir = algo_dir / problem / str(dim) / str(type_instance)
         if candidate_dir.exists():
-            candidate_files.extend(candidate_dir.glob("*.txt"))
+            txt_files = sorted(candidate_dir.glob("*.txt"))
+            if txt_files:
+                candidate_files.extend(txt_files)
+                continue
+            mean_curve = candidate_dir / f"mean_curve_budget_{DEFAULT_COMPETITOR_BUDGET}.csv"
+            if mean_curve.exists():
+                candidate_files.append(mean_curve)
 
     if not candidate_files:
         patterns: List[str] = []

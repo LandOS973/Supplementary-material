@@ -119,6 +119,19 @@ def _percentile(sorted_values: list[float], p: float) -> float:
 def _aggregate_final_scores_from_runs(paths: list[Path], budget: int) -> dict[str, float] | None:
     scores: list[float] = []
     for path in paths:
+        if path.name.startswith("mean_curve_budget_"):
+            final_scores_csv = path.parent / f"final_scores_budget_{budget}.csv"
+            if final_scores_csv.exists():
+                try:
+                    with final_scores_csv.open(newline="") as handle:
+                        reader = csv.DictReader(handle)
+                        for row in reader:
+                            score = parse_float((row.get("score") or "").strip())
+                            if score is not None:
+                                scores.append(score)
+                    continue
+                except OSError:
+                    pass
         score = _read_score_at_budget(path, budget)
         if score is not None:
             scores.append(score)
