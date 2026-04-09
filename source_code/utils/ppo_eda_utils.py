@@ -61,7 +61,6 @@ class OrderGenerator(torch.nn.Module):
 def _sample_logistic(shape, out=None):
 
     U = out.resize_(shape).uniform_() if out is not None else torch.rand(shape)
-    #U2 = out.resize_(shape).uniform_() if out is not None else th.rand(shape)
     return torch.log(U) - torch.log(1-U)
 
 
@@ -145,11 +144,6 @@ class MatrixSampler(torch.nn.Module):
     def forward(self, tau=1, drawhard=True, sample=True):
         """Return a sampled graph."""
 
-        # if(self.gumble):
-        #
-        #     drawn_proba = gumbel_softmax(torch.stack([self.weights.unsqueeze(1).repeat(1,self.size_pop, 1,  1).view(-1), -self.weights.expand(self.size_pop, 1, 1, 1).view(-1)], 1),
-        #                        tau=tau, hard=drawhard)[:, 0].view(*self.graph_size)
-        # else:
         drawn_proba = gumbel_sigmoid(self.weights.unsqueeze(1).repeat(1,self.size_pop, 1,  1).view(self.nb_trajectories*self.size_pop,self.graph_size[1], self.graph_size[2]), self.ones_tensor, self.zeros_tensor, tau=tau, hard=drawhard, sample=sample)
 
 
@@ -164,10 +158,6 @@ class MatrixSampler(torch.nn.Module):
 
     def get_proba(self):
         return torch.sigmoid( self.weights) * self.mask
-        # if hasattr(self, "mask"):
-        #     return torch.sigmoid(2 * self.weights) * self.mask
-        # else:
-        #     return torch.sigmoid(2 * self.weights)
 
     def set_skeleton(self, mask):
         self.register_buffer("mask", mask)
@@ -211,7 +201,6 @@ class LearnedOrderGenerator(torch.nn.Module):
 
     def reset_parameters(self):
         
-        #self.weights.data.uniform_(0,self.amplitude)
         self.weights.data.fill_(1)
 
 

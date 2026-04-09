@@ -108,7 +108,7 @@ def get_Score_trajectories_nasbench_cuda(
             )
 
     for epoch in pbar:
-        tensor_solution = strategy.sample_solutions()  # (B, lambda, N, 1)
+        tensor_solution = strategy.sample_solutions()                     
         tensor_score = _evaluate_population(tensor_solution)
         _update_agent_best_overall(tensor_score, greedy_one_per_agent=False)
 

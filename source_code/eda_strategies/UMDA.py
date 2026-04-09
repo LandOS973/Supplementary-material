@@ -47,10 +47,8 @@ class UMDA(Abstract_EDA):
         sorted_solutionList = (solutions.squeeze(3)).gather(1, indices.unsqueeze(2).repeat([1,1,self.N]))
 
 
-        #Update the proba
         self.proba = torch.mean(sorted_solutionList[:, (self.lambda_ - self.mu ):, :], dim=1).unsqueeze(1).unsqueeze(3)
 
-        ## Apply lower and upper bound in order to keep each proba in the range [1/N, 1 - 1/N]
         self.proba = self.first_threshold(self.proba)
         self.proba = - self.second_threshold(-self.proba)
 

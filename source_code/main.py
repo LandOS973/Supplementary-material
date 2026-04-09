@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Simple runner for PPO-EDA (SVGD_EDA) using Hydra config.
 No interactive prompts, just load config and run once.
@@ -6,6 +5,7 @@ No interactive prompts, just load config and run once.
 
 from __future__ import annotations
 
+import multiprocessing as mp
 import os
 import random
 from pathlib import Path
@@ -21,6 +21,20 @@ from environment.nasbench import get_Score_trajectories_nasbench_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from environment.tsne_agents import plot_agents_tsne
+from main_viennarna import (
+    DEFAULT_TARGET_NAME,
+    DEFAULT_TARGET_STRUCT,
+    RNA as VIENNA_RNA,
+    get_Score_trajectories_viennarna_cuda,
+)
+from problems.nasbench import (
+    NASBENCH_DIM,
+    NASBENCH_DIM_VARIABLES,
+    is_nasbench_problem,
+    load_nasbench_objective,
+    resolve_nasbench_data_file,
+)
+from problems.viennarna import ETERNA100_TSV_URL, load_target_from_eterna100, normalize_target_struct
 
 
 def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
@@ -143,13 +157,14 @@ def main(cfg: DictConfig):
 
     factory = FactoryStrategyEA()
 
-    # Prepare problem-specific tensors
     dim_variables = None
     D = None
     block_size = None
     dummy_blocks = int(cfg.problem.dummy_blocks) if "problem" in cfg and "dummy_blocks" in cfg.problem else 0
 
-    is_nasbench = type_problem_lower in ("nasbench", "nasbench_full")
+    is_nasbench = is_nasbench_problem(type_problem)
+    target_struct = None
+    num_workers = None
 
     if type_problem_upper == "QUBO":
         instance_path = os.path.join(script_dir, "instances", "QUBO") + os.sep
@@ -182,11 +197,37 @@ def main(cfg: DictConfig):
         if dim % block_size != 0:
             raise ValueError(f"dim={dim} must be divisible by block_size={block_size}")
     elif is_nasbench:
-        if dim != 26:
-            print(f"[WARN] nasbench uses dim=26, overriding dim={dim} -> 26")
-            dim = 26
-        dim_variables = [2 for _ in range(21)]
-        dim_variables.extend([3 for _ in range(5)])
+        if dim != NASBENCH_DIM:
+            print(f"[WARN] nasbench uses dim={NASBENCH_DIM}, overriding dim={dim} -> {NASBENCH_DIM}")
+            dim = NASBENCH_DIM
+        dim_variables = list(NASBENCH_DIM_VARIABLES)
+    elif type_problem_upper == "VIENNARNA":
+        if VIENNA_RNA is None:
+            raise RuntimeError(
+                "Import `RNA` failed. Install ViennaRNA Python bindings first "
+                "(e.g. `pip install ViennaRNA` or your `officievienna` package). "
+                "If build fails, install SWIG and ViennaRNA development headers."
+            )
+        target_name = str(OmegaConf.select(cfg, "problem.target_name") or DEFAULT_TARGET_NAME)
+        target_source = str(OmegaConf.select(cfg, "problem.target_source") or ETERNA100_TSV_URL)
+        target_struct_cfg = OmegaConf.select(cfg, "problem.target_struct")
+        if target_struct_cfg:
+            target_struct = normalize_target_struct(str(target_struct_cfg))
+            print(f"[ViennaRNA] using target from cfg.problem.target_struct (len={len(target_struct)})")
+        else:
+            target_struct, target_resolved_name = load_target_from_eterna100(
+                target_name=target_name,
+                source=target_source,
+                fallback_target=DEFAULT_TARGET_STRUCT,
+                verbose=bool(cfg.get("verbose", True)),
+            )
+            print(f"[ViennaRNA] loaded target={target_resolved_name} (len={len(target_struct)})")
+        dim = len(target_struct)
+        dim_variables = [4 for _ in range(dim)]
+        num_workers_cfg = OmegaConf.select(cfg, "problem.num_workers")
+        if num_workers_cfg is None:
+            num_workers_cfg = cfg.get("num_workers")
+        num_workers = max(1, int(num_workers_cfg)) if num_workers_cfg is not None else max(1, mp.cpu_count() - 1)
     else:
         raise ValueError(f"Unsupported problem type: {type_problem}")
 
@@ -211,7 +252,6 @@ def main(cfg: DictConfig):
         is_nk3=(type_problem_upper == "NK3"),
     ).to(device)
     if not enable_greedy_final:
-        # Disable deterministic end extraction while keeping the same strategy class.
         strategy.sample_greedy_agent_solutions = None
 
     if type_problem_upper == "QUBO":
@@ -249,27 +289,13 @@ def main(cfg: DictConfig):
         )
         list_scores = result
     elif is_nasbench:
-        try:
-            from bbdob import NasBench101
-        except Exception as exc:
-            raise RuntimeError(
-                "NasBench requires bbdob. Install it with `pip install -e .` in the BB-DOB repo."
-            ) from exc
-
-        nasbench_file = None
+        raw_data_file = None
         if "problem" in cfg and "data_file" in cfg.problem:
-            nasbench_file = str(cfg.problem.data_file)
-            if nasbench_file and not os.path.isabs(nasbench_file):
-                nasbench_file = os.path.join(script_dir, nasbench_file)
-        if nasbench_file is None:
-            nasbench_file = str(cfg.get("nasbench_file", "")) or None
-            if nasbench_file and not os.path.isabs(nasbench_file):
-                nasbench_file = os.path.join(script_dir, nasbench_file)
-        if not nasbench_file:
-            candidate = os.path.join(script_dir, "instances", "nasbench", "nasbench_full.tfrecord")
-            nasbench_file = candidate if os.path.exists(candidate) else "nasbench_full.tfrecord"
-
-        objective = NasBench101(filename=nasbench_file)
+            raw_data_file = str(cfg.problem.data_file)
+        if raw_data_file is None:
+            raw_data_file = str(cfg.get("nasbench_file", "")) or None
+        nasbench_file = resolve_nasbench_data_file(script_dir, raw_data_file)
+        objective = load_nasbench_objective(nasbench_file)
         if nb_restarts != 1:
             print(f"[WARN] nasbench ignores nb_restarts (got {nb_restarts}).")
         result = get_Score_trajectories_nasbench_cuda(
@@ -281,6 +307,21 @@ def main(cfg: DictConfig):
             device,
             verbose,
             name_file=None,
+        )
+        list_scores = result
+    elif type_problem_upper == "VIENNARNA":
+        result = get_Score_trajectories_viennarna_cuda(
+            target_struct=target_struct,
+            strategy=strategy,
+            nb_instances=nb_instances_test,
+            budget=budget,
+            size_popEA=lambda_,
+            device=device,
+            verbose=verbose,
+            num_workers=num_workers,
+            enable_visualization=visualization_enabled,
+            name_file=None,
+            return_history=False,
         )
         list_scores = result
     else:
@@ -303,7 +344,7 @@ def main(cfg: DictConfig):
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
 
-    if not is_nasbench:
+    if not is_nasbench and type_problem_upper != "VIENNARNA":
         try:
             plot_agents_tsne(
                 strategy,
@@ -313,8 +354,10 @@ def main(cfg: DictConfig):
             )
         except ValueError as exc:
             print(f"[WARN] t-SNE agents skipped: {exc}")
-    else:
+    elif is_nasbench:
         print("[INFO] t-SNE skipped for nasbench (categorical variables).")
+    else:
+        print("[INFO] t-SNE skipped for ViennaRNA.")
 
 
 if __name__ == "__main__":

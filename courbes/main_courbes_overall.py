@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Plot curves/boxplots for a given config under results/config/<ConfigName>.
 Outputs plots inside each instance directory.
@@ -74,7 +73,6 @@ def _read_score_at_budget(path: Path, budget: int) -> float | None:
                     if "score" in lower:
                         score_idx = lower.index("score")
                 else:
-                    # Headerless file: treat first row as data if numeric.
                     if parse_float(header[0].strip()) is not None and parse_float(header[1].strip()) is not None:
                         first_data_row = header
 
@@ -313,7 +311,6 @@ def _plot_interact_vs_no_interact(instance, interact_path: Path, no_interact_pat
             output_path=output_dir / "std_interact_vs_no_interact.png",
         )
 
-    # L1 + Hamming
     x_int_l1, y_int_l1 = load_metric_series(interact_path, x_field="step", y_field="avg_l1")
     x_no_l1, y_no_l1 = load_metric_series(no_interact_path, x_field="step", y_field="avg_l1")
     plot_pair_series(
@@ -362,7 +359,6 @@ def _plot_interact_vs_no_interact(instance, interact_path: Path, no_interact_pat
         color_b="#ff7f0e",
     )
 
-    # Boxplot: final score normal vs no_interact
     box_specs = []
     stats_int = load_quantile_stats_at_final_step(interact_path)
     if stats_int:

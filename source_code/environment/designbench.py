@@ -27,7 +27,7 @@ def get_Score_trajectories_designbench_cuda(
     sample -> evaluate with task.predict -> updateDistribution.
     """
 
-    del size_popEA  # kept for compatibility with existing call signatures
+    del size_popEA                                                        
 
     if nb_instances <= 0:
         raise ValueError("nb_instances must be >= 1.")
@@ -107,7 +107,6 @@ def get_Score_trajectories_designbench_cuda(
         if mode == "onehot":
             return np.asarray(oracle_fn(_tokens_to_onehot(flat_sequences, num_classes=alphabet_size)), dtype=np.float32)
 
-        # Auto-detect input format once, then reuse it.
         try:
             scores = np.asarray(oracle_fn(flat_sequences), dtype=np.float32)
             oracle_state["input_mode"] = "tokens"
@@ -153,7 +152,6 @@ def get_Score_trajectories_designbench_cuda(
 
     def _evaluate_population(tensor_solution):
         pop_size = tensor_solution.size(1)
-        # (B, lambda, N, 1) -> (B*lambda, N)
         sequences = tensor_solution[..., 0].detach().cpu().numpy().astype(np.int64)
         sequences = np.clip(sequences, 0, max(0, int(alphabet_size) - 1))
         flat_sequences = sequences.reshape(-1, sequences.shape[-1])
@@ -285,8 +283,6 @@ def get_Score_trajectories_designbench_cuda(
                 score_std=batch_score_std,
             )
 
-    # Strict budget handling when budget is not a multiple of lambda_.
-    # We evaluate the remainder but do not call updateDistribution on a truncated population.
     if stochastic_remainder > 0:
         tensor_solution = strategy.sample_solutions()[:, :stochastic_remainder, :, :]
         tensor_score = _evaluate_population(tensor_solution)

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Rebuild overall_summary.xlsx by scanning results/config/* folders.
 """
@@ -8,7 +7,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from main_expe_overall import _collect_config_stats
+from expe.main_expe_overall import _collect_config_stats
 
 
 SUMMARY_HEADERS = [
@@ -42,7 +41,6 @@ SUMMARY_HEADERS = [
 
 
 def _infer_params_from_name(config_name: str) -> dict:
-    # Parse config_name like: kjsd__advperagentrankweighted__M3__L20__eps0p005__g0p0005__ds0p05__dm0p05
     parts = config_name.split("__")
     out = {
         "kernel": None,
@@ -90,7 +88,6 @@ def _infer_params_from_name(config_name: str) -> dict:
 
 
 def _has_raw_score(cfg_dir: Path) -> int:
-    # Any raw_scores.csv under the config directory counts.
     return 1 if any(cfg_dir.rglob("raw_scores.csv")) else 0
 
 

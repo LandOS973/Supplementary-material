@@ -98,7 +98,6 @@ class BOA(EDABase):
                 new_score = metric.local_score(i, parents_idx)
                 candidate_gains[i, j] = new_score - node_scores[i]
                 candidate_gains[j, i] = candidate_gains[i, j]
-        # build graph structure with greedy algorithm
         while self.constraint_k is None or self.constraint_k > 0:
             child, parent = np.unravel_index(np.argmax(candidate_gains), candidate_gains.shape)
             if candidate_gains[child, parent] == min_gain:
@@ -132,7 +131,6 @@ class BOA(EDABase):
                 if node_updated:
                     descendents.extend(np.where(inheritance_mat[:, node] == 1)[0])
                     descendents = list(set(descendents))
-            # update candidate gains for affected child node
             for i in range(self.d):
                 if self.structure_mat[child, i] == 0 and inheritance_mat[i, child] == 0 and child != i:
                     parents_idx = self.structure_mat[child] != 0
@@ -149,7 +147,6 @@ class BOA(EDABase):
             parents_idx = self.structure_mat[i] == 1
             cpt = estimate_cpt(x[:, i], x[:, parents_idx], base=self.Cmax)
             self.prob_mat.append(cpt)
-        # deceide sampling order of each node
         tmp_structure = self.structure_mat.copy()
         s = list(np.where(np.sum(tmp_structure, axis=1) == 0)[0])
         self.sampling_order = []
@@ -170,10 +167,8 @@ class BOA(EDABase):
         return metric.score(self.structure_mat)
 
     def sampling(self):
-        # random sampling, only first generation
         if self.prob_mat is None:
             return super(BOA, self).sampling()
-        # sample by using each probability of bayesian network
         else:
             c = np.zeros((self.d, self.Cmax), dtype=bool)
             for i in self.sampling_order:

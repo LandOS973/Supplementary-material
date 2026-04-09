@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import os
 import re
@@ -32,7 +31,6 @@ def _parse_summary_config(summary_path):
                     parsed = lowered == "true"
                 else:
                     try:
-                        # handle scientific notation like 1e-4
                         if any(token in value for token in (".", "e", "E")):
                             parsed = float(value)
                         else:

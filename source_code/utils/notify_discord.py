@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Send a Discord webhook notification."""
 
 from __future__ import annotations
@@ -69,7 +68,6 @@ def main() -> int:
         data=data,
         headers={
             "Content-Type": "application/json",
-            # Cloudflare may block missing UA; mimic curl for reliability.
             "User-Agent": "curl/7.79.1",
         },
     )

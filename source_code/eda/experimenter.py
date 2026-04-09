@@ -46,7 +46,6 @@ class Experimenter(object):
             if self.logger:
                 self.log(c, evals, obj_info, optim_info, step)
             best_eval = np.min(evals)
-            # a optimum was found
             if np.abs(best_eval - self.objective.optimal_value) < 1e-8:
                 is_success = True
                 if self.logger and step % self.logger.logging_step:
@@ -70,9 +69,7 @@ class Experimenter(object):
             self.logger.add("uni_freq", self.optim.uni_freq, step, force=force)
             self.logger.add("bi_freq", self.optim.bi_freq, step, force=force)
         if isinstance(self.optim, (ECGA, AffEDA)):
-            # ToDo: implement
             pass
-            # self.logger.add("cluster", , step, force=force)
         if isinstance(self.optim, BOA):
             self.logger.add("network_structure", optim_info["structure"], step, force=force)
             self.logger.add("network_score", optim_info["k2_algorithm_score"], step, force=force)

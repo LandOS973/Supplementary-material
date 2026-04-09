@@ -35,16 +35,12 @@ class MIMIC(EDABase):
                                                              self.fitness,
                                                              x,
                                                              evals)
-        # get parent population
         idx = np.argsort(self.fitness)
         self.population = self.population[idx]
         self.fitness = self.fitness[idx]
         parent = self.population[:-self.lam]
-        # get frequency of each bit
         self.uni_freq = self.calc_uni_frequency(parent)
-        # get frequency of each pairwise bits
         self.bi_freq = self.calc_bi_frequency(parent)
-        # get permutation of binary bit
         self.order = self.calc_permutation_order(self.uni_freq, self.bi_freq)
 
     def calc_uni_frequency(self, population):
@@ -69,7 +65,6 @@ class MIMIC(EDABase):
         return bi_freq
 
     def calc_permutation_order(self, uni_freq, bi_freq):
-        # decide first bit
         dim = uni_freq.shape[0]
         order = np.zeros(dim, dtype=int)
         used = np.zeros(dim)
@@ -77,7 +72,6 @@ class MIMIC(EDABase):
         cur_bit = np.argmin(uni_entropy)
         order[0] = cur_bit
         used[cur_bit] = 1
-        # decide following bit
         for m in range(1, dim):
             joint_entropy = np.where(used == 0,
                                      -np.sum(bi_freq[cur_bit] * self.safe_log(bi_freq[cur_bit]), axis=1),
@@ -92,13 +86,11 @@ class MIMIC(EDABase):
         return np.where(vec > 0, np.log(vec), 0)
 
     def sampling(self):
-        # only first generation
         if self.population is None:
             rand = np.random.rand(self.d, 1)
             cum_theta = self.theta.cumsum(axis=1)
             c = (cum_theta - self.theta <= rand) & (rand < cum_theta)
             return c
-        # otehrwise
         else:
             c = np.zeros((self.d, self.Cmax), dtype=bool)
             cur_bit = self.order[0]
@@ -118,7 +110,6 @@ class MIMIC(EDABase):
             return c
 
     def convergence(self):
-        # ToDo: implement
         return super().convergence()
 
     def __str__(self):

@@ -4,7 +4,6 @@ Usage example (inside your training/analysis code):
 
     from environment.tsne_agents import plot_agents_tsne
 
-    # model is an instance of SVGD_EDA after training/update
     fig, ax, embedding, distances = plot_agents_tsne(model, output_path="agents_tsne.png")
 """
 
@@ -20,7 +19,7 @@ from eda_strategies.MultiAgentUnivariate.SVGD_EDA import SVGD_EDA
 
 try:
     from sklearn.manifold import TSNE
-except Exception as exc:  # pragma: no cover - import-time guard
+except Exception as exc:                                        
     raise SystemExit(
         "scikit-learn is required for t-SNE. Install it with `pip install scikit-learn`."
     ) from exc
@@ -44,7 +43,6 @@ def _compute_hamming_distance_matrix(
     if distances.ndim != 2 or distances.shape[0] != distances.shape[1]:
         raise ValueError(f"Expected a square distance matrix, got {distances.shape}.")
 
-    # t-SNE expects a zero diagonal for precomputed distances.
     np.fill_diagonal(distances, 0.0)
     return distances, float(avg)
 

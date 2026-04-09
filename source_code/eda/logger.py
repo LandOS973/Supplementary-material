@@ -39,7 +39,6 @@ class Logger(object):
         self.logger = logging.getLogger()
         self.log = OrderedDict()
         self.display = OrderedDict()
-        # save arguments
         if self.dir_path and args:
             args.log_dir = self.dir_path
             with open("{}/settings.json".format(self.dir_path), "w", encoding="utf-8") as f:

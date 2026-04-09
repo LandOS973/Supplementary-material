@@ -16,7 +16,6 @@ class Top(SelectionBase):
         sorted_idx = np.argsort(evals)[:sample_lam]
         population = population[sorted_idx]
         evals = evals[sorted_idx]
-        # if True, sort by the evaluation value
         if sort:
             population, evals = self.sort_by_fitness(population, evals)
         return population, evals

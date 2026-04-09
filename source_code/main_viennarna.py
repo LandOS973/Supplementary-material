@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Hydra runner for PPO-EDA (SVGD-EDA) on ViennaRNA inverse folding.
 
@@ -13,12 +12,10 @@ results/config/<ConfigName>/viennarna/<TargetName>/
 
 from __future__ import annotations
 
-import csv
 import multiprocessing as mp
 import os
 import random
 from pathlib import Path
-from urllib.request import urlopen
 
 import hydra
 import numpy as np
@@ -29,19 +26,21 @@ from tqdm import tqdm
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.metrics import MetricsCalculator
 from environment.visualization import render_agent_dashboard, render_svgd_field_plot
+from problems.viennarna import (
+    ETERNA100_TSV_URL,
+    RNA_ALPHABET,
+    load_target_from_eterna100,
+    normalize_target_struct,
+    tokens_to_rna_strings,
+)
 
 try:
     import RNA
-except Exception:  # pragma: no cover - handled explicitly at runtime
+except Exception:                                                    
     RNA = None
 
 
-RNA_ALPHABET = np.array(list("ACGU"))
-ETERNA100_TSV_URL = (
-    "https://raw.githubusercontent.com/eternagame/eterna100-benchmarking/master/data/eterna100_puzzles.tsv"
-)
 DEFAULT_TARGET_NAME = "Kudzu"
-# Fallback (len=100) if the benchmark TSV cannot be reached/parsing fails.
 DEFAULT_TARGET_STRUCT = "(" * 25 + "." * 50 + ")" * 25
 
 _WORKER_TARGET_STRUCT = None
@@ -55,103 +54,10 @@ def _init_viennarna_worker(target_struct: str) -> None:
 def _score_sequence_worker(sequence: str) -> float:
     if _WORKER_TARGET_STRUCT is None:
         raise RuntimeError("Worker target structure was not initialized.")
-    # Pure ED score: maximize -ensemble_defect (best possible score = 0.0).
     fc = RNA.fold_compound(sequence)
     fc.pf()
     defect = float(fc.ensemble_defect(_WORKER_TARGET_STRUCT))
     return -defect
-
-
-def _is_dotbracket(value: str) -> bool:
-    if not value:
-        return False
-    allowed = set(".()[]{}<>&")
-    return all(ch in allowed for ch in value)
-
-
-def _normalize_target_struct(value: str) -> str:
-    target = str(value).strip().replace(" ", "")
-    if not target:
-        raise ValueError("Target structure is empty.")
-    if not _is_dotbracket(target):
-        raise ValueError(
-            f"Invalid target structure `{target}`. Expected dot-bracket symbols only."
-        )
-    return target
-
-
-def _extract_dotbracket_from_row(row: dict) -> str | None:
-    preferred_keys = (
-        "target_structure",
-        "target_struct",
-        "structure",
-        "secstruct",
-        "secondary_structure",
-        "dotbracket",
-        "dot_bracket",
-    )
-    for key in preferred_keys:
-        value = row.get(key)
-        if value and _is_dotbracket(str(value).strip()):
-            return str(value).strip()
-    for value in row.values():
-        if value and _is_dotbracket(str(value).strip()):
-            return str(value).strip()
-    return None
-
-
-def _row_matches_name(row: dict, target_name: str) -> bool:
-    ref = target_name.strip().lower()
-    if not ref:
-        return False
-    name_keys = ("name", "puzzle_name", "title", "display_name", "id")
-    for key in name_keys:
-        value = row.get(key)
-        if value and str(value).strip().lower() == ref:
-            return True
-    for value in row.values():
-        if isinstance(value, str) and value.strip().lower() == ref:
-            return True
-    return False
-
-
-def _read_text_from_source(source: str) -> str:
-    source = str(source).strip()
-    if source.startswith("http://") or source.startswith("https://"):
-        with urlopen(source, timeout=20) as response:
-            return response.read().decode("utf-8")
-    return Path(source).read_text(encoding="utf-8")
-
-
-def _load_target_from_eterna100(
-    target_name: str = DEFAULT_TARGET_NAME,
-    source: str = ETERNA100_TSV_URL,
-    fallback_target: str = DEFAULT_TARGET_STRUCT,
-    verbose: bool = True,
-) -> tuple[str, str]:
-    try:
-        raw = _read_text_from_source(source)
-        reader = csv.DictReader(raw.splitlines(), delimiter="\t")
-        rows = list(reader)
-        for row in rows:
-            if _row_matches_name(row, target_name):
-                candidate = _extract_dotbracket_from_row(row)
-                if candidate:
-                    target = _normalize_target_struct(candidate)
-                    if verbose:
-                        print(f"[ViennaRNA] target loaded from benchmark: `{target_name}` (len={len(target)})")
-                    return target, target_name
-        if verbose:
-            print(
-                f"[ViennaRNA][WARN] target `{target_name}` not found in benchmark source; "
-                "using fallback default target."
-            )
-    except Exception as exc:
-        if verbose:
-            print(f"[ViennaRNA][WARN] failed loading benchmark target ({exc}); using fallback default target.")
-
-    fallback = _normalize_target_struct(fallback_target)
-    return fallback, "fallback_default"
 
 
 def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
@@ -247,9 +153,8 @@ def _save_raw_scores_csv(out_dir: str, scores_array):
 
 def _tensor_to_rna_strings(tensor_solution: torch.Tensor) -> list[str]:
     sequences = tensor_solution[..., 0].detach().cpu().numpy().astype(np.int64)
-    sequences = np.clip(sequences, 0, 3)
     flat_sequences = sequences.reshape(-1, sequences.shape[-1])
-    return ["".join(RNA_ALPHABET[row]) for row in flat_sequences]
+    return tokens_to_rna_strings(flat_sequences)
 
 
 def get_Score_trajectories_viennarna_cuda(
@@ -272,12 +177,12 @@ def get_Score_trajectories_viennarna_cuda(
     sample -> evaluate with fast proxy -> updateDistribution.
     """
 
-    del size_popEA  # kept for compatibility with existing call signatures
+    del size_popEA                                                        
 
     if nb_instances <= 0:
         raise ValueError("nb_instances must be >= 1.")
 
-    target_struct = _normalize_target_struct(target_struct)
+    target_struct = normalize_target_struct(target_struct)
     target_len = len(target_struct)
 
     strategy.reset_learned_parameters(nb_instances=nb_instances)
@@ -464,8 +369,6 @@ def get_Score_trajectories_viennarna_cuda(
                     score_std=batch_score_std,
                 )
 
-        # Strict budget handling when budget is not a multiple of lambda_.
-        # We evaluate the remainder but do not call updateDistribution on a truncated population.
         if stochastic_remainder > 0:
             tensor_solution = strategy.sample_solutions()[:, :stochastic_remainder, :, :]
             tensor_score = _evaluate_population(tensor_solution)
@@ -571,11 +474,11 @@ def main(cfg: DictConfig):
     target_source = str(OmegaConf.select(cfg, "problem.target_source") or ETERNA100_TSV_URL)
     target_struct_cfg = OmegaConf.select(cfg, "problem.target_struct")
     if target_struct_cfg:
-        target_struct = _normalize_target_struct(str(target_struct_cfg))
+        target_struct = normalize_target_struct(str(target_struct_cfg))
         target_resolved_name = "cfg_target_struct"
         print(f"[ViennaRNA] using target from cfg.problem.target_struct (len={len(target_struct)})")
     else:
-        target_struct, target_resolved_name = _load_target_from_eterna100(
+        target_struct, target_resolved_name = load_target_from_eterna100(
             target_name=target_name,
             source=target_source,
             fallback_target=DEFAULT_TARGET_STRUCT,
@@ -604,7 +507,6 @@ def main(cfg: DictConfig):
     bandwith_override = agent_val("bandwith_kernel") or cfg.get("bandwith_kernel")
     if bandwith_override is not None:
         kernel_cfg["bandwith_kernel"] = bandwith_override
-    # Optional SVGD debug logs (disabled by default for expensive ViennaRNA runs).
     kernel_cfg["debug_svgd"] = bool(OmegaConf.select(cfg, "debug_svgd") or cfg.get("debug_svgd", False))
     kernel_cfg["debug_every"] = int(OmegaConf.select(cfg, "debug_every") or cfg.get("debug_every") or 25)
 

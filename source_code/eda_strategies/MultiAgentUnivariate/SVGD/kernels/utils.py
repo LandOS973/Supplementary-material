@@ -7,7 +7,6 @@ def adaptative_bandwith(dist, eps=1e-3):
     dist: (B, M, M) matrice de distances.
     """
     B, M, _ = dist.shape
-    # On extrait les valeurs hors diagonale
     mask = ~torch.eye(M, device=dist.device, dtype=torch.bool).unsqueeze(0).expand(B, -1, -1)
     vals = dist.detach()[mask]
 

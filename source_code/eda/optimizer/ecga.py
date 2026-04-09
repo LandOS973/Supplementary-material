@@ -55,11 +55,8 @@ class ECGA(EDABase):
         -------
         Variables after clustering.
         """
-        # initialize subset of cluster
         cluster = [SubSet(i, population[:, i], self.Cmax) for i in range(self.d)]
-        # initialize cache
         cache = self.initialize_mpm(cluster)
-        # clustering according to CCO
         while True:
             pos_i, pos_j = cache.argmax_cc()
             if cache.cc_list[pos_i, pos_j] <= 0:
@@ -99,14 +96,12 @@ class ECGA(EDABase):
         return cache
 
     def sampling(self):
-        # random sampling, only first generation
         if self.cluster is None:
             rand = np.random.rand(self.d, 1)
             cum_theta = self.theta.cumsum(axis=1)
 
             c = (cum_theta - self.theta <= rand) & (rand < cum_theta)
             return c
-        # sample by using each probability of cluster that clustered by CCO
         else:
             c = np.zeros((self.d, self.Cmax), dtype=bool)
             for cl in self.cluster:

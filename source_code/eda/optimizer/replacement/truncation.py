@@ -11,11 +11,9 @@ class Truncation(ReplacementBase):
         super(Truncation, self).__init__(replace_rate, fix_size=fix_size)
 
     def apply(self, parent, p_evals, candidate, c_evals):
-        # sort parent by the evaluation value
         sorted_idx = np.argsort(p_evals)
         parent = parent[sorted_idx]
         p_evals = p_evals[sorted_idx]
-        # replace individuals in parent with ones in candidate
         p_lam = parent.shape[0]
         c_lam = candidate.shape[0]
         replaced_lam = int(self.replace_rate * p_lam)

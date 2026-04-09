@@ -20,24 +20,22 @@ class JSD(nn.Module):
 
         eps = 1e-7
         if Thetas.dim() == 4:
-            # Catégoriel: JSD variable par variable entre distributions sur D catégories
-            pi = probs.unsqueeze(2)             # (B, M, 1, N, D)
-            pj = probs.detach().unsqueeze(1)    # (B, 1, M, N, D)
+            pi = probs.unsqueeze(2)                              
+            pj = probs.detach().unsqueeze(1)                     
             m = 0.5 * (pi + pj)
 
             pi_c = pi.clamp(min=eps)
             pj_c = pj.clamp(min=eps)
             m_c = m.clamp(min=eps)
 
-            kl_pm = (pi * torch.log(pi_c / m_c)).sum(dim=-1)     # (B, M, M, N)
-            kl_qm = (pj * torch.log(pj_c / m_c)).sum(dim=-1)     # (B, M, M, N)
+            kl_pm = (pi * torch.log(pi_c / m_c)).sum(dim=-1)                   
+            kl_qm = (pj * torch.log(pj_c / m_c)).sum(dim=-1)                   
 
-            jsd = 0.5 * (kl_pm + kl_qm)                          # (B, M, M, N)
-            dist = jsd.sum(dim=-1) / float(N)                    # (B, M, M) normalisé
+            jsd = 0.5 * (kl_pm + kl_qm)                                        
+            dist = jsd.sum(dim=-1) / float(N)                                         
         else:
-            # Bernoulli
-            pi = probs.unsqueeze(2)             # (B, M, 1, N)
-            pj = probs.detach().unsqueeze(1)    # (B, 1, M, N)
+            pi = probs.unsqueeze(2)                           
+            pj = probs.detach().unsqueeze(1)                  
             m = 0.5 * (pi + pj)
 
             pi_c = pi.clamp(min=eps, max=1.0 - eps)
@@ -47,34 +45,31 @@ class JSD(nn.Module):
             kl_pm = pi * torch.log(pi_c / m_c) + (1.0 - pi) * torch.log((1.0 - pi_c) / (1.0 - m_c))
             kl_qm = pj * torch.log(pj_c / m_c) + (1.0 - pj) * torch.log((1.0 - pj_c) / (1.0 - m_c))
 
-            jsd = 0.5 * (kl_pm + kl_qm)                          # (B, M, M, N)
-            dist = jsd.sum(dim=-1) / float(N)                    # (B, M, M) normalisé
+            jsd = 0.5 * (kl_pm + kl_qm)                                        
+            dist = jsd.sum(dim=-1) / float(N)                                         
 
-        # ===== median heuristic =====
         if self.bandwith_kernel is None:
             gamma = adaptative_bandwith(dist, eps=1e-3)
         else:
             gamma = self.bandwith_kernel
 
-        # g(x) = exp( -1 / (tau^2 * x * (1 - x)) + 4 / tau^2 )
         tau2 = self.tau ** 2
         if Thetas.dim() == 4:
             probs_c = probs.clamp(min=eps, max=1.0 - eps)
-            g = torch.exp(-1.0 / (tau2 * probs_c * (1.0 - probs_c)) + (4.0 / tau2))  # (B, M, N, D)
+            g = torch.exp(-1.0 / (tau2 * probs_c * (1.0 - probs_c)) + (4.0 / tau2))                
             mask = getattr(self, "mask", None)
             if mask is not None:
                 mask = mask.to(probs.device, probs.dtype)
                 g = g * mask + (1.0 - mask)
-            g_var = g.prod(dim=-1)  # (B, M, N)
-            prod_g = g_var.prod(dim=-1)  # (B, M)
+            g_var = g.prod(dim=-1)             
+            prod_g = g_var.prod(dim=-1)          
         else:
             probs_c = probs.clamp(min=eps, max=1.0 - eps)
-            g = torch.exp(-1.0 / (tau2 * probs_c * (1.0 - probs_c)) + (4.0 / tau2))  # (B, M, N)
-            prod_g = g.prod(dim=-1)  # (B, M)
-        g_pair = prod_g.unsqueeze(2) * prod_g.unsqueeze(1)  # (B, M, M)
+            g = torch.exp(-1.0 / (tau2 * probs_c * (1.0 - probs_c)) + (4.0 / tau2))             
+            prod_g = g.prod(dim=-1)          
+        g_pair = prod_g.unsqueeze(2) * prod_g.unsqueeze(1)             
 
-        # Kernel
-        K = torch.exp(-gamma * dist) * g_pair                # (B, M, M)
+        K = torch.exp(-gamma * dist) * g_pair                           
 
         if Thetas.dim() == 4:
             grad_Thetas = torch.zeros_like(Thetas)

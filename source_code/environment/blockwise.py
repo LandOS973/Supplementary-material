@@ -34,7 +34,6 @@ def get_Score_trajectoriesBLOCK_cuda(
         raise ValueError(
             f"dummy_blocks={dummy_blocks} must be less than num_blocks={num_blocks}"
         )
-    # Les derniers blocs peuvent etre "dummy" et donc exclus du calcul du score.
     scoring_blocks = num_blocks - dummy_blocks
     if dummy_blocks == 0:
         dummy_range = "none"
@@ -164,7 +163,6 @@ def get_Score_trajectoriesBLOCK_cuda(
         tensor_binary = tensor_solution.squeeze(3)
 
         tensor_blocks = tensor_binary.reshape(total_cases, size_pop, num_blocks, block_size)
-        # Score par bloc: proportion de 0/1, puis "purite" via max(p, 1-p).
 
 
         block_counts = tensor_blocks.sum(dim=3)
@@ -172,11 +170,7 @@ def get_Score_trajectoriesBLOCK_cuda(
         block_proportions = block_counts / float(block_size)
 
 
-        # Match exacts sur les optima
         matches = (block_proportions[:, :, None, :] == possible_solutions[None, None, :, :]).all(dim=3)
-        # tolérance pour le match
-        #eps = 0.1
-        #matches = ((block_proportions[:, :, None, :] - possible_solutions[None, None, :, :]).abs()< eps).all(dim=3)
 
         seen = matches.any(dim=1).int()
         seen_solutions = torch.max(seen_solutions,seen)
@@ -185,7 +179,6 @@ def get_Score_trajectoriesBLOCK_cuda(
 
 
         block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
-        # Fitness par solution: moyenne sur les blocs utiles (les dummy sont ignores).
 
         tensor_score = block_scores[:, :, :scoring_blocks].mean(dim=2)
 
@@ -197,7 +190,7 @@ def get_Score_trajectoriesBLOCK_cuda(
         if sample_hamming_history is not None:
             try:
                 with torch.no_grad():
-                    samples = tensor_solution.squeeze(3)  # (B, total_lambda, N)
+                    samples = tensor_solution.squeeze(3)                        
                     start_idx = 0
                     best_per_agent = []
                     for idx, agent_lambda in enumerate(per_agent_lambdas):
@@ -206,7 +199,7 @@ def get_Score_trajectoriesBLOCK_cuda(
                         sub_scores = tensor_score[:, start_idx:end_idx]
                         idx = torch.argmax(sub_scores, dim=1)
                         idx_expand = idx[:, None, None].expand(-1, 1, N)
-                        best = torch.gather(sub_samples, 1, idx_expand).squeeze(1)  # (B, N)
+                        best = torch.gather(sub_samples, 1, idx_expand).squeeze(1)          
                         best_per_agent.append(best)
 
                         start_idx = end_idx
@@ -224,10 +217,8 @@ def get_Score_trajectoriesBLOCK_cuda(
                 sample_hamming_current = None
             sample_hamming_history.append(sample_hamming_current if sample_hamming_current is not None else 0.0)
 
-        # Fitness par instance: meilleur individu du pool.
         current_score = torch.max(tensor_score, dim=1).values
 
-        # Meilleure solution courante (individu ayant la meilleure fitness).
         index_solution = torch.argmax(tensor_score, dim=1)
         index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1, 1, N, 1)
         best_current_solution = torch.gather(tensor_solution, 1, index_solution).squeeze(3).squeeze(1)
@@ -258,7 +249,6 @@ def get_Score_trajectoriesBLOCK_cuda(
         score_p95_history.append(float(np.percentile(scores_np, 95)))
         score_p98_history.append(float(np.percentile(scores_np, 98)))
 
-        # Agregation en scalaire pour le suivi (ex: moyenne/median selon MetricsCalculator).
         global_current = metrics.compute_fitness(current_score)
         global_best = metrics.compute_fitness(bestScore)
         best_fitness_history.append(global_best)

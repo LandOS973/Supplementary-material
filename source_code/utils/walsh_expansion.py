@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 
 	Walsh expansion
@@ -22,7 +20,6 @@ import numpy as np
 class WalshExpansion:
 	def __init__(self, n = 0):
 		self.n = n
-		# expansion: dictionary of ( tuple: double )
 		self.expansion = { }
 
 	def __str__(self):
@@ -153,12 +150,10 @@ class WalshExpansion:
 
 		return res[:-1]
 
-	# x \in {-1, 1}^n
 	def eval(self, x):
 		res = 0
 
 		for k, v in self.expansion.items():
-			# I'm not an expert in python, maybe there is a more efficient way, sorry...
 			parity = True
 			for i in k:
 				if x[i] == -1:
@@ -171,8 +166,6 @@ class WalshExpansion:
 
 		return res
 
-	# Transform the function by f(xshift xor x)
-	# xshift \in {-1, 1}^n
 	def xor(self, xshift):
 		for k, v in self.expansion.items():
 			parity = True

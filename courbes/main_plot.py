@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Plot comparison curves based on the active config instance."""
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from omegaconf import DictConfig, OmegaConf
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_KERNEL = "rbf"
 COMPETITOR_DIRS = [
-    Path("/home/landos/Downloads/results_nevergrad_ppsn"),
+    ROOT / "results" / "nevergrad",
 ]
 
 
@@ -35,7 +34,6 @@ def _normalize_score_sign(problem_name: str, values: List[float]) -> List[float]
         if max(values) <= 0:
             return [-val for val in values]
         return values
-    # minimization problems: scores expected to be negative
     if min(values) >= 0:
         return [-val for val in values]
     return values
@@ -256,7 +254,6 @@ def clip_series_to_budget(
             out_y.append(y)
             return out_x, out_y
 
-        # x > max_budget -> interpolate if possible
         if out_x:
             x0, y0 = out_x[-1], out_y[-1]
             if x > x0:
@@ -269,7 +266,6 @@ def clip_series_to_budget(
         out_y.append(yb)
         return out_x, out_y
 
-    # All points are < max_budget
     if extend_last:
         out_x.append(max_budget)
         out_y.append(out_y[-1])

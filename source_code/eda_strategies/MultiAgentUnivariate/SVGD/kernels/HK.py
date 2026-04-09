@@ -29,19 +29,19 @@ class HammingKernel(nn.Module):
 
         if Thetas.dim() == 4:
             B, M, N, D = Thetas.shape
-            probs_i = probs.unsqueeze(2)  # (B, M, 1, N, D)
-            probs_j = probs.detach().unsqueeze(1)  # (B, 1, M, N, D)
-            match = (probs_i * probs_j).sum(dim=-1)  # (B, M, M, N)
-            hamming = 1.0 - match  # (B, M, M, N)
-            Dm = hamming.sum(dim=-1)  # (B, M, M)
-            dist = (N - Dm) / float(N)  # (B, M, M)
+            probs_i = probs.unsqueeze(2)                   
+            probs_j = probs.detach().unsqueeze(1)                   
+            match = (probs_i * probs_j).sum(dim=-1)                
+            hamming = 1.0 - match                
+            Dm = hamming.sum(dim=-1)             
+            dist = (N - Dm) / float(N)             
         else:
             B, M, N = Thetas.shape
-            probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
-            probs_j = probs.detach().unsqueeze(1)  # (B, 1, M, N)
-            hamming = probs_i + probs_j.detach() - 2 * probs_i * probs_j.detach()  # (B, M, M, N)
-            Dm = hamming.sum(dim=-1)  # (B, M, M)
-            dist = (N - Dm) / float(N)  # (B, M, M)
+            probs_i = probs.unsqueeze(2)                
+            probs_j = probs.detach().unsqueeze(1)                
+            hamming = probs_i + probs_j.detach() - 2 * probs_i * probs_j.detach()                
+            Dm = hamming.sum(dim=-1)             
+            dist = (N - Dm) / float(N)             
 
         if self.bandwith_kernel is None:
             bandwith_kernel = adaptative_bandwith(dist, eps=1e-8)
@@ -65,43 +65,4 @@ class HammingKernel(nn.Module):
 
 
 
-        ########
 
-        # Thetas = Thetas.requires_grad_(True)
-        #
-        #
-        #
-        # probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
-        # probs_j = torch.sigmoid(Thetas).unsqueeze(1)  # (B, 1, M, N)
-        #
-        # # hamming = probs_i + probs_j - 2 * probs_i * probs_j  # (B, M, M, N)
-        # #
-        # # D = hamming.sum(dim=-1)  # (B, M, M)
-        # # N = Thetas.size(-1)
-        # # K =((N - D) / (N))
-        # #
-        # # print("K v2")
-        # # print(K[0][:5,:5])
-        #
-        # grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
-        #
-        # for i in range(M):
-        #
-        #     sum = 0
-        #
-        #     for j in range(M):
-        #
-        #         hamming = probs_i[:,i,:,:].detach() + probs_j[:,:,j,:] - 2 * probs_i[:,i,:,:].detach() * probs_j[:,:,j,:]
-        #         D = hamming.sum(dim=-1)
-        #         Kij = ((N - D) / (N))
-        #
-        #         vect_grad_Thetas_j, = torch.autograd.grad(Kij.sum(), Thetas, retain_graph=True)
-        #         Thetas.grad = None
-        #         sum += vect_grad_Thetas_j[:,j,:]
-        #
-        #
-        #     grad_Thetas[:,i,:] = sum
-        #
-        #
-        # print("grad_Thetas version 2")
-        # print(grad_Thetas[0][:5,:5])

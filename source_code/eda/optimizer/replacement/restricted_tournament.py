@@ -28,10 +28,8 @@ class RestrictedTournament(ReplacementBase):
         assert replaced_lam == c_lam, \
             "The number of individuals for the replacement({}) must match the population size of candidate({})".format(replaced_lam, c_lam)
         sampled_idx = np.random.randint(0, p_lam, (self.window_size, c_lam))
-        # In the case of (population_size, dim)
         if len(parent.shape) == 2:
             distances = np.sum(parent[sampled_idx] != candidate, axis=2)
-        # In the case of (population_size, dim, one_hot)
         elif len(parent.shape) == 3:
             distances = np.sum(np.argmax(parent[sampled_idx], axis=3) != np.argmax(candidate, axis=2), axis=2)
         else:

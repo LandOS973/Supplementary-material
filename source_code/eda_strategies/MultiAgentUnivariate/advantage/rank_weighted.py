@@ -26,21 +26,16 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
         nb_instances = int(nb_instances)
         num_agents = int(num_agents)
 
-        BM, lambda_per_agent = fitness.shape  # BM = B * M
-        # reshape -> (B, M, λ_agent)
+        BM, lambda_per_agent = fitness.shape              
         reshaped = fitness.view(nb_instances, num_agents, lambda_per_agent)
-        # (B, M * λ_agent) : tous les individus d'une instance sur une seule dimension
-        per_instance = reshaped.view(nb_instances, -1) # (B, M*λ_agent)
+        per_instance = reshaped.view(nb_instances, -1)                 
 
-        # Nombre d'individus par instance : λ = M * λ_agent
         num_individuals = per_instance.shape[1]
         total_individuals = lambda_per_agent * num_agents
-        # Rang global avec ex-aequo: rang = nombre d'individus strictement meilleurs (0, 0, 2, ...)
         greater_counts = (per_instance[:, :, None] < per_instance[:, None, :]).sum(dim=2)
         ranks = greater_counts
         ranks = ranks.to(dtype=fitness.dtype)
         ranked = 1.0 - 2.0 * (ranks / total_individuals)
-        # Retour au shape original (B*M, λ_agent)
         return ranked.view(BM, lambda_per_agent)
 
 
@@ -55,8 +50,8 @@ class PerAgentRankWeightedAdvantage(AdvantageStrategy):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.start_weight = float(1.0)   # w_max
-        self.end_weight = float(-1.0)    # w_min
+        self.start_weight = float(1.0)          
+        self.end_weight = float(-1.0)           
 
     def compute(self, fitness, nb_instances=None, num_agents=None, **context):
         nb_instances = nb_instances or context.get("nb_instances")
@@ -64,12 +59,10 @@ class PerAgentRankWeightedAdvantage(AdvantageStrategy):
         nb_instances = int(nb_instances)
         num_agents = int(num_agents)
 
-        BM, lambda_per_agent = fitness.shape  # BM = B * M
+        BM, lambda_per_agent = fitness.shape              
 
-        # reshape -> (B, M, λ_agent)
         reshaped = fitness.view(nb_instances, num_agents, lambda_per_agent)
 
-        # Pas positif Δ = (w_max - w_min) / (λ_agent - 1)
         if lambda_per_agent == 1:
             base_weights = torch.full(
                 (1,),
@@ -84,18 +77,14 @@ class PerAgentRankWeightedAdvantage(AdvantageStrategy):
                 device=fitness.device,
                 dtype=fitness.dtype,
             )
-            base_weights = self.start_weight - ranks * delta  # (λ_agent,)
+            base_weights = self.start_weight - ranks * delta              
 
-        # On étend à (B, M, λ_agent)
         weight_vector = base_weights.view(1, 1, -1).expand_as(reshaped)
 
-        # Tri par agent sur la dimension λ_agent (dim=2)
         sorted_indices = torch.argsort(reshaped, dim=2, descending=True)
 
-        # On scatter les poids selon le rang intra-agent
         ranked = torch.empty_like(reshaped).scatter_(2, sorted_indices, weight_vector)
 
-        # Retour au shape original (B*M, λ_agent)
         return ranked.view(BM, lambda_per_agent)
 
 
@@ -111,8 +100,8 @@ class NormalizedFitnessAdvantage(AdvantageStrategy):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.best_fitness = None  # (B,)
-        self.fitness_mean = None  # (B,)
+        self.best_fitness = None        
+        self.fitness_mean = None        
 
 
     def compute(self, fitness, nb_instances=None, num_agents=None, **context):

@@ -17,7 +17,6 @@ class UMDA(EDABase):
         selection : eda.optimizer.selection.selection_base.SelectionBase
             Selection method.
         """
-        # only binary strings
         assert self.Cmax == 2
         assert 0 < lr < 1
         self.selection = selection
@@ -25,13 +24,10 @@ class UMDA(EDABase):
 
     def update(self, x, evals, range_restriction=False):
         x, evals = self._preprocess(x, evals)
-        # apply selection
         if self.selection is not None:
             x, evals = self.selection(x, evals)
-        # update probability vector
         self.theta[:, -1] += self.lr * (np.mean(x[:, :, -1], axis=0) - self.theta[:, -1])
         self.theta[:, 0] = 1 - self.theta[:, -1]
-        # if range_restriction is True, clipping
         self.clipping(range_restriction)
 
     def __str__(self):

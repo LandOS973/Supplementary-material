@@ -18,7 +18,6 @@ class PPO_EDA(Abstract_EDA):
 
         Abstract_EDA.__init__(self, N, lambda_, device)
 
-        #self.typeOrder = typeOrder
 
         self.typeModel = typeModel
 
@@ -182,7 +181,6 @@ class PPO_EDA(Abstract_EDA):
 
             
 
-            # Génération des valeurs des variables des solutions les unes après les autres (de 0 à n-1)
             for i in range(0, self.N):
 
 

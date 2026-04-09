@@ -44,23 +44,20 @@ class FisherRaoKernel(nn.Module):
             B, M, N = Thetas.shape
 
         if Thetas.dim() == 4:
-            # Categorical case: per-variable Fisher-Rao angle via sqrt-prob dot product.
-            # cos(theta) = sum_c sqrt(p_c * q_c), theta = arccos(dot), d_FR = 2 * sqrt(sum_n theta_n^2)
             eps = 1e-7
             sqrt_probs = torch.sqrt(probs)
-            sqrt_i = sqrt_probs.unsqueeze(2)  # (B, M, 1, N, D)
-            sqrt_j = sqrt_probs.detach().unsqueeze(1)  # (B, 1, M, N, D)
-            dot = (sqrt_i * sqrt_j).sum(dim=-1).clamp(min=eps, max=1.0 - eps)  # (B, M, M, N)
-            angles = torch.acos(dot)  # (B, M, M, N)
-            sq_sum = (angles ** 2).sum(dim=-1)  # (B, M, M)
+            sqrt_i = sqrt_probs.unsqueeze(2)                   
+            sqrt_j = sqrt_probs.detach().unsqueeze(1)                   
+            dot = (sqrt_i * sqrt_j).sum(dim=-1).clamp(min=eps, max=1.0 - eps)                
+            angles = torch.acos(dot)                
+            sq_sum = (angles ** 2).sum(dim=-1)             
             d_fr = 2.0 * torch.sqrt(sq_sum)
         else:
-            # d_FR = sqrt( 4 * sum_k (arcsin(sqrt(p_i,k)) - arcsin(sqrt(p_j,k)))^2 )
-            angles = torch.asin(torch.sqrt(probs))  # arcsin(sqrt(p))
-            angles_i = angles.unsqueeze(2)               # (B, M, 1, N)
-            angles_j = angles.detach().unsqueeze(1)      # (B, 1, M, N)
+            angles = torch.asin(torch.sqrt(probs))                   
+            angles_i = angles.unsqueeze(2)                             
+            angles_j = angles.detach().unsqueeze(1)                    
 
-            sq_sum = ((angles_i - angles_j) ** 2).sum(dim=-1)  # (B, M, M)
+            sq_sum = ((angles_i - angles_j) ** 2).sum(dim=-1)             
             d_fr = 2.0 * torch.sqrt(sq_sum)
 
         if self.bandwith_kernel is None:
@@ -69,16 +66,15 @@ class FisherRaoKernel(nn.Module):
             gamma = self.bandwith_kernel
 
         if Thetas.dim() == 4:
-            # g(x) = exp( -1 / (tau^2 * x * (1 - x)) + 4 / tau^2 )
             tau2 = self.tau ** 2
-            g = torch.exp(-1.0 / (tau2 * probs * (1.0 - probs)) + (4.0 / tau2))  # (B, M, N, D)
+            g = torch.exp(-1.0 / (tau2 * probs * (1.0 - probs)) + (4.0 / tau2))                
             mask = getattr(self, "mask", None)
             if mask is not None:
                 mask = mask.to(probs.device, probs.dtype)
                 g = g * mask + (1.0 - mask)
-            g_var = g.prod(dim=-1)  # (B, M, N)
-            prod_g = g_var.prod(dim=-1)  # (B, M)
-            g_pair = prod_g.unsqueeze(2) * prod_g.unsqueeze(1)  # (B, M, M)
+            g_var = g.prod(dim=-1)             
+            prod_g = g_var.prod(dim=-1)          
+            g_pair = prod_g.unsqueeze(2) * prod_g.unsqueeze(1)             
 
             K = torch.exp(-gamma * d_fr) * g_pair
             grad_Thetas = torch.zeros_like(Thetas)
@@ -87,11 +83,10 @@ class FisherRaoKernel(nn.Module):
                 vect_grad_Thetas, = torch.autograd.grad(Ki.sum(), Thetas, retain_graph=True)
                 grad_Thetas[:, i, :, :] = torch.sum(vect_grad_Thetas, dim=1)
         else:
-            # g(x) = exp( -1 / (tau^2 * x * (1 - x)) + 4 / tau^2 )
             tau2 = self.tau ** 2
-            g = torch.exp(-1.0 / (tau2 * probs * (1.0 - probs)) + (4.0 / tau2))  # (B, M, N)
-            prod_g = g.prod(dim=-1)  # (B, M)
-            g_pair = prod_g.unsqueeze(2) * prod_g.unsqueeze(1)  # (B, M, M)
+            g = torch.exp(-1.0 / (tau2 * probs * (1.0 - probs)) + (4.0 / tau2))             
+            prod_g = g.prod(dim=-1)          
+            g_pair = prod_g.unsqueeze(2) * prod_g.unsqueeze(1)             
 
             K = torch.exp(-gamma * d_fr) * g_pair
 

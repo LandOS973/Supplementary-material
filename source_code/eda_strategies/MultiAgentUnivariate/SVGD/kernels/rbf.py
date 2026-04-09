@@ -18,10 +18,6 @@ class RBF(nn.Module):
 
     def __init__(self, bandwith_kernel):
         super().__init__()
-        # sigma :
-        #   - si None : sigma sera estimé automatiquement (median heuristic)
-        #   - sinon   : on utilise cette valeur fixe (float ou tensor)
-        # facteur de largeur du noyau RBF (peut être fixé via la config)
         self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas, probs=None):
@@ -38,26 +34,22 @@ class RBF(nn.Module):
             B, M, N, D = Thetas.shape
         else:
             B, M, N = Thetas.shape
-        # B : nombre d'instances 
-        # M : nombre de particules
-        # N : dimension des particules
 
         if Thetas.dim() == 4:
-            theta_i = Thetas.unsqueeze(2).repeat([1, 1, M, 1,1])  # (B, M, M, N)
-            theta_j = Thetas.unsqueeze(1).repeat([1, M, 1, 1,1])  # (B, M, M, N)
+            theta_i = Thetas.unsqueeze(2).repeat([1, 1, M, 1,1])                
+            theta_j = Thetas.unsqueeze(1).repeat([1, M, 1, 1,1])                
 
             dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1).sum(dim=-1)
 
 
         else:
-            theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])  # (B, M, M, N)
-            theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])  # (B, M, M, N)
+            theta_i = Thetas.unsqueeze(2).repeat([1,1,M,1])                
+            theta_j = Thetas.unsqueeze(1).repeat([1,M,1,1])                
 
             dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
 
 
         if self.bandwith_kernel is None:
-            # Estimation automatique de la bandwith via la median heuristic
             bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
         else:
             bandwith_kernel = self.bandwith_kernel

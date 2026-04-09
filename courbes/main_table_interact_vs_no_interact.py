@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build a per-instance table: Interact vs No-Interact scores + gap (%).
 
 Reads results from:
@@ -62,7 +61,6 @@ def _bold(text: str) -> str:
 
 
 def _gap_percent(problem: str, score_interact: float, score_no: float) -> float:
-    # Normalize so higher is better
     if not _is_maximize(problem):
         score_interact = -score_interact
         score_no = -score_no
@@ -123,7 +121,6 @@ def main() -> None:
         gap_str = f"{gap:+.2f}%"
         gap_str_tex = gap_str.replace("%", "\\%")
 
-        # Determine bolding based on normalized scores (higher is better)
         if _is_maximize(problem):
             best_is_interact = score_interact >= score_no
         else:
@@ -158,14 +155,12 @@ def main() -> None:
         print("[WARN] No rows found. Check that best_metrics.csv exist for interact and no_interact.")
         return
 
-    # Write CSV (without LaTeX bold escaping in the values)
     args.csv.parent.mkdir(parents=True, exist_ok=True)
     with args.csv.open("w", newline="") as f:
         f.write(",".join(header) + "\n")
         for r in rows_csv:
             f.write(",".join(r) + "\n")
 
-    # Write LaTeX table (LNCS-friendly)
     args.tex.parent.mkdir(parents=True, exist_ok=True)
     with args.tex.open("w") as f:
         f.write("% Table: Interact vs No-Interact\n")

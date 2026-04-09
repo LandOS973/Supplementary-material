@@ -16,7 +16,6 @@ class ProbabilityKernel(nn.Module):
 
     def __init__(self, bandwith_kernel=1.0):
         super().__init__()
-        # largeur du noyau appliqué sur les probabilités
         self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas, probs=None):
@@ -29,14 +28,14 @@ class ProbabilityKernel(nn.Module):
 
         if Thetas.dim() == 4:
             B, M, N, D = Thetas.shape
-            probs_i = probs.unsqueeze(2)  # (B, M, 1, N, D)
-            probs_j = probs.unsqueeze(1)  # (B, 1, M, N, D)
-            dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1).sum(dim=-1)  # (B, M, M)
+            probs_i = probs.unsqueeze(2)                   
+            probs_j = probs.unsqueeze(1)                   
+            dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1).sum(dim=-1)             
         else:
             B, M, N = Thetas.shape
-            probs_i = probs.unsqueeze(2)  # (B, M, 1, N)
-            probs_j = probs.unsqueeze(1)  # (B, 1, M, N)
-            dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1)  # (B, M, M)
+            probs_i = probs.unsqueeze(2)                
+            probs_j = probs.unsqueeze(1)                
+            dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1)             
 
         if self.bandwith_kernel is None:
             bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
@@ -60,43 +59,4 @@ class ProbabilityKernel(nn.Module):
 
 
 
-        ########
 
-        # Thetas = Thetas.requires_grad_(True)
-        #
-        #
-        #
-        # probs_i = torch.sigmoid(Thetas).unsqueeze(2)  # (B, M, 1, N)
-        # probs_j = torch.sigmoid(Thetas).unsqueeze(1)  # (B, 1, M, N)
-        #
-        # # hamming = probs_i + probs_j - 2 * probs_i * probs_j  # (B, M, M, N)
-        # #
-        # # D = hamming.sum(dim=-1)  # (B, M, M)
-        # # N = Thetas.size(-1)
-        # # K =((N - D) / (N))
-        # #
-        # # print("K v2")
-        # # print(K[0][:5,:5])
-        #
-        # grad_Thetas = torch.zeros((B, M, N), device=Thetas.device)
-        #
-        # for i in range(M):
-        #
-        #     sum = 0
-        #
-        #     for j in range(M):
-        #
-        #         hamming = probs_i[:,i,:,:].detach() + probs_j[:,:,j,:] - 2 * probs_i[:,i,:,:].detach() * probs_j[:,:,j,:]
-        #         D = hamming.sum(dim=-1)
-        #         Kij = ((N - D) / (N))
-        #
-        #         vect_grad_Thetas_j, = torch.autograd.grad(Kij.sum(), Thetas, retain_graph=True)
-        #         Thetas.grad = None
-        #         sum += vect_grad_Thetas_j[:,j,:]
-        #
-        #
-        #     grad_Thetas[:,i,:] = sum
-        #
-        #
-        # print("grad_Thetas version 2")
-        # print(grad_Thetas[0][:5,:5])

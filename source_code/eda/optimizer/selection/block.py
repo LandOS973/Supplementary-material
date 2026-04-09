@@ -15,7 +15,6 @@ class Block(SelectionBase):
         idx = np.argsort(evals)[:int(self.selection_rate*lam)]
         population = population[idx]
         evals = evals[idx]
-        # duplicate top individuals in a population based on the evaluation value
         dup_num = int(np.ceil(1 / self.selection_rate))
         pop_shape = np.ones(len(population.shape), dtype=np.int)
         pop_shape[0] *= dup_num
@@ -24,7 +23,6 @@ class Block(SelectionBase):
         if population.shape[0] > lam:
             population = population[:lam]
             evals = evals[:lam]
-        # if True, sort by the evaluation value
         if sort:
             population, evals = self.sort_by_fitness(population, evals)
         return population, evals

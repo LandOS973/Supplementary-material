@@ -25,13 +25,10 @@ def get_Score_trajectoriesQUBO_cuda(
 
     size_pop = strategy.lambda_
 
-    # tensor_Q is expected to have shape (total_cases, N, N) where total_cases = nb_instances_found * nb_restarts
-    # repeat to match population size
     tensor_Q = (tensor_Q.unsqueeze(1)).repeat([1, size_pop, 1, 1]).to(device)
 
     total_cases = tensor_Q.size(0)
 
-    # Now initialize strategy and tracking tensors based on actual available cases
     strategy.reset_learned_parameters(total_cases)
     bestScore = torch.ones(total_cases).to(device) * (-99999)
 
@@ -415,7 +412,6 @@ def getTensorInstances_QUBO(path, nb_instances, nb_restarts,  N, t, device, phas
 
     list_matrix_Q = []
     list_matrix_K = []
-    # Ensure path exists and discover available instance files matching pattern
     if not os.path.exists(path):
         raise FileNotFoundError(f"Instances path not found: {path}")
 
@@ -425,17 +421,15 @@ def getTensorInstances_QUBO(path, nb_instances, nb_restarts,  N, t, device, phas
     if len(files) == 0:
         raise FileNotFoundError(f"No QUBO instance files found in {path} with prefix {prefix}")
 
-    # extract instance numbers and sort
     def inst_index(fname):
         try:
-            part = fname[len(prefix):-5]  # strip prefix and .json
+            part = fname[len(prefix):-5]                          
             return int(part)
         except Exception:
             return 0
 
     files_sorted = sorted(files, key=inst_index)
 
-    # select up to nb_instances available files
     selected_files = files_sorted[:nb_instances]
 
     if len(selected_files) < nb_instances:

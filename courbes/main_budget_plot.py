@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Plot interact vs no_interact curves for each budget from config."""
 
 from __future__ import annotations

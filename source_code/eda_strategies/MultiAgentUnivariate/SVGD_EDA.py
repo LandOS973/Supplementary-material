@@ -48,13 +48,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
     ):
         self.M = M
         self.N = N
-        # λ is now defined per agent; total population is M * λ
         self.lambda_per_agent = int(lambda_)
         self.total_lambda = self.lambda_per_agent * self.M
         Abstract_EDA.__init__(self, N, self.total_lambda, device)
         nn.Module.__init__(self)
 
-        # Keep legacy attribute name for downstream code expecting total λ
         self.lambda_ = self.total_lambda
         self.device = device
         self.learning_rate = learning_rate
@@ -115,11 +113,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self._last_debug_stats = None
         self._last_phi_stats = None
 
-        # expose agent-level info for monitoring code (hamming/KL, leaderboard)
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
         self.agents = []
 
-        # interaction SVGD 
         kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
         if self.mask is not None:
             setattr(kernel_impl, "mask", self.mask)
@@ -127,13 +123,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.theta_history = []
         self.kernel_metric_history = []
 
-        # Paramètres appris : theta (nb_instances, M, N) initialisé dans reset
         self.theta = None
         self.nb_instances = 0
         self.latest_advantages = None
         self.probs = None
 
-        # Buffers (B, M)
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
         self.last_theta_grad = None
 
@@ -162,15 +156,14 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             else:
                 probs = probs / probs.sum(dim=-1, keepdim=True)
             self.probs = probs
-            return probs  # (B, M, N, D)
+            return probs                
         probs = torch.sigmoid(self.theta)
         self.probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), self.prob_eps_clamp, 1 - self.prob_eps_clamp)
-        return probs  # (B, M, N)
+        return probs             
 
     def reset_learned_parameters(self, nb_instances):
         self.nb_instances = nb_instances
 
-        # theta : (B, M, N) or (B, M, N, D)
         init_sigma = 0.1
         if self.use_categorical:
             max_dim = self.max_dim or 3
@@ -180,14 +173,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         else:
             init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
 
-        # init_theta = torch.zeros((nb_instances, self.M, self.N), device=self.device)
         self.theta = nn.Parameter(init_theta)
         self._refresh_agent_views()
 
-        # Baseline en version (B, M)
         self.baseline.resize_(nb_instances, self.M).zero_()
 
-        # Historique de visualisation
         self.theta_history = []
         self.kernel_metric_history = []
         self.last_theta_grad = None
@@ -211,20 +201,17 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.probs = self.forward()
 
         if self.use_categorical:
-            probs = self.probs  # (B, M, N, D)
+            probs = self.probs                
             D = probs.size(-1)
-            flat = probs.reshape(-1, D)  # (B*M*N, D)
-            samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)  # (B*M*N, λa)
-            samples_agents = samples_flat.view(B, M, N, λa).permute(0, 1, 3, 2)  # (B, M, λa, N)
+            flat = probs.reshape(-1, D)              
+            samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)               
+            samples_agents = samples_flat.view(B, M, N, λa).permute(0, 1, 3, 2)                 
             samples = samples_agents.reshape(B, λ_total, N).unsqueeze(-1).float()
             return samples
 
-        # u : (B, M, λa, N)
         u = torch.rand((B, M, λa, N), device=self.device)
-        samples_agents = (u < self.probs.unsqueeze(2)).float()  # (B, M, λa, N)
+        samples_agents = (u < self.probs.unsqueeze(2)).float()                 
 
-        # On concatène tous les agents sur la dimension λ : (B, λ, N, 1)
-        # on tire tout les lamdba en une fois pour eviter les boucles
         samples = samples_agents.view(B, λ_total, N).unsqueeze(-1)
         return samples
 
@@ -237,9 +224,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         """
         probs = self.forward()
         if self.use_categorical:
-            greedy = torch.argmax(probs, dim=-1)  # (B, M, N)
+            greedy = torch.argmax(probs, dim=-1)             
             return greedy.unsqueeze(-1).float()
-        greedy = (probs >= 0.5).float()  # (B, M, N)
+        greedy = (probs >= 0.5).float()             
         return greedy.unsqueeze(-1)
 
     def updateDistribution(self, solutionList, scoreList):
@@ -247,9 +234,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         Applique la mise à jour REINFORCE suivie de SVGD entre agents (si activé).
         """
         self._debug_step += 1
-        # RL update (vectorisé sur (B, M))
         total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
-        # SVGD entre agents 
         self._apply_svgd()
         if self.enable_visualization:
             self._record_theta()
@@ -257,9 +242,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self._print_debug()
         return total_loss
 
-    # =======================
-    #   REINFORCE vectorisé
-    # =======================
 
     def _updateDistribution_REINFORCE(self, solutionList, scoreList):
         B, M, N = self.nb_instances, self.M, self.N
@@ -277,22 +259,22 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 self.forward()
             D = self.probs.size(-1)
             theta = self.theta.view(BM, N, D)
-            all_Pi_Theta = self.probs.view(BM, N, D)  # (BM, N, D)
-            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)  # (BM, λa, N, D)
+            all_Pi_Theta = self.probs.view(BM, N, D)              
+            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)                  
             log_probs = torch.log(all_Pi_Theta_expanded + 1e-10)
-            indices = indivduals.long().unsqueeze(-1)  # (BM, λa, N, 1)
-            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)  # (BM, λa)
+            indices = indivduals.long().unsqueeze(-1)                  
+            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)            
         else:
             theta = self.theta.view(BM, N)
-            all_Pi_Theta = self.probs.view(BM, N)  # (BM, N)
-            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)  # (BM, λa, N)
+            all_Pi_Theta = self.probs.view(BM, N)           
+            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)               
 
             Pi_selected = torch.where(
                 indivduals == 1.0,
                 all_Pi_Theta_expanded,
                 1.0 - all_Pi_Theta_expanded,
-            )  # (BM, λa, N)
-            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
+            )               
+            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)            
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
             baseline=baseline,
@@ -301,8 +283,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             probs=all_Pi_Theta_expanded,
             nb_instances=B,
             num_agents=M,
-        )  # (BM, λa)
-        loss_per_instance = torch.mean(advantages * log_Pi, dim=1)  # (BM,)
+        )            
+        loss_per_instance = torch.mean(advantages * log_Pi, dim=1)         
         loss = loss_per_instance.sum()
         if self.debug_svgd:
             with torch.no_grad():
@@ -339,10 +321,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 self._last_debug_stats["theta_grad_norm"] = float(grad_theta.norm().item())
 
         with torch.no_grad():
-            baseline_new = fitness.mean(dim=1)  # (BM,)
+            baseline_new = fitness.mean(dim=1)         
             self.baseline = baseline_new.view(B, M)
 
-        # moyenne sur tous les (B, M) comme avant (Moyenne sur B, puis sur M)
         return loss_per_instance.mean()
 
     def get_latest_advantages(self):
@@ -350,9 +331,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             return None
         return self.latest_advantages.detach().cpu()
 
-    # =======================
-    #   SVGD 
-    # =======================
 
     def toString(self):
         return f"MultiAgent_Collaborative_M{self.M}_lambdaPerAgent{self.lambda_per_agent}"
@@ -365,11 +343,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if self.last_theta_grad is None:
             return
 
-        theta = self.theta  # (B, M, N)
-        score = self.last_theta_grad.detach()  # pas de rétroprop vers les agents
+        theta = self.theta             
+        score = self.last_theta_grad.detach()                                    
 
         with torch.enable_grad():
-            phi = self.svgd.phi(theta, score, probs=self.probs)  # (B, M, N)
+            phi = self.svgd.phi(theta, score, probs=self.probs)             
             kernel_stats = self.svgd.get_last_kernel_stats()
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
@@ -409,30 +387,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         return str(val)
 
     def _print_debug(self) -> None:
-        stats = self._last_debug_stats or {}
-        phi_stats = self._last_phi_stats or {}
-        msg = (
-            f"[SVGD_EDA][step {self._debug_step}] "
-            f"loss={self._fmt(stats.get('loss_mean'))} "
-            f"adv(m/s/min/max)={self._fmt(stats.get('adv_mean'))}/"
-            f"{self._fmt(stats.get('adv_std'))}/"
-            f"{self._fmt(stats.get('adv_min'))}/"
-            f"{self._fmt(stats.get('adv_max'))} "
-            f"fit(m/s/min/max)={self._fmt(stats.get('fit_mean'))}/"
-            f"{self._fmt(stats.get('fit_std'))}/"
-            f"{self._fmt(stats.get('fit_min'))}/"
-            f"{self._fmt(stats.get('fit_max'))} "
-            f"prob(mn/mx)={self._fmt(stats.get('prob_min'))}/{self._fmt(stats.get('prob_max'))} "
-            f"logpi(mn/mx)={self._fmt(stats.get('logpi_min'))}/{self._fmt(stats.get('logpi_max'))} "
-            f"grad_norm={self._fmt(stats.get('theta_grad_norm'))} "
-            f"phi_norm={self._fmt(phi_stats.get('phi_norm'))} "
-            f"eps={self._fmt(self.epsilon_svgd)} gamma={self._fmt(self.svgd.gamma)} "
-            f"kernel={self.kernel_name} no_interact={int(self.no_interact)} "
-            f"no_repulsion={int(self.no_repulsion)} "
-            f"nan_adv={self._fmt(stats.get('adv_nan'))} nan_prob={self._fmt(stats.get('prob_nan'))} "
-            f"nan_phi={self._fmt(phi_stats.get('phi_nan'))}"
-        )
-        print(msg, flush=True)
+        return
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
         if not self.decay_enabled or self.no_interact or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
@@ -450,16 +405,13 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         target_gamma = self.svgd_gamma * factor
         self.svgd.gamma = float(target_gamma)
 
-    # =======================
-    #   Visualisation
-    # =======================
 
     def _record_theta(self):
         if self.theta is None or self.nb_instances <= 0:
             return []
         with torch.no_grad():
             probs = self.probs if self.probs is not None else self.forward()
-        probs_final = [probs[:, m, :] for m in range(self.M)] # liste de (B, N) par agent
+        probs_final = [probs[:, m, :] for m in range(self.M)]                            
         if not probs_final:
             return
         self.theta_history.append(probs_final)

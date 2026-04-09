@@ -13,11 +13,9 @@ class K2(MetricBase):
 
     def local_score(self, node, parents):
         score = 0
-        # root node
         if not np.any(parents):
             _, n_counts = np.unique(self.data[:, node], return_counts=True, axis=0)
             score += gammaln(self.base[node]) - np.sum(gammaln(self.data_size + self.base[node])) + np.sum(gammaln(n_counts + 1))
-        # others
         else:
             p, p_counts = np.unique(self.data[:, parents], return_counts=True, axis=0)
             _, n_p_counts = np.unique(np.c_[self.data[:, node], self.data[:, parents]], return_counts=True, axis=0)

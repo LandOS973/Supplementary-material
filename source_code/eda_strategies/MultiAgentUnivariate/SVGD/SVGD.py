@@ -27,23 +27,20 @@ class SVGD:
             B, M, N = thetas.shape
         if M == 1:
             return score / self.gamma
-        K, grad_term = self.kernel(thetas, probs=probs)  # (B, M, M), (B, M, N)
+        K, grad_term = self.kernel(thetas, probs=probs)                        
         if torch.isnan(K).any() or torch.isinf(K).any():
             K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
         if torch.isnan(grad_term).any() or torch.isinf(grad_term).any():
             grad_term = torch.nan_to_num(grad_term, nan=0.0, posinf=0.0, neginf=0.0)
         if score.dim() == 4:
-            # TODO regarder ça
-            # Expand K to align with (B, M, N, D) and sum over source agents.
             score_term = (K.unsqueeze(-1).unsqueeze(-1) * score.unsqueeze(1)).sum(dim=2)
         else:
             score_term = torch.matmul(K, score)
         if self.no_repulsion:
-            phi = (score_term / self.gamma) / M  # (B, M, N)
+            phi = (score_term / self.gamma) / M             
         else:
-            phi = (score_term / self.gamma + grad_term) / M  # (B, M, N)
+            phi = (score_term / self.gamma + grad_term) / M             
 
-        # phi = score
 
 
         if torch.isnan(phi).any() or torch.isinf(phi).any():

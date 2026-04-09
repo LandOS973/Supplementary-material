@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Hydra runner for MaxCut with SVGD_EDA (PPO-EDA strategy).
 """
@@ -7,7 +6,6 @@ from __future__ import annotations
 
 import os
 import random
-import urllib.request
 from pathlib import Path
 
 import hydra
@@ -16,17 +14,18 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 try:
     from tqdm.auto import tqdm
-except Exception:  # pragma: no cover
+except Exception:                    
     tqdm = None
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.metrics import MetricsCalculator
 from environment.tsne_agents import plot_agents_tsne
 from environment.visualization import render_agent_dashboard
+from problems.maxcut import evaluate_maxcut_batch, load_gset_matrix
 
 try:
     import nevergrad as ng
-except Exception:  # pragma: no cover
+except Exception:                    
     ng = None
 
 
@@ -43,95 +42,6 @@ def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
     if "name" not in cfg_dict:
         cfg_dict["name"] = kernel_name
     return cfg_dict
-
-
-def load_gset_matrix(instance_name: str, url_base: str, device: str) -> tuple[torch.Tensor, int, int]:
-    """
-    Load one Gset-like MaxCut instance as a symmetric adjacency matrix.
-    Expected format:
-      line 1: N E
-      next lines: u v weight
-    Node ids in files are 1-based and converted to 0-based.
-    """
-    script_dir = Path(__file__).resolve().parent
-    cache_dir = script_dir / "instances" / "maxcut"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    requested = Path(instance_name)
-    local_candidates = []
-    if requested.is_absolute():
-        local_candidates.append(requested)
-    else:
-        local_candidates.append(cache_dir / requested.name)
-        local_candidates.append(script_dir / requested)
-        local_candidates.append(Path.cwd() / requested)
-
-    local_path = next((path for path in local_candidates if path.exists()), None)
-
-    if local_path is None:
-        if not url_base:
-            raise FileNotFoundError(
-                f"Instance '{instance_name}' introuvable localement et url_base vide, impossible de telecharger."
-            )
-        url = f"{url_base.rstrip('/')}/{instance_name}"
-        try:
-            with urllib.request.urlopen(url, timeout=60) as response:
-                raw_content = response.read()
-        except Exception as exc:
-            raise RuntimeError(f"Echec du telechargement de '{url}': {exc}") from exc
-        text = raw_content.decode("utf-8", errors="strict")
-        local_path = cache_dir / requested.name
-        local_path.write_text(text, encoding="utf-8")
-        print(f"[INFO] downloaded {instance_name} -> {local_path}")
-    else:
-        text = local_path.read_text(encoding="utf-8")
-        print(f"[INFO] using local MaxCut instance: {local_path}")
-
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines:
-        raise ValueError(f"Fichier instance vide: {local_path}")
-
-    header = lines[0].split()
-    if len(header) < 2:
-        raise ValueError(f"Entete invalide dans {local_path}: '{lines[0]}' (attendu: N E)")
-
-    n = int(header[0])
-    declared_edges = int(header[1])
-    adjacency = torch.zeros((n, n), dtype=torch.float32, device=device)
-    parsed_edges = 0
-
-    for line in lines[1:]:
-        parts = line.split()
-        if len(parts) < 3:
-            continue
-        u = int(parts[0]) - 1
-        v = int(parts[1]) - 1
-        w = float(parts[2])
-        if u < 0 or v < 0 or u >= n or v >= n:
-            raise ValueError(f"Index hors bornes dans {local_path}: '{line}'")
-        adjacency[u, v] += w
-        adjacency[v, u] += w
-        parsed_edges += 1
-
-    adjacency.fill_diagonal_(0.0)
-    num_edges = parsed_edges if parsed_edges > 0 else declared_edges
-    return adjacency, n, num_edges
-
-
-def evaluate_maxcut_batch(agents_batch: torch.Tensor, adjacency_matrix: torch.Tensor) -> torch.Tensor:
-    """
-    Compute MaxCut score for a batch of binary solutions.
-    agents_batch: (B, N) with values in {0, 1}
-    adjacency_matrix: (N, N), symmetric
-    returns: (B,)
-    """
-    if agents_batch.dim() != 2:
-        raise ValueError(f"agents_batch must be 2D (B, N), got shape={tuple(agents_batch.shape)}")
-    x = agents_batch.to(dtype=adjacency_matrix.dtype)
-    x_bar = 1.0 - x
-    ax = torch.matmul(x, adjacency_matrix)
-    return torch.sum(ax * x_bar, dim=1)
-
 
 def _run_nevergrad_maxcut(
     adjacency_matrix: torch.Tensor,
@@ -229,7 +139,7 @@ def main(cfg: DictConfig):
     if problem_name != "MAXCUT" and not use_nevergrad:
         print(f"[WARN] problem.name={problem_name} (attendu MAXCUT). Le script continue en mode MaxCut.")
 
-    adjacency_matrix, N, E = load_gset_matrix(instance_name, url_base, device)
+    adjacency_matrix, N, E = load_gset_matrix(instance_name, url_base, device, base_dir=script_dir)
     print(f"[INFO] graph stats: nodes={N} edges={E}")
 
     seed = int(cfg.seed)
@@ -369,9 +279,9 @@ def main(cfg: DictConfig):
         if hasattr(strategy, "decay_svgd_gamma"):
             strategy.decay_svgd_gamma(it, num_iters)
 
-        solutions = strategy.sample_solutions()  # (1, M*lambda, N, 1)
-        sols_flat = solutions.view(-1, N)  # (M*lambda, N)
-        scores = evaluate_maxcut_batch(sols_flat, adjacency_matrix)  # (M*lambda,)
+        solutions = strategy.sample_solutions()                       
+        sols_flat = solutions.view(-1, N)                 
+        scores = evaluate_maxcut_batch(sols_flat, adjacency_matrix)               
         strategy.updateDistribution(solutions, scores.view(1, -1))
 
         best_score_iter = float(scores.max().item())

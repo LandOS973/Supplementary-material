@@ -15,7 +15,7 @@ class AdvantageFactory:
         "baseline": BaselineAdvantage,
         "baseline_rescaled": BaselineRescaledAdvantage,
         "globalrankweighted": GlobalRankWeightedAdvantage,
-        "rankbaseweighted": GlobalRankWeightedAdvantage,  # rétrocompatibilité
+        "rankbaseweighted": GlobalRankWeightedAdvantage,                      
         "peragentrankweighted": PerAgentRankWeightedAdvantage,
         "normalizedfitness": NormalizedFitnessAdvantage,
     }

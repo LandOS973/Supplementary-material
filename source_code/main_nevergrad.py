@@ -133,7 +133,6 @@ def get_Score_Problem(optimizer, problem, type_problem, id):
         if(cpt%step_record == 0):
             table_scores[index, id] = best_loss
             
-            #print("index : " + str(index) + " best loss " + str(best_loss))
 
     
 
@@ -181,11 +180,9 @@ for index in range(table_scores.shape[0]):
 
     array_score = table_scores[index]
 
-    #print(array_score)
     
     mean = np.mean(array_score)
     
-    #print(mean)
     
     median = np.percentile(array_score, 50)
     std = np.std(array_score)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build global ranking files from nevergrad results.
 
-Reads results from /home/landos/Downloads/results_nevergrad_ppsn by default,
+Reads results from <project_root>/results/nevergrad by default,
 computes the mean final score over 100 runs per instance, and writes
 CSV rankings to additional_results/global_ranking.
 """
@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 
-DEFAULT_RESULTS_ROOT = Path("/home/landos/Downloads/results_nevergrad_ppsn")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_RESULTS_ROOT = PROJECT_ROOT / "results" / "nevergrad"
 DEFAULT_BUDGET = 50000
 DEFAULT_EXPECTED_RUNS = 100
 
@@ -181,7 +182,7 @@ def main() -> int:
         "--results-root",
         type=Path,
         default=DEFAULT_RESULTS_ROOT,
-        help="Path to results_nevergrad_ppsn",
+        help="Path to the nevergrad results root (default: <project_root>/results/nevergrad)",
     )
     parser.add_argument(
         "--out-dir",

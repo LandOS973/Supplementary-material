@@ -15,7 +15,7 @@ try:
     import tkinter as tk
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
     import matplotlib.pyplot as plt
-except Exception:  # pragma: no cover - plotting optional
+except Exception:                                        
     tk = None
     FigureCanvasTkAgg = None
     plt = None
@@ -467,7 +467,6 @@ def render_agent_dashboard(
             for name in metrics_order:
                 metric_vars[name].set(1 if name in selected_metrics else 0)
 
-        # ensure Tk has finalized widget sizes before drawing to avoid large initial padding
         root.update_idletasks()
         draw_metrics()
         _toggle_theta_panel()
@@ -479,7 +478,7 @@ def render_agent_dashboard(
         root.protocol("WM_DELETE_WINDOW", _close)
         root.mainloop()
         plt.close(fig)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:                    
         print(f"Failed to render Tkinter plots: {exc}")
 
 
@@ -545,7 +544,7 @@ def render_svgd_field_plot(snapshot):
         root.protocol("WM_DELETE_WINDOW", _close)
         root.mainloop()
         plt.close(fig)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:                    
         print(f"Failed to render SVGD field plot: {exc}")
 
 

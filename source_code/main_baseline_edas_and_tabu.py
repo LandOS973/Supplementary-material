@@ -98,7 +98,7 @@ class EDASearchWrapper:
         while num_evals < self.budget:
             population_size = (
                 optimizer.lam
-            )  # this can change during the optimization (in update)
+            )                                                       
 
             population = np.zeros((population_size, dim, D))
             fitnesses = np.zeros((population_size,))
@@ -314,7 +314,6 @@ if not os.path.exists("results/results_EDAs_final/" + name_algo + "/" + type_pro
     
 
 path_result = "results/results_EDAs_final/" + name_algo + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance) + "/"
-#path_logs = "logs/"
 name_file_result = "results_EDAs_final_" + name_algo + "_" + type_problem + "_" + str(dim) + "_" + str(type_instance) + "_" + str(nb_instances) + "_budget_" + str(budget) + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
 
 

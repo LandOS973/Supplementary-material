@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate a summary table image across all tested instances."""
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPETITOR_DIRS = [
-    Path("/home/landos/Downloads/results_nevergrad_ppsn"),
+    ROOT / "results" / "nevergrad",
 ]
 DEFAULT_BUDGET = 50000
 EXCLUDED_TABLE_PROBLEMS = {"QUBO", "UBQP"}
@@ -96,7 +95,6 @@ def load_raw_scores_csv(path: Path) -> List[float]:
                     if value is not None:
                         scores.append(value)
             else:
-                # Header is not explicit; attempt to parse header as data too.
                 for row in [header] + list(reader):
                     if not row:
                         continue
@@ -161,7 +159,6 @@ def find_competitor_run_files(
         if candidate_files:
             break
 
-        # Fallback: recursive search under algo dir.
         patterns: List[str] = []
         for problem in problem_variants:
             patterns.extend(
@@ -384,13 +381,10 @@ def build_rows(
     raw_svgd_scores: dict[tuple[str, int, int], float | None] = {}
     best_other_map: dict[tuple[str, int, int], str | None] = {}
 
-    # Gather instances from results/experiments
     instances = [item for item in discover_instances() if include_problem_in_table(item[0])]
 
-    # Also gather instances present in the config directory (to ensure none missing)
     if config_dir.exists():
         for entry in config_dir.iterdir():
-            # looking for directories like NK_dim64_t1
             match = re.match(r"^(?P<name>.+)_dim(?P<dim>\d+)_t(?P<t>\d+)$", entry.name)
             if not match:
                 continue
@@ -403,7 +397,6 @@ def build_rows(
             if key not in {(i[0], i[1], i[2]) for i in instances}:
                 instances.append((name, dim, type_instance, entry))
 
-    # Also gather instances present in global rankings, then keep only included problems.
     ranking_instances = discover_instances_from_rankings()
     existing_keys = {(i[0], i[1], i[2]) for i in instances}
     for name, dim, type_instance, _ in ranking_instances:
@@ -414,12 +407,10 @@ def build_rows(
             instances.append((name, dim, type_instance, None))
             existing_keys.add(key)
 
-    # sort instances for deterministic output
     instances = sorted(instances, key=lambda item: (item[0], item[1], item[2]))
 
     excluded_from_count = {"PPO-EDA", "Tabu", "TABU"}
 
-    # Print algos missing from the /83 count per retained problem (based on global ranking files).
     included_ranking_problems = [pb for pb in ("NK", "NK3", "QUBO") if include_problem_in_table(pb)]
     all_rank_algos: set[str] = set()
     for pb in included_ranking_problems:
@@ -447,10 +438,8 @@ def build_rows(
     for problem_name, dim, type_instance, exp_dir in instances:
         if not include_problem_in_table(problem_name):
             continue
-        # Exclude specific problematic instance per user request
         if problem_name.upper() == "BLOCK" and dim == 2064 and type_instance == 16:
             continue
-        # Try to load summary from experiments folder if exists
         avg_score = None
         exp_summary = None
         if exp_dir and exp_dir.exists():
@@ -460,7 +449,6 @@ def build_rows(
 
         row: List[str] = [problem_name, str(dim), str(type_instance)]
 
-        # Load SVGD score and optional rank from config
         svgd_raw_score, svgd_rank_from_config = load_svgd_score(config_dir, problem_name, dim, type_instance)
         svgd_score = normalize_score(problem_name, svgd_raw_score)
         raw_svgd_scores[(problem_name, dim, type_instance)] = svgd_score
@@ -479,7 +467,6 @@ def build_rows(
         combined.sort(key=lambda item: item[1], reverse=True)
         total_competitors = len(ranking)
         total = len(combined) if combined else None
-        # Ranking including SVGD (SVGD participates in the ranking)
         rank_map: dict[str, tuple[int, float]] = {}
         for idx, (name, score) in enumerate(combined, start=1):
             rank_map[name] = (idx, score)
@@ -487,7 +474,6 @@ def build_rows(
         svgd_rank = rank_map.get("SVGD", (None, None))[0]
         row.extend([format_rank(svgd_rank, total), format_score(problem_name, svgd_score)])
 
-        # Add other methods
         for method in methods:
             rank_entry = rank_map.get(method)
             if rank_entry:
@@ -496,7 +482,6 @@ def build_rows(
             else:
                 row.extend(["—", "—"])
 
-        # Best method (excluding SVGD, PBIL, MIMIC, BOA)
         best_name = "—"
         best_rank = None
         best_score = None
@@ -551,7 +536,6 @@ def _parse_rank_value(rank_str: str | None) -> int | None:
 def _parse_score_value(score_str: str | None) -> float | None:
     if not score_str or score_str == "—":
         return None
-    # Accept optional LaTeX decorations such as $^{*}$.
     cleaned = score_str.replace("$^{*}$", "").replace("\\textsuperscript{*}", "")
     match = re.search(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", cleaned)
     if not match:
@@ -660,7 +644,6 @@ def write_latex_table(
             return None
         if svgd_display is None or best_display is None:
             return None
-        # Use the displayed (aggregated) values to decide which score gets the star.
         if svgd_display > best_display:
             return "svgd"
         if best_display > svgd_display:
@@ -708,13 +691,11 @@ def write_latex_table(
         f.write("        Pb & $n$ & $t$ & Rank & Score & Rank & Score & Rank & Score & Rank & Score & Name & Rank & Score \\\\\n")
         f.write("        \\midrule\n")
 
-        # Compute mean scores (raw) and mean ranks
         rank_indices = [3, 5, 7, 9, 12]
         score_indices = [4, 6, 8, 10, 13]
         mean_ranks = [[] for _ in rank_indices]
         mean_scores = [[] for _ in score_indices]
 
-        # Find the most frequent "best method (others)" across rows.
         best_method_counts: dict[str, int] = {}
         for row in rows:
             if len(row) <= 11:
@@ -756,7 +737,6 @@ def write_latex_table(
                 return "—"
             return f"{sum(values) / len(values):.{ndigits}f}"
 
-        # Mean rank/score for the most frequent "best method (others)"
         best_method_ranks = []
         best_method_scores = []
         if most_common_best:
@@ -797,7 +777,6 @@ def write_latex_table(
                 best_method_ranks.append(float(rank_val))
                 best_method_scores.append(score_val)
 
-        # Les valeurs formatées donneront exactement "5.375", "0.751", etc.
         mean_row = [
             "Global ranking",
             "", 
@@ -815,7 +794,6 @@ def write_latex_table(
             fmt_mean(best_method_scores, 3),
         ]
 
-        # --- Début de la logique de regroupement (multirow) ---
         problem_counts = {}
         dim_counts = {}
         for row in rows:
@@ -834,7 +812,6 @@ def write_latex_table(
             pb = row[0]
             dim = row[1]
             
-            # Gestion des lignes de séparation avec \midrule[1.2pt] entre les problèmes
             if last_pb is not None and pb != last_pb:
                 f.write("        \\midrule[1.2pt]\n")
             elif last_dim is not None and dim != last_dim and pb == last_pb:
@@ -872,7 +849,6 @@ def write_latex_table(
                     best_display,
                 )
 
-                # Print p-values for this line (SVGD vs PBIL/MIMIC/BOA and best method).
                 p_pbil = _pvalue_against("PBIL", pb, dim_int, type_int)
                 p_mimic = _pvalue_against("MIMIC", pb, dim_int, type_int)
                 p_boa = _pvalue_against("BOA", pb, dim_int, type_int)
@@ -929,9 +905,7 @@ def write_latex_table(
             f.write("        " + " & ".join(cells) + " \\\\\n")
             last_pb = pb
             last_dim = dim
-        # --- Fin de la logique de regroupement ---
 
-        # Ecriture de la ligne finale (résumé formaté)
         f.write("        \\midrule\n")
         row = mean_row
         svgd_mean_rank = _latex_escape(row[3])
@@ -1002,20 +976,14 @@ def write_excel(rows: List[List[str]], col_labels: List[str], output_xlsx: Path)
     ws = wb.active
     ws.title = "summary"
 
-    # Column groups (0-based indices)
-    # Instances: Pb, n, t -> cols 1-3
-    # Methods: SVGD, PBIL, MIMIC, BOA -> each has Rank/Score
-    # Best method (others): Name, Rank, Score -> last 3
     n_cols = len(col_labels)
     if n_cols != 14:
         print(f"[WARN] Unexpected column count: {n_cols}, expected 14. Excel header merging may be off.")
 
-    # Header rows
     ws.append([""] * n_cols)
     ws.append([""] * n_cols)
     ws.append(col_labels)
 
-    # Group headers (row 1)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
     ws.cell(row=1, column=1, value="Instances")
     ws.merge_cells(start_row=1, start_column=4, end_row=1, end_column=11)
@@ -1023,7 +991,6 @@ def write_excel(rows: List[List[str]], col_labels: List[str], output_xlsx: Path)
     ws.merge_cells(start_row=1, start_column=12, end_row=1, end_column=14)
     ws.cell(row=1, column=12, value="Best method (others)")
 
-    # Method headers (row 2)
     ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=5)
     ws.cell(row=2, column=4, value="SVGD")
     ws.merge_cells(start_row=2, start_column=6, end_row=2, end_column=7)
@@ -1033,7 +1000,6 @@ def write_excel(rows: List[List[str]], col_labels: List[str], output_xlsx: Path)
     ws.merge_cells(start_row=2, start_column=10, end_row=2, end_column=11)
     ws.cell(row=2, column=10, value="BOA")
 
-    # Data rows
     for row in rows:
         ws.append(row)
 
@@ -1180,7 +1146,6 @@ def main() -> None:
     parser.add_argument("--format", choices=("all", "csv", "image", "excel", "tex"), default="all")
     args = parser.parse_args()
 
-    # Ask for config
     config_name = input("Enter config name (e.g., krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01): ").strip()
     config_dir = ROOT / "results" / "config" / config_name
     

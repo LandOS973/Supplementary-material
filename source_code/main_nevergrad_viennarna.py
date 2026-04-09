@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Hydra runner for Nevergrad DiscreteDE on ViennaRNA inverse folding.
 
@@ -10,125 +9,34 @@ Nevergrad minimizes by default, so we optimize loss = -score.
 
 from __future__ import annotations
 
-import csv
 import os
 import random
 from pathlib import Path
-from urllib.request import urlopen
 
 import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
+from problems.viennarna import (
+    ETERNA100_TSV_URL,
+    RNA_ALPHABET,
+    load_target_from_eterna100,
+    normalize_target_struct,
+)
 
 try:
     import nevergrad as ng
-except Exception:  # pragma: no cover
+except Exception:                    
     ng = None
 
 try:
     import RNA
-except Exception:  # pragma: no cover
+except Exception:                    
     RNA = None
 
 
-RNA_ALPHABET = np.array(list("ACGU"))
-ETERNA100_TSV_URL = (
-    "https://raw.githubusercontent.com/eternagame/eterna100-benchmarking/master/data/eterna100_puzzles.tsv"
-)
-# Fallback only. Default run target should be set from Hydra config:
-# `config/problem/anr.yaml` -> `target_name`.
 DEFAULT_TARGET_NAME = "Simple Hairpin"
 DEFAULT_TARGET_STRUCT = "(" * 25 + "." * 50 + ")" * 25
-
-
-def _is_dotbracket(value: str) -> bool:
-    if not value:
-        return False
-    allowed = set(".()[]{}<>&")
-    return all(ch in allowed for ch in value)
-
-
-def _normalize_target_struct(value: str) -> str:
-    target = str(value).strip().replace(" ", "")
-    if not target:
-        raise ValueError("Target structure is empty.")
-    if not _is_dotbracket(target):
-        raise ValueError(f"Invalid target structure `{target}`. Expected dot-bracket symbols only.")
-    return target
-
-
-def _extract_dotbracket_from_row(row: dict) -> str | None:
-    preferred_keys = (
-        "target_structure",
-        "target_struct",
-        "structure",
-        "secstruct",
-        "secondary_structure",
-        "dotbracket",
-        "dot_bracket",
-    )
-    for key in preferred_keys:
-        value = row.get(key)
-        if value and _is_dotbracket(str(value).strip()):
-            return str(value).strip()
-    for value in row.values():
-        if value and _is_dotbracket(str(value).strip()):
-            return str(value).strip()
-    return None
-
-
-def _row_matches_name(row: dict, target_name: str) -> bool:
-    ref = target_name.strip().lower()
-    if not ref:
-        return False
-    name_keys = ("name", "puzzle_name", "title", "display_name", "id")
-    for key in name_keys:
-        value = row.get(key)
-        if value and str(value).strip().lower() == ref:
-            return True
-    for value in row.values():
-        if isinstance(value, str) and value.strip().lower() == ref:
-            return True
-    return False
-
-
-def _read_text_from_source(source: str) -> str:
-    source = str(source).strip()
-    if source.startswith("http://") or source.startswith("https://"):
-        with urlopen(source, timeout=20) as response:
-            return response.read().decode("utf-8")
-    return Path(source).read_text(encoding="utf-8")
-
-
-def _load_target_from_eterna100(
-    target_name: str = DEFAULT_TARGET_NAME,
-    source: str = ETERNA100_TSV_URL,
-    fallback_target: str = DEFAULT_TARGET_STRUCT,
-    verbose: bool = True,
-) -> tuple[str, str]:
-    try:
-        raw = _read_text_from_source(source)
-        reader = csv.DictReader(raw.splitlines(), delimiter="\t")
-        rows = list(reader)
-        for row in rows:
-            if _row_matches_name(row, target_name):
-                candidate = _extract_dotbracket_from_row(row)
-                if candidate:
-                    target = _normalize_target_struct(candidate)
-                    if verbose:
-                        print(f"[ViennaRNA] target loaded from benchmark: `{target_name}` (len={len(target)})")
-                    return target, target_name
-        if verbose:
-            print(
-                f"[ViennaRNA][WARN] target `{target_name}` not found in benchmark source; "
-                "using fallback default target."
-            )
-    except Exception as exc:
-        if verbose:
-            print(f"[ViennaRNA][WARN] failed loading benchmark target ({exc}); using fallback default target.")
-
-    return _normalize_target_struct(fallback_target), "fallback_default"
 
 
 def _slugify(value) -> str:
@@ -250,11 +158,11 @@ def main(cfg: DictConfig) -> None:
     target_source = str(OmegaConf.select(cfg, "problem.target_source") or ETERNA100_TSV_URL)
     target_struct_cfg = OmegaConf.select(cfg, "problem.target_struct")
     if target_struct_cfg:
-        target_struct = _normalize_target_struct(str(target_struct_cfg))
+        target_struct = normalize_target_struct(str(target_struct_cfg))
         target_resolved_name = "cfg_target_struct"
         print(f"[ViennaRNA] using target from cfg.problem.target_struct (len={len(target_struct)})")
     else:
-        target_struct, target_resolved_name = _load_target_from_eterna100(
+        target_struct, target_resolved_name = load_target_from_eterna100(
             target_name=target_name,
             source=target_source,
             fallback_target=DEFAULT_TARGET_STRUCT,
@@ -306,7 +214,6 @@ def main(cfg: DictConfig) -> None:
     table = np.full((num_rows, nb_restarts), np.nan, dtype=np.float32)
     for col, row in enumerate(all_checkpoints):
         table[: len(row), col] = np.asarray(row, dtype=np.float32)
-    # forward-fill missing tail if any (only happens with uneven checkpoints)
     for col in range(nb_restarts):
         col_vals = table[:, col]
         last = np.nan

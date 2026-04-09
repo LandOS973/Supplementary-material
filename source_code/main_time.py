@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Interactive timing script for SVGD-EDA (PPO-EDA) on CPU/GPU.
 Measures wall-clock time for given instance counts (e.g. 1 and 100).
@@ -351,7 +350,6 @@ def _discover_qubo_pairs(instance_dir: Path) -> list[tuple[int, int, int]]:
         if not fname.name.endswith(".json"):
             continue
         name = fname.name
-        # puboi_evo_n_{N}_t_{t}_i_{idx}.json
         parts = name.split("_")
         if len(parts) < 7:
             continue
@@ -404,7 +402,6 @@ def main() -> None:
     base_cfg = _load_yaml(CONFIG_DIR / "config.yaml")
     agent_cfg = _load_yaml(CONFIG_DIR / "agent" / "reinforce.yaml")
 
-    # Defaults from config files
     defaults = {
         "kernel": str(agent_cfg.get("kernel", "hk")).lower(),
         "advantage": agent_cfg.get("advantage", "baseline"),
@@ -424,7 +421,6 @@ def main() -> None:
     ).strip()
     cfg = _parse_config_string(config_str, defaults)
 
-    # Resolve kernel config to fill missing epsilon/gamma
     kernel_name = str(cfg["kernel"]).lower()
     kernel_cfg = _load_kernel_config(kernel_name)
     epsilon_svgd = float(
@@ -450,22 +446,18 @@ def main() -> None:
         f"no_interact={cfg['no_interact']} | no_repulsion={cfg['no_repulsion']}"
     )
 
-    # Global run parameters (no extra prompts)
     budget = int(base_cfg.get("budget", 50000))
     instance_counts = [1, 100]
     repeats = 3
 
-    # Devices (always yes)
     devices = [torch.device("cpu")]
     if torch.cuda.is_available():
         devices.append(torch.device("cuda:0"))
     else:
         print("[INFO] GPU non detecte. Mesure GPU ignoree.")
 
-    # Problems to run (all)
     problems = ["QUBO", "NK", "NK3", "BLOCK"]
 
-    # Discover all available dims / type_instance per problem
     qubo_pairs = _discover_qubo_pairs(REPO_ROOT / "source_code" / "instances" / "QUBO")
     nk_pairs = _discover_nk_pairs(REPO_ROOT / "source_code" / "instances" / "nk", d=2)
     nk3_pairs = _discover_nk_pairs(REPO_ROOT / "source_code" / "instances" / "nk3", d=3)

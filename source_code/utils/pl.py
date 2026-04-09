@@ -9,7 +9,6 @@ from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all
 from torch.distributions import constraints
 
-# use GPU if available
 USE_CUDA = torch.cuda.is_available()
 FloatTensor = torch.cuda.FloatTensor if USE_CUDA else torch.FloatTensor
 LongTensor = torch.cuda.LongTensor if USE_CUDA else torch.LongTensor
@@ -24,7 +23,6 @@ class PL(Distribution):
 
     @property
     def mean(self):
-        # mode of the PL distribution
         return self.relaxed_sort(self.scores)
 
     def __init__(self, device, scores, tau, noise_rescale, hard=True, validate_args=None):
@@ -81,7 +79,7 @@ class PL(Distribution):
                 [bsize, 1]).flatten().type(LongTensor)
 
 
-            c_idx = torch.argmax(P_hat, dim=-1).flatten()  # this is on cuda
+            c_idx = torch.argmax(P_hat, dim=-1).flatten()                   
 
             brc_idx = torch.stack((b_idx, r_idx, c_idx))
 
@@ -97,7 +95,7 @@ class PL(Distribution):
         """
 
 
-        with torch.enable_grad():  # torch.distributions turns off autograd
+        with torch.enable_grad():                                          
 
             n_samples = sample_shape[0] * sample_shape[1]
 
@@ -180,7 +178,7 @@ class NeuralSort (torch.nn.Module):
                 dim0=1, dim1=0).flatten().type(torch.LongTensor).to(self.device)
             r_idx = torch.arange(dim).repeat(
                 [bsize, 1]).flatten().type(torch.LongTensor).to(self.device)
-            c_idx = torch.argmax(P_hat, dim=-1).flatten()  # this is on cuda
+            c_idx = torch.argmax(P_hat, dim=-1).flatten()                   
             brc_idx = torch.stack((b_idx, r_idx, c_idx))
 
             P[brc_idx[0], brc_idx[1], brc_idx[2]] = 1
@@ -197,7 +195,6 @@ if __name__ == '__main__':
     scores = torch.Tensor([[100.8, 0.3, 11111.9]]).unsqueeze(-1).to(device)
     tau = 0.1
 
-    # hard = True is necessary
     pl_dist = PL(scores, tau, hard=False)
 
     sorted_scores = pl_dist.relaxed_sort(scores)
@@ -208,47 +205,3 @@ if __name__ == '__main__':
 
 
 
-    #
-    # # check helper sorting function
-    # sorted_scores = pl_dist.relaxed_sort(scores)
-    #
-    # print("sorted_scores")
-    # print(sorted_scores)
-    # print(sorted_scores.size())
-    #
-    # # check if we get mode of distribution
-    # # print(pl_dist.mean)
-    #
-    # # check log prob function
-    # good_pm = torch.Tensor([[[0., 0., 1.],
-    #                          [1., 0., 0.],
-    #                          [0., 1., 0.]]])
-    # intermediate_pm = torch.Tensor([[[0., 0., 1.],
-    #                                  [0., 1., 0.],
-    #                                  [1., 0., 0.]]])
-    # bad_pm = torch.Tensor([[[0., 1., 0.],
-    #                         [1., 0., 0.],
-    #                         [0., 0., 1.]]])
-    # print(pl_dist.log_prob(good_pm), pl_dist.log_prob(
-    #     intermediate_pm), pl_dist.log_prob(bad_pm))
-    # print()
-    #
-    # # check sample
-    # scores_bimodal = torch.Tensor([[11111.92, 0.3, 11111.9]]).unsqueeze(-1)
-    # pl_dist_bimodal = PL(scores_bimodal, tau, hard=True)
-    # samples = pl_dist_bimodal.sample((5,))
-    # print(samples)
-    # print()
-    #
-    # # code for kl(q, p)
-    # scores_prior = torch.Tensor([[0.3, 10.8, 1111.9]]).unsqueeze(-1)
-    # tau_prior = 0.1
-    #
-    # pl_dist_prior = PL(scores_prior, tau_prior, hard=True)
-    # print(pl_dist_prior.mean)
-    # print(pl_dist_prior.log_prob(good_pm), pl_dist_prior.log_prob(
-    #     intermediate_pm), pl_dist_prior.log_prob(bad_pm))
-    #
-    # # kl (q, p)
-    # empirical_kl = pl_dist.log_prob(good_pm) - pl_dist_prior.log_prob(good_pm)
-    # print(empirical_kl)

@@ -14,18 +14,12 @@ class CGA(EDABase):
     def update(self, x, evals, range_restriction=False):
         assert x.shape[0] == 2
         x, evals = self._preprocess(x, evals)
-        # sort by the evaluation value
         idx = np.argsort(evals)
-        # get winner and loser, and transform one-hot vector to index
         win = np.argmax(x[idx[0]], axis=1)
         lose = np.argmax(x[idx[-1]], axis=1)
-        # get indexes to update parameters, where the indexes are
-        # the dimensions that have different values between winner and loser
         diff_idx = win != lose
-        # update parameter
         self.theta[diff_idx, win[diff_idx]] += self.diff
         self.theta[diff_idx, lose[diff_idx]] -= self.diff
-        # if range_restriction is True, clipping the probabilistic model
         self.clipping(range_restriction)
 
     def __str__(self):

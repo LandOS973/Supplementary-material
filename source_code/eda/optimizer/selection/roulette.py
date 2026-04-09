@@ -35,7 +35,6 @@ class Roulette(SelectionBase):
         selected = np.random.choice(lam, sample_lam, p=prob)
         population = population[selected]
         evals = evals[selected]
-        # if True, sort by the evaluation value
         if sort:
             population, evals = self.sort_by_fitness(population, evals)
         return population, evals

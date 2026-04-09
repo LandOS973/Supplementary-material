@@ -33,9 +33,8 @@ class EDABase(metaclass=ABCMeta):
 
         self.valid_params = int(np.sum(self.C - 1))
         self.valid_d = len(self.C[self.C > 1])
-        # for logging
         self.best_indiv = None
-        self.best_eval = np.inf     # Assume minimization problems
+        self.best_eval = np.inf                                   
         self.num_evals = 0
 
     @abstractmethod
@@ -129,11 +128,9 @@ class EDABase(metaclass=ABCMeta):
         x = np.array(x)
         evals = np.array(evals)
         self.num_evals += x.shape[0]
-        # sort by the evaluation value
         idx = np.argsort(evals)
         sorted_x = x[idx]
         sorted_evals = evals[idx]
-        # store the best individual and the evaluation value
         if self.best_eval > sorted_evals[0]:
             self.best_eval = sorted_evals[0]
             self.best_indiv = sorted_x[0]

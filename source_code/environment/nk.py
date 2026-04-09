@@ -69,7 +69,6 @@ def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, 
         for i in range(nb_instances):
 
             matrix_locus = np.zeros((N, K + 1))
-            # Générer les voisins de chaque élément dans le paysage NK
             for x in range(N):
                 neigh = []
                 neigh.append(x)
@@ -79,7 +78,7 @@ def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, 
                         x1 = np.random.randint(0, N)
                     neigh.append(x1)
 
-                neigh.sort()  # Trie les voisins pour assurer un ordre
+                neigh.sort()                                          
                 matrix_locus[x, :] = neigh
 
             matrix_locus = torch.tensor(matrix_locus, dtype=torch.int64)
@@ -101,7 +100,6 @@ def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, 
         tensor_matrix_contrib = tensor_matrix_contrib.to(device)
         
         tensor_matrix_Q = torch.stack(list_matrix_Q, dim=0)
-        #tensor_matrix_Q = (tensor_matrix_Q.unsqueeze(1)).repeat([1, size_pop, 1, 1]).to(device)
 
     return tensor_matrix_locus, tensor_matrix_contrib, tensor_matrix_Q
 
@@ -253,45 +251,22 @@ def get_Score_trajectoriesNK_cuda(
                 sample_first = None
             solutions_history.append(sample_first)
 
-        #if epoch == 0:
             
             
-            #print("startSolution")
-            #print(startSolution.size())
         
         
-        # #
 
-        #Compute score
         tensor_score = _evaluate_population(tensor_solution)
 
 
-        #print("tensor score")
-        #print(tensor_score[0]/N)
         
-        #tensor_score_np = np.zeros((nb_instances, size_pop))
         
-        #list_problem = []
         
-        #path = "instances/nk/" + str(N) + "/" + str(K) + "/"
-        #for num_instance in range(nb_instances):
-            #name_instance = path + "nk_" + str(N) + "_" + str(K) + "_" + str(
-                #num_instance) + ".txt"
-            #list_problem.append(problem_NKlandscape(name_instance))
         
-        #tensor_solution_np = tensor_solution.cpu().numpy()
         
-        #print("tensor_solution_np")
-        #print(tensor_solution_np[0,0,:])
         
-        #for i in range(nb_instances):
-            #for j in range(size_pop):
-                #tensor_score_np[i,j] = list_problem[i].eval(tensor_solution_np[i,j])
         
-        #print("tensor_score_np")
-        #print(tensor_score_np[0])
         
-        #print(coucou)
 
 
         current_score = torch.max(tensor_score, dim=1).values
@@ -574,7 +549,6 @@ class problem_NKlandscape:
         else:
             self.D = 2
 
-        # print("self.D : " + str(self.D))
 
         self.links = []
         for n in range(self.N):
@@ -586,7 +560,6 @@ class problem_NKlandscape:
             for k in range(self.D ** (self.K + 1)):
                 self.links[n][-1].append(float(lignes[1 + self.N * (self.K + 1) + n * (self.D ** (self.K + 1)) + k]))
 
-        # print(self.links)
 
         f.close()
 
@@ -609,12 +582,10 @@ class problem_NKlandscape:
 
     def perturbation(self, alpha):
 
-        num_bits_to_perturb = int(alpha * self.N)  # Calcul du nombre de bits à perturber
+        num_bits_to_perturb = int(alpha * self.N)                                        
 
-        # Choisissez aléatoirement num_bits_to_perturb indices de bits à perturber
         perturb_indices = np.random.choice(self.N, num_bits_to_perturb, replace=False)
 
-        # Inversez les valeurs des bits choisis aléatoirement
         for index in perturb_indices:
             self.game_state[index] = (self.game_state[index] + 1) % 2
 

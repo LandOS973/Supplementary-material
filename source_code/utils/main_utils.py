@@ -99,7 +99,7 @@ def load_grid_settings(path: str):
     try:
         if path.lower().endswith((".yml", ".yaml")):
             try:
-                import yaml  # type: ignore
+                import yaml                
             except Exception as exc:
                 raise RuntimeError("PyYAML required for YAML grid settings") from exc
             data = yaml.safe_load(Path(path).read_text())
