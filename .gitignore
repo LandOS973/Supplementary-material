@@ -8,6 +8,8 @@ source_code/multirun/
 *.log
 .venv*
 results/config/*
+!results/config/krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01/
+!results/config/krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01/**
 source_code/instances/nasbench/nasbench_full.tfrecord
 outputs/*/*/.hydra/*
 results/nevergrad/**/*.txt
