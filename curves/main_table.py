@@ -607,6 +607,7 @@ def write_latex_table(
     warned: set[str] = set()
     svgd_scores_cache: dict[tuple[str, int, int], List[float]] = {}
     competitor_scores_cache: dict[tuple[str, str, int, int], List[float]] = {}
+    combined_scores_cache: dict[tuple[str, int, int], tuple[List[tuple[str, float]], dict[str, float], float | None]] = {}
 
     def warn_once(key: str, message: str) -> None:
         if key in warned:
@@ -651,6 +652,38 @@ def write_latex_table(
             )
         competitor_scores_cache[key] = scores
         return scores
+
+    def _load_instance_combined_scores(
+        problem_name: str,
+        dim: int,
+        type_instance: int,
+    ) -> tuple[List[tuple[str, float]], dict[str, float], float | None]:
+        key = (problem_name, dim, type_instance)
+        cached = combined_scores_cache.get(key)
+        if cached is not None:
+            return cached
+
+        ranking_file = ranking_path(problem_name, dim, type_instance)
+        ranking = load_ranking(ranking_file)
+        ranking = [
+            (name, score)
+            for name, score in ranking
+            if name not in {"PPO-EDA", "Tabu", "TABU"}
+        ]
+        ranking = sorted(ranking, key=lambda item: item[1], reverse=True)
+
+        svgd_score = None
+        if raw_svgd_scores is not None:
+            svgd_score = raw_svgd_scores.get(key)
+
+        combined = list(ranking)
+        if svgd_score is not None:
+            combined.append(("SVGD", svgd_score))
+        combined = sorted(combined, key=lambda item: item[1], reverse=True)
+        score_map = {name: score for name, score in combined}
+        packed = (combined, score_map, svgd_score)
+        combined_scores_cache[key] = packed
+        return packed
 
     def _star_target(
         problem_name: str,
@@ -751,16 +784,35 @@ def write_latex_table(
             most_common_best = max(best_method_counts.items(), key=lambda item: item[1])[0]
 
         for row in rows:
-            scores = [_parse_score_value(row[i]) for i in score_indices]
-            if raw_svgd_scores is not None:
-                try:
-                    key = (row[0], int(row[1]), int(row[2]))
-                except Exception:
-                    key = None
-                if key is not None:
-                    svgd_raw = raw_svgd_scores.get(key)
-                    if svgd_raw is not None:
-                        scores[0] = svgd_raw
+            try:
+                pb = row[0]
+                dim = int(row[1])
+                type_instance = int(row[2])
+                _, score_map, svgd_raw = _load_instance_combined_scores(pb, dim, type_instance)
+                best_name_raw = row[11] if len(row) > 11 else None
+                best_name = (
+                    re.sub(r"\s+", "", best_name_raw)
+                    if best_name_raw and best_name_raw != "—"
+                    else None
+                )
+                scores = [
+                    svgd_raw,
+                    score_map.get("PBIL"),
+                    score_map.get("MIMIC"),
+                    score_map.get("BOA"),
+                    score_map.get(best_name) if best_name else None,
+                ]
+            except Exception:
+                scores = [_parse_score_value(row[i]) for i in score_indices]
+                if raw_svgd_scores is not None:
+                    try:
+                        key = (row[0], int(row[1]), int(row[2]))
+                    except Exception:
+                        key = None
+                    if key is not None:
+                        svgd_raw = raw_svgd_scores.get(key)
+                        if svgd_raw is not None:
+                            scores[0] = svgd_raw
             for idx, s in enumerate(scores):
                 if s is not None:
                     mean_scores[idx].append(s)
@@ -789,25 +841,13 @@ def write_latex_table(
                 except Exception:
                     continue
 
-                ranking_file = ranking_path(problem_name, dim, type_instance)
-                ranking = load_ranking(ranking_file)
-                ranking = [
-                    (name, score)
-                    for name, score in ranking
-                    if name not in {"PPO-EDA", "Tabu", "TABU"}
-                ]
-                ranking = sorted(ranking, key=lambda item: item[1], reverse=True)
+                combined, rank_map_raw, svgd_score = _load_instance_combined_scores(
+                    problem_name, dim, type_instance
+                )
+                ranking = [item for item in combined if item[0] != "SVGD"]
                 if not ranking:
                     continue
 
-                if raw_svgd_scores is not None:
-                    svgd_score = raw_svgd_scores.get((problem_name, dim, type_instance))
-                else:
-                    svgd_score = _parse_score_value(row[4]) if len(row) > 4 else None
-                combined = list(ranking)
-                if svgd_score is not None:
-                    combined.append(("SVGD", svgd_score))
-                combined.sort(key=lambda item: item[1], reverse=True)
                 rank_map = {name: (idx + 1, score) for idx, (name, score) in enumerate(combined)}
                 if most_common_best not in rank_map:
                     continue
@@ -877,8 +917,9 @@ def write_latex_table(
                     name_raw = row[11] if len(row) > 11 else None
                     if name_raw and name_raw != "—":
                         best_algo = re.sub(r"\s+", "", name_raw)
-                svgd_display = _parse_score_value(row[4]) if len(row) > 4 else None
-                best_display = _parse_score_value(row[13]) if len(row) > 13 else None
+                _, instance_score_map, svgd_raw = _load_instance_combined_scores(pb, dim_int, type_int)
+                svgd_display = svgd_raw
+                best_display = instance_score_map.get(best_algo) if best_algo else None
                 star = _star_target(
                     pb,
                     dim_int,
@@ -908,6 +949,18 @@ def write_latex_table(
                 row_display[13] = f"{row_display[13]}$^{{*}}$"
 
             cells: List[str] = []
+            score_by_col: dict[int, float | None] = {}
+            if dim_int is not None and type_int is not None:
+                _, instance_score_map, svgd_raw = _load_instance_combined_scores(pb, dim_int, type_int)
+                score_by_col = {
+                    4: svgd_raw,
+                    6: instance_score_map.get("PBIL"),
+                    8: instance_score_map.get("MIMIC"),
+                    10: instance_score_map.get("BOA"),
+                    13: instance_score_map.get(best_algo) if best_algo else None,
+                }
+                numeric_scores = [val for val in score_by_col.values() if val is not None]
+                best_score = max(numeric_scores) if numeric_scores else None
             for idx, val in enumerate(row_display):
                 if idx == 0:
                     if pb_seen.get(pb, 0) == 0:
@@ -936,7 +989,9 @@ def write_latex_table(
                     if rank_val == best_rank:
                         cell = _best_wrap(cell)
                 if idx in score_indices and best_score is not None:
-                    score_val = _parse_score_value(val)
+                    score_val = score_by_col.get(idx)
+                    if score_val is None:
+                        score_val = _parse_score_value(val)
                     if score_val is not None and abs(score_val - best_score) <= 1e-9:
                         cell = _best_wrap(cell)
                 cells.append(cell)
@@ -980,7 +1035,7 @@ def write_latex_table(
         f.write(
             "    \\caption{Global rankings and average scores at 50,000 evaluations (100 runs). "
             "\\textbf{Bold} values indicate the best mean score. An asterisk ($^*$) denotes a statistically "
-            "significant improvement over the second-best method (Welch's t-test, $p < 0.001$). "
+            "significant improvement over the second-best method (Student's t-test, $p < 0.001$). "
             "The final row summarizes the global mean ranks and mean scores across all instances.}\n"
         )
         f.write("    \\label{tab:results_portrait}\n")
