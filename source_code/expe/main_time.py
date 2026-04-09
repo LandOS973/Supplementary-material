@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -14,58 +15,18 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
+SOURCE_CODE_DIR = Path(__file__).resolve().parents[1]
+if str(SOURCE_CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(SOURCE_CODE_DIR))
+
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "config"
-
-
-def _ask_yes_no(prompt: str, default: bool = False) -> bool:
-    suffix = " [O/n]: " if default else " [o/N]: "
-    answer = input(prompt + suffix).strip().lower()
-    if not answer:
-        return default
-    return answer in ("o", "oui", "y", "yes")
-
-
-def _ask_int(prompt: str, default: int | None = None) -> int:
-    suffix = f" [defaut: {default}]: " if default is not None else ": "
-    answer = input(prompt + suffix).strip()
-    if not answer:
-        if default is None:
-            raise ValueError("Aucune valeur fournie.")
-        return int(default)
-    return int(answer)
-
-
-def _ask_choice(prompt: str, choices: list[str], default: str | None = None) -> str:
-    norm = {c.lower(): c for c in choices}
-    default_label = f" [defaut: {default}]" if default else ""
-    answer = input(f"{prompt}{default_label}: ").strip().lower()
-    if not answer:
-        if default is None:
-            raise ValueError("Aucune valeur fournie.")
-        return default
-    if answer in norm:
-        return norm[answer]
-    raise ValueError(f"Choix invalide: {answer}. Options: {', '.join(choices)}")
-
-
-def _ask_int_list(prompt: str, default: list[int]) -> list[int]:
-    default_str = ",".join(str(v) for v in default)
-    answer = input(f"{prompt} [defaut: {default_str}]: ").strip()
-    if not answer:
-        return list(default)
-    parts = [p.strip() for p in answer.split(",") if p.strip()]
-    values = [int(p) for p in parts]
-    if not values:
-        return list(default)
-    return values
-
 
 def _load_yaml(path: Path) -> dict:
     cfg = OmegaConf.load(str(path))
