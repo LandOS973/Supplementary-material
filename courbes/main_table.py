@@ -19,6 +19,7 @@ COMPETITOR_DIRS = [
 ]
 DEFAULT_BUDGET = 50000
 EXCLUDED_TABLE_PROBLEMS = {"QUBO", "UBQP"}
+DEFAULT_CONFIG_NAME = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"
 
 
 def parse_summary_file(path: Path) -> dict[str, str]:
@@ -1184,7 +1185,12 @@ def main() -> None:
     parser.add_argument("--format", choices=("all", "csv", "image", "excel", "tex"), default="all")
     args = parser.parse_args()
 
-    config_name = input("Enter config name (e.g., krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01): ").strip()
+    config_name = (
+        input(
+            f"Enter config name (e.g., {DEFAULT_CONFIG_NAME}) [default: {DEFAULT_CONFIG_NAME}]: "
+        ).strip()
+        or DEFAULT_CONFIG_NAME
+    )
     config_dir = ROOT / "results" / "config" / config_name
     
     if not config_dir.exists():

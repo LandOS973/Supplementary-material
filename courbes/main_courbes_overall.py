@@ -35,6 +35,7 @@ from main_plot import (
 ROOT = Path(__file__).resolve().parent.parent
 INSTANCE_DIR_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
 MAX_BUDGET = 50000
+DEFAULT_CONFIG_NAME = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"
 
 
 def _build_instance_list(config_dir: Path):
@@ -485,11 +486,12 @@ def _plot_normal_vs_no_repulsion(instance, normal_path: Path, no_repulsion_path:
 
 
 def main():
-    config_name = input(
-        "Config name (ex: kjsd__advperagentrankweighted__M4__L24__eps0p01__g0p0005__ds0p05__dm0p05): "
-    ).strip()
-    if not config_name:
-        raise SystemExit("Config name required.")
+    config_name = (
+        input(
+            f"Config name (ex: {DEFAULT_CONFIG_NAME}) [default: {DEFAULT_CONFIG_NAME}]: "
+        ).strip()
+        or DEFAULT_CONFIG_NAME
+    )
 
     config_dir = ROOT / "results" / "config" / config_name
     if not config_dir.exists():

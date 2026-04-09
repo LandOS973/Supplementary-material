@@ -17,6 +17,7 @@ from typing import List, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
+DEFAULT_CONFIG_NAME = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"
 
 
 def _read_last_metric_score(metrics_path: Path) -> float | None:
@@ -91,11 +92,12 @@ def main() -> None:
     parser.add_argument("--tex", type=Path, default=ROOT / "courbes" / "table_interact_vs_no_interact.tex")
     args = parser.parse_args()
 
-    config_name = args.config or input(
-        "Config name (ex: kfr__advglobalrankweighted__M10__L10__eps0p05__g0p004__ds0p08__dm0p001): "
-    ).strip()
-    if not config_name:
-        raise SystemExit("Config name is required.")
+    config_name = args.config or (
+        input(
+            f"Config name (ex: {DEFAULT_CONFIG_NAME}) [default: {DEFAULT_CONFIG_NAME}]: "
+        ).strip()
+        or DEFAULT_CONFIG_NAME
+    )
 
     config_dir = ROOT / "results" / "config" / config_name
     if not config_dir.exists():

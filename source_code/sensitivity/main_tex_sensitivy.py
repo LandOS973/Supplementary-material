@@ -21,6 +21,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_ROOT = ROOT / "results" / "config"
+DEFAULT_CONFIG_NAME = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"
 
 
 def _parse_int(value: Optional[str]) -> Optional[int]:
@@ -176,7 +177,12 @@ def main() -> None:
     if len(sys.argv) > 1:
         config_name = sys.argv[1]
     else:
-        config_name = input("Config name: ").strip()
+        config_name = (
+            input(
+                f"Config name (ex: {DEFAULT_CONFIG_NAME}) [default: {DEFAULT_CONFIG_NAME}]: "
+            ).strip()
+            or DEFAULT_CONFIG_NAME
+        )
 
     if not config_name:
         print("Error: config name is required.")

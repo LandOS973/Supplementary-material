@@ -27,6 +27,7 @@ from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = REPO_ROOT / "config"
+DEFAULT_CONFIG_NAME = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"
 
 def _load_yaml(path: Path) -> dict:
     cfg = OmegaConf.load(str(path))
@@ -377,9 +378,12 @@ def main() -> None:
         "decay": bool(agent_cfg.get("decay", False)),
     }
 
-    config_str = input(
-        "Config compacte (ex: krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01) [defaut: vide]: "
-    ).strip()
+    config_str = (
+        input(
+            f"Config compacte (ex: {DEFAULT_CONFIG_NAME}) [default: {DEFAULT_CONFIG_NAME}]: "
+        ).strip()
+        or DEFAULT_CONFIG_NAME
+    )
     cfg = _parse_config_string(config_str, defaults)
 
     kernel_name = str(cfg["kernel"]).lower()

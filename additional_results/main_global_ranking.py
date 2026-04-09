@@ -60,7 +60,7 @@ def find_instances(results_root: Path) -> Dict[Tuple[str, int, int], Dict[str, P
 def read_last_score(path: Path) -> float | None:
     """Read last numeric score from a run file. Return None if not found."""
     # Scan from end for the last non-empty, non-header line
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
     for line in reversed(lines):
         line = line.strip()
         if not line or line.lower().startswith("runtime"):
@@ -68,18 +68,72 @@ def read_last_score(path: Path) -> float | None:
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 2:
             continue
-        return float(parts[1])
+        try:
+            return float(parts[1])
+        except ValueError:
+            continue
     return None
 
 
-def collect_scores(
-    algo_dir: Path,
-    budget: int,
-) -> List[float]:
-    pattern = f"*_budget_{budget}_*.txt"
-    files = sorted(algo_dir.glob(pattern))
-    scores = [read_last_score(p) for p in files]
+def read_scores_from_final_csv(path: Path) -> List[float]:
+    """Read final scores from pre-aggregated CSV (one row per run)."""
+    scores: List[float] = []
+    if not path.exists():
+        return scores
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if not reader.fieldnames:
+                return scores
+            score_key = None
+            for candidate in ("score", "final_score", "value"):
+                if candidate in reader.fieldnames:
+                    score_key = candidate
+                    break
+            if score_key is None:
+                return scores
+            has_filename = "filename" in reader.fieldnames
+            rows: List[tuple[str, float]] = []
+            for row in reader:
+                raw = row.get(score_key)
+                if raw is None:
+                    continue
+                try:
+                    score = float(raw)
+                except ValueError:
+                    continue
+                if has_filename:
+                    rows.append((str(row.get("filename") or ""), score))
+                else:
+                    scores.append(score)
+            if has_filename:
+                rows.sort(key=lambda item: item[0])
+                scores = [score for _, score in rows]
+    except OSError:
+        return []
     return scores
+
+
+def collect_scores(
+    type_dir: Path,
+    budget: int,
+) -> tuple[List[float], int, int, str]:
+    csv_path = type_dir / f"final_scores_budget_{budget}.csv"
+    csv_scores = read_scores_from_final_csv(csv_path)
+    if csv_scores:
+        return csv_scores, len(csv_scores), 0, "csv"
+
+    pattern = f"*_budget_{budget}_*.txt"
+    files = sorted(type_dir.glob(pattern))
+    bad = 0
+    scores: List[float] = []
+    for run_file in files:
+        score = read_last_score(run_file)
+        if score is None:
+            bad += 1
+            continue
+        scores.append(score)
+    return scores, len(files), bad, "txt"
 
 
 def mean(values: Iterable[float]) -> float:
@@ -126,19 +180,11 @@ def build_rankings(
             type_dir = per_algo_dir.get(algo)
             if type_dir is None:
                 continue
-            files = sorted(type_dir.glob(f"*_budget_{budget}_*.txt"))
-            if len(files) == 0:
+            scores, total_runs, bad, source = collect_scores(type_dir, budget)
+            if total_runs == 0:
                 continue
-            if len(files) < expected_runs:
-                low_runs.append((algo, len(files)))
-            bad = 0
-            scores = []
-            for p in files:
-                s = read_last_score(p)
-                if s is None:
-                    bad += 1
-                    continue
-                scores.append(s)
+            if total_runs < expected_runs:
+                low_runs.append((f"{algo}:{source}", total_runs))
             if bad:
                 low_runs.append((f"{algo}:bad", bad))
             if not scores:

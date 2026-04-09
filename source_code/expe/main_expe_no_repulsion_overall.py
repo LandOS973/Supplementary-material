@@ -39,6 +39,8 @@ from expe.main_expe_overall import (
     _set_seeds,
 )
 
+DEFAULT_CONFIG_NAME = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"
+
 SUMMARY_COLUMNS = [
     "config_name",
     "kernel",
@@ -500,11 +502,12 @@ def main():
     parser = argparse.ArgumentParser(description="Overall PPO-EDA grid with no_repulsion=True (QUBO + NK).")
     parser.add_argument("--outdir", type=str, default=None, help="Root output dir (default: results/config).")
     args = parser.parse_args()
-    config_name = input(
-        "Config name to test (ex: kjsd__advperagentrankweighted__M4__L24__eps0p01__g0p0005__ds0p05__dm0p05): "
-    ).strip()
-    if not config_name:
-        raise SystemExit("Config name is required.")
+    config_name = (
+        input(
+            f"Config name to test (ex: {DEFAULT_CONFIG_NAME}) [default: {DEFAULT_CONFIG_NAME}]: "
+        ).strip()
+        or DEFAULT_CONFIG_NAME
+    )
     params = _parse_config_name(config_name)
     missing = [k for k, v in params.items() if v is None and k != "bandwith_kernel"]
     if missing:
