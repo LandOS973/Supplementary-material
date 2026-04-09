@@ -135,6 +135,31 @@ def _problem_variants(problem_name: str | None) -> List[str]:
     return [normalized, normalized.lower()]
 
 
+def find_competitor_scores_csv(
+    algo: str,
+    dim: int,
+    type_instance: int,
+    problem_name: str | None = None,
+    budget: int = DEFAULT_BUDGET,
+) -> Path | None:
+    problem_variants = _problem_variants(problem_name)
+    filename = f"final_scores_budget_{budget}.csv"
+    for root in COMPETITOR_DIRS:
+        algo_dir = root / algo
+        if not algo_dir.exists():
+            continue
+
+        for problem in problem_variants:
+            candidate = algo_dir / problem / str(dim) / str(type_instance) / filename
+            if candidate.exists():
+                return candidate
+
+        fallback = sorted(algo_dir.glob(f"**/{dim}/{type_instance}/{filename}"))
+        if fallback:
+            return fallback[0]
+    return None
+
+
 def find_competitor_run_files(
     algo: str,
     dim: int,
@@ -181,6 +206,19 @@ def load_competitor_final_scores(
     type_instance: int,
     problem_name: str | None = None,
 ) -> List[float]:
+    scores_csv = find_competitor_scores_csv(
+        algo,
+        dim,
+        type_instance,
+        problem_name=problem_name,
+        budget=DEFAULT_BUDGET,
+    )
+    if scores_csv is not None:
+        scores = load_raw_scores_csv(scores_csv)
+        if scores:
+            return scores
+
+    # Fallback for legacy trees where aggregated CSV is missing.
     paths = find_competitor_run_files(algo, dim, type_instance, problem_name)
     scores: List[float] = []
     for path in paths:
