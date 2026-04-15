@@ -10,6 +10,7 @@ from typing import Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -830,6 +831,11 @@ def plot_synthetic_boxplot(
     box_specs: List[tuple[str, dict[str, float]]],
     *,
     palette: dict[str, str] | None = None,
+    series_legend_labels: List[str] | None = None,
+    legend_fontsize: int = 11,
+    xtick_fontsize: int = 14,
+    ylabel_fontsize: int = 12,
+    axis_tick_fontsize: int = 12,
 ) -> None:
     if not box_specs:
         return
@@ -877,21 +883,60 @@ def plot_synthetic_boxplot(
             continue
         ax.hlines(mean_val, idx - half_width, idx + half_width, colors="#d62728", linewidth=1.4)
     ax.set_title(title, fontsize=14)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=14)
-    ax.legend(
-        handles=[
+    ax.set_ylabel(ylabel, fontsize=ylabel_fontsize)
+    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=xtick_fontsize)
+    if series_legend_labels:
+        series_handles = []
+        seen: set[str] = set()
+        for label in series_legend_labels:
+            if label in seen:
+                continue
+            seen.add(label)
+            series_handles.append(
+                Patch(
+                    facecolor=palette.get(label, "#9e9e9e"),
+                    edgecolor="#2f2f2f",
+                    alpha=0.5,
+                    label=label,
+                )
+            )
+        stat_handles = [
             Line2D([0], [0], color="#d62728", linewidth=1.4, label="mean"),
             Line2D([0], [0], color="#111111", linewidth=1.2, label="median"),
-        ],
-        frameon=False,
-        fontsize=11,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-    )
+        ]
+        handles = series_handles + stat_handles
+        ax.legend(
+            handles=handles,
+            frameon=False,
+            fontsize=legend_fontsize,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.20),
+            ncol=min(4, max(2, len(handles))),
+            columnspacing=0.9,
+            handlelength=1.6,
+        )
+    else:
+        ax.legend(
+            handles=[
+                Line2D([0], [0], color="#d62728", linewidth=1.4, label="mean"),
+                Line2D([0], [0], color="#111111", linewidth=1.2, label="median"),
+            ],
+            loc="upper right",
+            frameon=True,
+            fontsize=legend_fontsize,
+            facecolor="white",
+            framealpha=0.75,
+            edgecolor="#b0b0b0",
+            borderpad=0.35,
+            handlelength=1.6,
+        )
     style_axes(ax, grid_axis="y")
+    ax.tick_params(axis="y", labelsize=axis_tick_fontsize)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0, 0, 0.86, 1))
+    if series_legend_labels:
+        fig.tight_layout(rect=(0, 0, 1, 0.95))
+    else:
+        fig.tight_layout(rect=(0, 0, 0.86, 1))
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved plot to {output_path}")

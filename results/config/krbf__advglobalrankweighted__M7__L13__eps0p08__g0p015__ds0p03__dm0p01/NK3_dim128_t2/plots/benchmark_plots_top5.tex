@@ -1,0 +1,19 @@
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.56\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{comparison_nk3_128_t2.png}
+        \caption{}
+        \label{fig:comparison_nk3_128_t2}
+    \end{subfigure}
+    \vspace{0.5cm}
+    \begin{subfigure}[b]{0.42\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{boxplot_final_score_vs_top5.png}
+        \caption{}
+        \label{fig:boxplot_nk3_128_t2}
+    \end{subfigure}
+
+    \caption{Performance analysis of \texttt{SVGD-EDA} with top-five competitors on an NK3 instance distribution ($n = 128, K = 2$). (a) Evolution of the average score. (b) Final score distribution after 50,000 evaluations.\\ Acronyms in legends:\\ DS3-1+1 = \texttt{DiscreteLengler3OnePlusOne}\\ HLD1+1 = \texttt{HugeLognormalDiscreteOnePlusOne}\\ TPRDL1+1 = \texttt{TwoPtRecombiningDiscreteLenglerOnePlusOne}\\ RDL1+1 = \texttt{RecombiningDiscreteLenglerOnePlusOne}.}
+    \label{fig:benchmark_plots_nk3_128_t2}
+\end{figure}

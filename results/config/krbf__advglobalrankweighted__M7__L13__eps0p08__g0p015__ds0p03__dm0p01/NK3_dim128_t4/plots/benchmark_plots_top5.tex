@@ -1,0 +1,19 @@
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.56\textwidth}
+        \centering
+        \caption{}
+        \includegraphics[width=\linewidth]{comparison_nk3_128_t4.png}
+        \label{fig:comparison_nk3_128_t4}
+    \end{subfigure}
+    \vspace{0.5cm}
+    \begin{subfigure}[b]{0.42\textwidth}
+        \centering
+        \caption{}
+        \includegraphics[width=\linewidth]{boxplot_final_score_vs_top5.png}
+        \label{fig:boxplot_nk3_128_t4}
+    \end{subfigure}
+
+    \caption{Performance analysis on a NK3 instance distribution ($n=128, K=4$). (a) Evolution of the average score for \texttt{SVGD-EDA} and the top-five competitors. (b) Final score distribution after 50,000 evaluations. Both panels use the same labels/colors: SVGD-EDA, RRDL1+1, 1PRDL1+1, DiscreteDE, DS3-1+1, USRDL1+1. Acronyms in legends: RRDL1+1 = \texttt{RandRecombiningDiscreteLenglerOnePlusOne}; 1PRDL1+1 = \texttt{OnePtRecombiningDiscreteLenglerOnePlusOne}; DS3-1+1 = \texttt{DiscreteLengler3OnePlusOne}; USRDL1+1 = \texttt{UltraSmoothRecombiningDiscreteLenglerOnePlusOne}.}
+    \label{fig:benchmark_plots_nk3_128_t4}
+\end{figure}
