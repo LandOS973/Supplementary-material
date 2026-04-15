@@ -29,8 +29,8 @@
          &  & 8 & \best{1/84} & \best{0.7334$^{*}$} & 2/84 & 0.7315 & 55/84 & 0.6805 & 63/84 & 0.5852 & \mbox{\texttt{OnePtRecombiningDiscreteLenglerOnePlusOne}} & 3/84 & 0.7242 \\
         \midrule[1.2pt]
         \multirow{12}{*}{NK3} & \multirow{4}{*}{64} & 1 & 2/83 & 0.7894 & — & — & 54/83 & 0.7659 & 55/83 & 0.7651 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7918} \\
-         &  & 2 & \best{1/83} & \best{0.8204} & — & — & 51/83 & 0.7825 & 54/83 & 0.7793 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8154 \\
-         &  & 4 & \best{1/83} & \best{0.8066} & — & — & 55/83 & 0.7645 & 58/83 & 0.7548 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8033 \\
+         &  & 2 & \best{1/83} & \best{0.8204$^{*}$} & — & — & 51/83 & 0.7825 & 54/83 & 0.7793 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8154 \\
+         &  & 4 & \best{1/83} & \best{0.8066$^{*}$} & — & — & 55/83 & 0.7645 & 58/83 & 0.7548 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.8033 \\
          &  & 8 & 14/83 & 0.7627 & — & — & 59/83 & 0.6583 & 57/83 & 0.7000 & \mbox{\texttt{DiscreteDE}} & \best{1/83} & \best{0.7779$^{*}$} \\
         \cmidrule(lr){2-14}
          & \multirow{4}{*}{128} & 1 & \best{1/83} & \best{0.7975$^{*}$} & — & — & 48/83 & 0.7600 & 50/83 & 0.7530 & \mbox{\texttt{DiscreteDE}} & 2/83 & 0.7918 \\
@@ -40,13 +40,13 @@
         \cmidrule(lr){2-14}
          & \multirow{4}{*}{256} & 1 & \best{1/83} & \best{0.7889$^{*}$} & — & — & 47/83 & 0.7363 & 49/83 & 0.7238 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7741 \\
          &  & 2 & \best{1/83} & \best{0.8035$^{*}$} & — & — & 47/83 & 0.7393 & 49/83 & 0.7249 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7839 \\
-         &  & 4 & \best{1/83} & \best{0.7823} & — & — & 47/83 & 0.7265 & 54/83 & 0.7072 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7783 \\
+         &  & 4 & \best{1/83} & \best{0.7823$^{*}$} & — & — & 47/83 & 0.7265 & 54/83 & 0.7072 & \mbox{\texttt{DiscreteLengler3OnePlusOne}} & 2/83 & 0.7783 \\
          &  & 8 & 46/83 & 0.7285 & — & — & 63/83 & 0.5784 & 62/83 & 0.5790 & \mbox{\texttt{SmallLognormalDiscreteOnePlusOne}} & \best{1/83} & \best{0.7552$^{*}$} \\
         \midrule
         \multicolumn{3}{c}{\textbf{SVGD-EDA}} & 5.375 & 0.763 & \multicolumn{2}{c}{} & \multicolumn{2}{c}{} & \multicolumn{2}{c}{} & \multicolumn{1}{r}{\textbf{DiscreteDE}} & 10.625 & 0.756 \\
         \bottomrule
     \end{tabular}%
     }
-    \caption{Global rankings and average scores at 50,000 evaluations (100 runs). \textbf{Bold} values indicate the best mean score. An asterisk ($^*$) denotes a statistically significant improvement over the second-best method (Wilcoxon signed-rank test on instance-wise means, $p < 0.01$). The final row summarizes the global mean ranks and mean scores across all instances.}
+    \caption{Global rankings and average scores at 50,000 evaluations (100 runs). \textbf{Bold} values indicate the best mean score. An asterisk ($^*$) denotes a statistically significant improvement over the second-best method (Wilcoxon signed-rank test on instance-wise means, $p < 0.05$). The final row summarizes the global mean ranks and mean scores across all instances.}
     \label{tab:results_portrait}
 \end{table}
