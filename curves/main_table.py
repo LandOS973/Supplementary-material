@@ -811,7 +811,7 @@ def write_latex_table(
         pvalue = getattr(result, "pvalue", None)
         if pvalue is None or not math.isfinite(pvalue):
             return None
-        if pvalue >= 0.01:
+        if pvalue >= 0.05:
             return None
         if svgd_display is None or best_display is None:
             return None
@@ -1142,7 +1142,7 @@ def write_latex_table(
         f.write(
             "    \\caption{Global rankings and average scores at 50,000 evaluations (100 runs). "
             "\\textbf{Bold} values indicate the best mean score. An asterisk ($^*$) denotes a statistically "
-            "significant improvement over the second-best method (Wilcoxon signed-rank test on instance-wise means, $p < 0.01$). "
+            "significant improvement over the second-best method (Wilcoxon signed-rank test on instance-wise means, $p < 0.05$). "
             "The final row summarizes the global mean ranks and mean scores across all instances.}\n"
         )
         f.write("    \\label{tab:results_portrait}\n")
