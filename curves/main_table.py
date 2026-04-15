@@ -229,6 +229,56 @@ def load_competitor_final_scores(
     return scores
 
 
+def load_competitor_instance_means(
+    algo: str,
+    dim: int,
+    type_instance: int,
+    problem_name: str | None = None,
+) -> List[float]:
+    """Load one mean score per instance from final_scores CSV when available."""
+    scores_csv = find_competitor_scores_csv(
+        algo,
+        dim,
+        type_instance,
+        problem_name=problem_name,
+        budget=DEFAULT_BUDGET,
+    )
+    if scores_csv is None or not scores_csv.exists():
+        return []
+
+    per_instance: dict[int, List[float]] = {}
+    try:
+        with scores_csv.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            if not reader.fieldnames:
+                return []
+            if "instance" not in reader.fieldnames or "score" not in reader.fieldnames:
+                return []
+            for row in reader:
+                instance_raw = (row.get("instance") or "").strip()
+                score_raw = row.get("score")
+                if not instance_raw:
+                    continue
+                try:
+                    instance_idx = int(instance_raw)
+                except ValueError:
+                    continue
+                score = parse_float(score_raw)
+                if score is None:
+                    continue
+                per_instance.setdefault(instance_idx, []).append(score)
+    except OSError:
+        return []
+
+    if not per_instance:
+        return []
+    return [
+        sum(scores) / len(scores)
+        for _, scores in sorted(per_instance.items(), key=lambda item: item[0])
+        if scores
+    ]
+
+
 def load_best_summary(experiment_dir: Path, problem_name: str) -> dict[str, str] | None:
     summary_files = sorted(experiment_dir.glob(f"{problem_name}_*_best_summary.txt"))
     if not summary_files:
@@ -607,6 +657,7 @@ def write_latex_table(
     warned: set[str] = set()
     svgd_scores_cache: dict[tuple[str, int, int], List[float]] = {}
     competitor_scores_cache: dict[tuple[str, str, int, int], List[float]] = {}
+    competitor_instance_means_cache: dict[tuple[str, str, int, int], List[float]] = {}
     combined_scores_cache: dict[tuple[str, int, int], tuple[List[tuple[str, float]], dict[str, float], float | None]] = {}
 
     def warn_once(key: str, message: str) -> None:
@@ -653,6 +704,46 @@ def write_latex_table(
         competitor_scores_cache[key] = scores
         return scores
 
+    def _load_competitor_instance_means(
+        algo: str, problem_name: str, dim: int, type_instance: int
+    ) -> List[float]:
+        key = (algo, problem_name, dim, type_instance)
+        if key in competitor_instance_means_cache:
+            return competitor_instance_means_cache[key]
+        means = _normalize_scores(
+            problem_name,
+            load_competitor_instance_means(algo, dim, type_instance, problem_name),
+        )
+        means = _finite(means)
+        competitor_instance_means_cache[key] = means
+        return means
+
+    def _pair_instance_means(
+        algo: str, problem_name: str, dim: int, type_instance: int
+    ) -> tuple[List[float], List[float]]:
+        svgd_scores = _load_svgd_scores(problem_name, dim, type_instance)
+        competitor_instance_means = _load_competitor_instance_means(
+            algo, problem_name, dim, type_instance
+        )
+        n_instances = len(competitor_instance_means)
+        if n_instances < 2:
+            return [], []
+        if len(svgd_scores) < n_instances or len(svgd_scores) % n_instances != 0:
+            warn_once(
+                f"pairing_mismatch_{problem_name}_{dim}_{type_instance}_{algo}",
+                f"Cannot build paired instance means for {algo} ({problem_name} dim={dim} t={type_instance}): "
+                f"svgd_runs={len(svgd_scores)} competitor_instances={n_instances}.",
+            )
+            return [], []
+        runs_per_instance = len(svgd_scores) // n_instances
+        svgd_instance_means: List[float] = []
+        for idx in range(n_instances):
+            chunk = svgd_scores[idx * runs_per_instance : (idx + 1) * runs_per_instance]
+            if not chunk:
+                return [], []
+            svgd_instance_means.append(sum(chunk) / len(chunk))
+        return svgd_instance_means, competitor_instance_means
+
     def _load_instance_combined_scores(
         problem_name: str,
         dim: int,
@@ -696,23 +787,31 @@ def write_latex_table(
         if best_algo is None:
             return None
         if scipy_stats is None:
-            warn_once("scipy_missing", "scipy is not installed; skipping t-tests.")
+            warn_once("scipy_missing", "scipy is not installed; skipping Wilcoxon tests.")
             return None
-        svgd_scores = _load_svgd_scores(problem_name, dim, type_instance)
-        competitor_scores = _load_competitor_scores(best_algo, problem_name, dim, type_instance)
-        if len(svgd_scores) < 2 or len(competitor_scores) < 2:
+        svgd_instance_means, competitor_instance_means = _pair_instance_means(
+            best_algo, problem_name, dim, type_instance
+        )
+        if len(svgd_instance_means) < 2 or len(competitor_instance_means) < 2:
             warn_once(
-                f"ttest_missing_{problem_name}_{dim}_{type_instance}",
-                f"Insufficient scores for t-test ({problem_name} dim={dim} t={type_instance}).",
+                f"wilcoxon_missing_{problem_name}_{dim}_{type_instance}",
+                f"Insufficient paired instance means for Wilcoxon test ({problem_name} dim={dim} t={type_instance}).",
             )
             return None
-        result = scipy_stats.ttest_ind(
-            svgd_scores, competitor_scores, equal_var=True, nan_policy="omit"
-        )
+        try:
+            result = scipy_stats.wilcoxon(
+                svgd_instance_means,
+                competitor_instance_means,
+                alternative="two-sided",
+                zero_method="wilcox",
+                method="auto",
+            )
+        except Exception:
+            return None
         pvalue = getattr(result, "pvalue", None)
         if pvalue is None or not math.isfinite(pvalue):
             return None
-        if pvalue >= 0.001:
+        if pvalue >= 0.01:
             return None
         if svgd_display is None or best_display is None:
             return None
@@ -732,13 +831,21 @@ def write_latex_table(
             return None
         if scipy_stats is None:
             return None
-        svgd_scores = _load_svgd_scores(problem_name, dim, type_instance)
-        competitor_scores = _load_competitor_scores(algo, problem_name, dim, type_instance)
-        if len(svgd_scores) < 2 or len(competitor_scores) < 2:
-            return None
-        result = scipy_stats.ttest_ind(
-            svgd_scores, competitor_scores, equal_var=True, nan_policy="omit"
+        svgd_instance_means, competitor_instance_means = _pair_instance_means(
+            algo, problem_name, dim, type_instance
         )
+        if len(svgd_instance_means) < 2 or len(competitor_instance_means) < 2:
+            return None
+        try:
+            result = scipy_stats.wilcoxon(
+                svgd_instance_means,
+                competitor_instance_means,
+                alternative="two-sided",
+                zero_method="wilcox",
+                method="auto",
+            )
+        except Exception:
+            return None
         pvalue = getattr(result, "pvalue", None)
         if pvalue is None or not math.isfinite(pvalue):
             return None
@@ -1035,7 +1142,7 @@ def write_latex_table(
         f.write(
             "    \\caption{Global rankings and average scores at 50,000 evaluations (100 runs). "
             "\\textbf{Bold} values indicate the best mean score. An asterisk ($^*$) denotes a statistically "
-            "significant improvement over the second-best method (Student's t-test, $p < 0.001$). "
+            "significant improvement over the second-best method (Wilcoxon signed-rank test on instance-wise means, $p < 0.01$). "
             "The final row summarizes the global mean ranks and mean scores across all instances.}\n"
         )
         f.write("    \\label{tab:results_portrait}\n")
