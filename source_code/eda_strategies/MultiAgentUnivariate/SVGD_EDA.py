@@ -130,6 +130,15 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
         self.last_theta_grad = None
+        self.gradient_memory = None
+        self.agent_fitness_memory = None
+        self.visited_mask = None
+        self.current_active_indices = None
+        self.current_active_mask = None
+        self.current_active_probs = None
+        self.l_active = self.M
+        self.r_influence = self.M
+        self.partial_updates_enabled = False
 
     def forward(self):
         """
@@ -181,10 +190,72 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.theta_history = []
         self.kernel_metric_history = []
         self.last_theta_grad = None
+        self.gradient_memory = torch.zeros_like(self.theta.detach())
+        self.agent_fitness_memory = torch.zeros((self.M,), dtype=torch.float32, device=self.device)
+        self.visited_mask = torch.zeros((nb_instances, self.M), dtype=torch.bool, device=self.device)
+        self.current_active_indices = None
+        self.current_active_mask = None
+        self.current_active_probs = None
         if self.enable_visualization:
             self._record_theta()
         self.latest_advantages = None
         self.probs = None
+
+    def configure_partial_updates(self, l_active=None, r_influence=None):
+        if l_active is None:
+            l_active = self.M
+        if r_influence is None:
+            r_influence = self.M
+        l_active = int(l_active)
+        r_influence = int(r_influence)
+        if l_active < 1 or l_active > self.M:
+            raise ValueError(f"l_active must be in [1, {self.M}], got {l_active}.")
+        if r_influence < 1 or r_influence > self.M:
+            raise ValueError(f"r_influence must be in [1, {self.M}], got {r_influence}.")
+        if l_active < self.M and self.kernel_name != "rbf":
+            raise ValueError(
+                f"Partial particle updates are only supported with the rbf kernel, got '{self.kernel_name}'."
+            )
+        self.l_active = l_active
+        self.r_influence = r_influence
+        self.partial_updates_enabled = bool(self.l_active < self.M)
+        self.lambda_ = self.lambda_per_agent * self.l_active
+        if self.partial_updates_enabled:
+            self.agent_lambdas = []
+        else:
+            self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
+
+    def _compute_probs_from_theta(self, theta):
+        if self.use_categorical:
+            logits = theta
+            if self.mask is not None:
+                if logits.dim() == self.mask.dim():
+                    mask = self.mask
+                else:
+                    expand_shape = [logits.size(0), logits.size(1), logits.size(2), logits.size(3)]
+                    mask = self.mask.expand(expand_shape)
+                logits = logits.masked_fill(mask == 0, float("-inf"))
+            probs = torch.softmax(logits, dim=-1)
+            probs = torch.nan_to_num(probs, nan=1.0 / float(probs.size(-1)))
+            if self.mask is not None:
+                if probs.dim() == self.mask.dim():
+                    mask = self.mask
+                else:
+                    expand_shape = [probs.size(0), probs.size(1), probs.size(2), probs.size(3)]
+                    mask = self.mask.expand(expand_shape)
+                probs = probs * mask
+                denom = probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                probs = probs / denom
+            probs = torch.clamp(probs, self.prob_eps_clamp, 1.0 - self.prob_eps_clamp)
+            if self.mask is not None:
+                probs = probs * mask
+                denom = probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                probs = probs / denom
+            else:
+                probs = probs / probs.sum(dim=-1, keepdim=True)
+            return probs
+        probs = torch.sigmoid(theta)
+        return torch.clamp(torch.nan_to_num(probs, nan=0.5), self.prob_eps_clamp, 1 - self.prob_eps_clamp)
 
     def sample_solutions(self):
         """
@@ -196,9 +267,41 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         """
         B, M, N = self.nb_instances, self.M, self.N
         λa = self.lambda_per_agent
-        λ_total = self.total_lambda
+        active_count = self.l_active if self.partial_updates_enabled else M
+        λ_total = λa * active_count
+
+        if self.partial_updates_enabled:
+            active_indices = torch.stack(
+                [torch.randperm(M, device=self.device)[:active_count] for _ in range(B)],
+                dim=0,
+            )
+            active_mask = torch.zeros((B, M), dtype=torch.bool, device=self.device)
+            active_mask.scatter_(1, active_indices, True)
+            self.current_active_indices = active_indices
+            self.current_active_mask = active_mask
+
+            if self.use_categorical:
+                D = self.theta.size(-1)
+                gather_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, active_count, N, D)
+                active_theta = self.theta.gather(1, gather_index)
+                active_probs = self._compute_probs_from_theta(active_theta)
+                self.current_active_probs = active_probs
+                gather_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, active_count, N, D)
+                flat = active_probs.reshape(-1, D)
+                samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)
+                samples_agents = samples_flat.view(B, active_count, N, λa).permute(0, 1, 3, 2)
+                return samples_agents.reshape(B, λ_total, N).unsqueeze(-1).float()
+
+            gather_index = active_indices.unsqueeze(-1).expand(B, active_count, N)
+            active_theta = self.theta.gather(1, gather_index)
+            active_probs = self._compute_probs_from_theta(active_theta)
+            self.current_active_probs = active_probs
+            u = torch.rand((B, active_count, λa, N), device=self.device)
+            samples_agents = (u < active_probs.unsqueeze(2)).float()
+            return samples_agents.view(B, λ_total, N).unsqueeze(-1)
 
         self.probs = self.forward()
+        self.current_active_probs = None
 
         if self.use_categorical:
             probs = self.probs                
@@ -234,7 +337,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         Applique la mise à jour REINFORCE suivie de SVGD entre agents (si activé).
         """
         self._debug_step += 1
-        total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
+        if self.partial_updates_enabled:
+            total_loss = self._updateDistribution_REINFORCE_partial(solutionList, scoreList)
+        else:
+            total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
         self._apply_svgd()
         if self.enable_visualization:
             self._record_theta()
@@ -326,10 +432,113 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         return loss_per_instance.mean()
 
+    def _updateDistribution_REINFORCE_partial(self, solutionList, scoreList):
+        if self.current_active_indices is None:
+            raise RuntimeError("sample_solutions must be called before partial updateDistribution.")
+
+        B, N = self.nb_instances, self.N
+        l_active = self.l_active
+        λa = self.lambda_per_agent
+        active_BM = B * l_active
+        active_indices = self.current_active_indices
+        indivduals = solutionList.view(B, l_active, λa, N).reshape(active_BM, λa, N)
+        fitness = scoreList.view(B, l_active, λa).reshape(active_BM, λa)
+        baseline = self.baseline.gather(1, active_indices).reshape(active_BM)
+
+        if self.use_categorical:
+            active_probs = self.current_active_probs
+            if active_probs is None:
+                D = self.theta.size(-1)
+                gather_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)
+                theta = self.theta.gather(1, gather_index).reshape(active_BM, N, D)
+                active_probs = self._compute_probs_from_theta(theta.view(B, l_active, N, D)).reshape(active_BM, N, D)
+            else:
+                D = active_probs.size(-1)
+                theta = self.theta.gather(1, active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)).reshape(active_BM, N, D)
+                active_probs = active_probs.reshape(active_BM, N, D)
+            all_Pi_Theta_expanded = active_probs.unsqueeze(1).expand(-1, λa, -1, -1)
+            log_probs = torch.log(all_Pi_Theta_expanded + 1e-10)
+            indices = indivduals.long().unsqueeze(-1)
+            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)
+        else:
+            gather_index = active_indices.unsqueeze(-1).expand(B, l_active, N)
+            theta = self.theta.gather(1, gather_index).reshape(active_BM, N)
+            active_probs = self.current_active_probs
+            if active_probs is None:
+                active_probs = self._compute_probs_from_theta(theta.view(B, l_active, N)).reshape(active_BM, N)
+            else:
+                active_probs = active_probs.reshape(active_BM, N)
+            all_Pi_Theta_expanded = active_probs.unsqueeze(1).expand(-1, λa, -1)
+            Pi_selected = torch.where(
+                indivduals == 1.0,
+                all_Pi_Theta_expanded,
+                1.0 - all_Pi_Theta_expanded,
+            )
+            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)
+
+        advantages = self.advantage_strategy.compute(
+            fitness=fitness,
+            baseline=baseline,
+            theta=theta,
+            indivduals=indivduals,
+            probs=all_Pi_Theta_expanded,
+            nb_instances=B,
+            num_agents=l_active,
+        )
+        loss_per_instance = torch.mean(advantages * log_Pi, dim=1)
+        loss = loss_per_instance.sum()
+
+        grad_theta, = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
+        grad_theta = grad_theta.detach()
+        self.last_theta_grad = grad_theta.clone()
+        if self.gradient_memory is None:
+            self.gradient_memory = torch.zeros_like(grad_theta)
+
+        with torch.no_grad():
+            for batch_idx in range(B):
+                self.gradient_memory[batch_idx, active_indices[batch_idx]] = grad_theta[batch_idx, active_indices[batch_idx]]
+            baseline_new = scoreList.view(B, l_active, λa).mean(dim=2)
+            for batch_idx in range(B):
+                self.baseline[batch_idx, active_indices[batch_idx]] = baseline_new[batch_idx]
+            self.latest_advantages = advantages.detach().view(B, l_active * λa).cpu()
+
+        return loss_per_instance.mean()
+
     def get_latest_advantages(self):
         if self.latest_advantages is None:
             return None
         return self.latest_advantages.detach().cpu()
+
+    def get_agent_fitness_snapshot(self, tensor_score):
+        if tensor_score is None:
+            return []
+        if self.agent_fitness_memory is None or self.agent_fitness_memory.numel() != self.M:
+            self.agent_fitness_memory = torch.zeros((self.M,), dtype=torch.float32, device=self.device)
+
+        with torch.no_grad():
+            if self.partial_updates_enabled:
+                if self.current_active_indices is None:
+                    return self.agent_fitness_memory.detach().cpu().tolist()
+                B = tensor_score.size(0)
+                λa = self.lambda_per_agent
+                active_scores = tensor_score.view(B, self.l_active, λa).max(dim=2).values
+                sums = torch.zeros((self.M,), dtype=torch.float32, device=tensor_score.device)
+                counts = torch.zeros((self.M,), dtype=torch.float32, device=tensor_score.device)
+                ones = torch.ones((self.l_active,), dtype=torch.float32, device=tensor_score.device)
+                for batch_idx in range(B):
+                    active_idx = self.current_active_indices[batch_idx]
+                    sums.index_add_(0, active_idx, active_scores[batch_idx])
+                    counts.index_add_(0, active_idx, ones)
+                mask = counts > 0
+                if mask.any():
+                    self.agent_fitness_memory[mask] = sums[mask] / counts[mask]
+                return self.agent_fitness_memory.detach().cpu().tolist()
+
+            B = tensor_score.size(0)
+            λa = self.lambda_per_agent
+            scores = tensor_score.view(B, self.M, λa).max(dim=2).values.mean(dim=0)
+            self.agent_fitness_memory.copy_(scores)
+            return self.agent_fitness_memory.detach().cpu().tolist()
 
 
     def toString(self):
@@ -341,6 +550,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         Utilise self.last_theta_grad comme direction RL : (B, M, N)
         """
         if self.last_theta_grad is None:
+            return
+
+        if self.partial_updates_enabled:
+            self._apply_svgd_partial()
             return
 
         theta = self.theta             
@@ -365,6 +578,77 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self.theta += self.epsilon_svgd * phi
             self.probs = None
 
+    def _apply_svgd_partial(self):
+        if self.current_active_indices is None or self.current_active_mask is None:
+            return
+        if self.gradient_memory is None:
+            return
+
+        theta = self.theta
+        full_phi = torch.zeros_like(theta)
+        kernel_values = []
+        kernel_grads = []
+        B = self.nb_instances
+        l_active = self.l_active
+
+        with torch.enable_grad():
+            for batch_idx in range(B):
+                active_indices = self.current_active_indices[batch_idx]
+                eligible_mask = self.visited_mask[batch_idx].clone()
+                eligible_mask[active_indices] = True
+                eligible_indices = torch.nonzero(eligible_mask, as_tuple=False).squeeze(1)
+                if eligible_indices.numel() == 0:
+                    continue
+                r_effective = min(self.r_influence, int(eligible_indices.numel()))
+                support_rows = []
+                for particle_idx in active_indices:
+                    others = eligible_indices[eligible_indices != particle_idx]
+                    num_others = min(max(r_effective - 1, 0), int(others.numel()))
+                    if num_others > 0:
+                        chosen = others[torch.randperm(others.numel(), device=self.device)[:num_others]]
+                        support_rows.append(torch.cat([particle_idx.view(1), chosen], dim=0))
+                    else:
+                        support_rows.append(particle_idx.view(1))
+                support_indices = torch.stack(support_rows, dim=0)
+
+                if theta.dim() == 4:
+                    D = theta.size(-1)
+                    query_index = active_indices.view(1, l_active, 1, 1).expand(1, l_active, self.N, D)
+                    query_theta = theta[batch_idx:batch_idx + 1].gather(1, query_index)
+                    support_theta = theta[batch_idx, support_indices].unsqueeze(0)
+                    support_score = self.gradient_memory[batch_idx, support_indices].unsqueeze(0)
+                else:
+                    query_index = active_indices.view(1, l_active, 1).expand(1, l_active, self.N)
+                    query_theta = theta[batch_idx:batch_idx + 1].gather(1, query_index)
+                    support_theta = theta[batch_idx, support_indices].unsqueeze(0)
+                    support_score = self.gradient_memory[batch_idx, support_indices].unsqueeze(0)
+
+                phi_batch = self.svgd.phi(
+                    query_theta,
+                    support_score,
+                    probs=None,
+                    support_thetas=support_theta,
+                    support_probs=None,
+                )
+                kernel_stats = self.svgd.get_last_kernel_stats()
+                if kernel_stats:
+                    kernel_values.append(kernel_stats.get("avg_kernel_value", 0.0))
+                    kernel_grads.append(kernel_stats.get("avg_kernel_grad", 0.0))
+                full_phi[batch_idx, active_indices] = phi_batch.squeeze(0)
+
+        if kernel_values:
+            self.kernel_metric_history.append(
+                {
+                    "avg_kernel_value": float(np.mean(kernel_values)),
+                    "avg_kernel_grad": float(np.mean(kernel_grads)) if kernel_grads else 0.0,
+                }
+            )
+
+        with torch.no_grad():
+            self.theta += self.epsilon_svgd * full_phi
+            self.visited_mask |= self.current_active_mask
+            self.probs = None
+
     def _should_debug(self) -> bool:
         if not self.debug_svgd:
             return False
@@ -384,6 +668,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             if isinstance(val, float) and not math.isfinite(val):
                 return str(val)
             return f"{float(val):.4g}"
+
         return str(val)
 
     def _print_debug(self) -> None:

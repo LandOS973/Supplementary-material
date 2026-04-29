@@ -16,6 +16,7 @@ def get_Score_trajectories_designbench_cuda(
     oracle_batch_size=2048,
     alphabet_size=20,
     enable_visualization=False,
+    enable_pairwise_visualization=True,
     name_file=None,
     return_history=False,
     warm_start=False,
@@ -219,6 +220,7 @@ def get_Score_trajectories_designbench_cuda(
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
     collect_dashboard = bool(enable_visualization) and hasattr(strategy, "agents")
+    collect_pairwise_metrics = collect_dashboard and bool(enable_pairwise_visualization)
     metrics = MetricsCalculator() if collect_dashboard else None
 
     for epoch in pbar:
@@ -238,32 +240,37 @@ def get_Score_trajectories_designbench_cuda(
         avg_l1 = 0.0
         avg_entropy = 0.0
         if collect_dashboard and metrics is not None:
-            avg_hamming, hamming_pairwise = metrics.compute_average_hamming(strategy.agents)
-            avg_js, js_pairwise = metrics.compute_average_js(strategy.agents)
-            avg_l1, l1_pairwise = metrics.compute_l1_distance(strategy.agents)
             avg_entropy, per_agent_entropy = metrics.compute_entropy(strategy.agents)
-            _avg_l2, _pair_l2 = 0.0, None
-            avg_js_history.append(float(avg_js))
-            avg_l2_history.append(float(_avg_l2))
-            hamming_pairwise_history.append(hamming_pairwise.tolist() if hamming_pairwise is not None else None)
-            js_pairwise_history.append(js_pairwise.tolist() if js_pairwise is not None else None)
-            l2_pairwise_history.append(_pair_l2.tolist() if _pair_l2 is not None else None)
-            l1_pairwise_history.append(l1_pairwise.tolist() if l1_pairwise is not None else None)
             entropy_agent_history.append(per_agent_entropy if per_agent_entropy is not None else None)
+            if collect_pairwise_metrics:
+                avg_hamming, hamming_pairwise = metrics.compute_average_hamming(strategy.agents)
+                avg_js, js_pairwise = metrics.compute_average_js(strategy.agents)
+                avg_l1, l1_pairwise = metrics.compute_l1_distance(strategy.agents)
+                _avg_l2, _pair_l2 = 0.0, None
+                avg_js_history.append(float(avg_js))
+                avg_l2_history.append(float(_avg_l2))
+                hamming_pairwise_history.append(hamming_pairwise.tolist() if hamming_pairwise is not None else None)
+                js_pairwise_history.append(js_pairwise.tolist() if js_pairwise is not None else None)
+                l2_pairwise_history.append(_pair_l2.tolist() if _pair_l2 is not None else None)
+                l1_pairwise_history.append(l1_pairwise.tolist() if l1_pairwise is not None else None)
 
-            agent_lambdas = getattr(strategy, "agent_lambdas", None)
-            per_agent_fitness = []
-            if isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0:
-                start_idx = 0
-                for agent_lambda in agent_lambdas:
-                    end_idx = min(start_idx + int(agent_lambda), tensor_score.size(1))
-                    if end_idx <= start_idx:
-                        break
-                    agent_scores = tensor_score[:, start_idx:end_idx]
-                    agent_best_values, _ = torch.max(agent_scores, dim=1)
-                    per_agent_fitness.append(float(agent_best_values.mean().item()))
-                    start_idx = end_idx
-            agent_fitness_history.append(per_agent_fitness)
+            fitness_snapshot_fn = getattr(strategy, "get_agent_fitness_snapshot", None)
+            if callable(fitness_snapshot_fn):
+                agent_fitness_history.append(fitness_snapshot_fn(tensor_score))
+            else:
+                agent_lambdas = getattr(strategy, "agent_lambdas", None)
+                per_agent_fitness = []
+                if isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0:
+                    start_idx = 0
+                    for agent_lambda in agent_lambdas:
+                        end_idx = min(start_idx + int(agent_lambda), tensor_score.size(1))
+                        if end_idx <= start_idx:
+                            break
+                        agent_scores = tensor_score[:, start_idx:end_idx]
+                        agent_best_values, _ = torch.max(agent_scores, dim=1)
+                        per_agent_fitness.append(float(agent_best_values.mean().item()))
+                        start_idx = end_idx
+                agent_fitness_history.append(per_agent_fitness)
 
             kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
             kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None

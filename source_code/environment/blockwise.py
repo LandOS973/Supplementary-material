@@ -17,6 +17,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     device,
     verbose,
     enable_visualization=True,
+    enable_pairwise_visualization=True,
     return_history=False,
     dummy_blocks=0,
 ):
@@ -51,8 +52,9 @@ def get_Score_trajectoriesBLOCK_cuda(
 
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
-    collect_summary_metrics = track_leader
-    collect_pairwise_metrics = track_leader and bool(enable_visualization)
+    collect_dashboard = bool(enable_visualization) and hasattr(strategy, "agents") and len(strategy.agents) > 0
+    collect_pairwise_metrics = collect_dashboard and bool(enable_pairwise_visualization)
+    collect_entropy_metrics = collect_dashboard
     agent_best_overall = None
     if track_leader:
         agent_best_overall = [torch.ones(total_cases).to(device) * (-99999) for _ in agent_lambdas]
@@ -257,6 +259,11 @@ def get_Score_trajectoriesBLOCK_cuda(
         leader_idx = None
         avg_hamming = None
         avg_js = None
+        pairwise_matrix = None
+        pairwise_l1 = None
+        per_agent_entropy = None
+        pairwise_js = None
+        pairwise_l2 = None
         if track_leader:
             agent_best_scores = []
             start_idx = 0
@@ -274,49 +281,54 @@ def get_Score_trajectoriesBLOCK_cuda(
 
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
             leader_idx = torch.argmax(agent_mean_scores).item()
+        if collect_pairwise_metrics:
+            avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
+            avg_l1, pairwise_l1 = metrics.compute_l1_distance(strategy.agents)
+            avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
+            avg_l1_history.append(avg_l1 if avg_l1 is not None else 0.0)
+        else:
+            avg_hamming = None
+            avg_l1 = None
 
-            if collect_summary_metrics:
-                avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
-                avg_l1, pairwise_l1 = metrics.compute_l1_distance(strategy.agents)
-                avg_entropy, per_agent_entropy = metrics.compute_entropy(strategy.agents)
-                avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
-                avg_l1_history.append(avg_l1 if avg_l1 is not None else 0.0)
-                avg_entropy_history.append(avg_entropy if avg_entropy is not None else 0.0)
-            else:
-                pairwise_matrix = None
-                pairwise_l1 = None
-                per_agent_entropy = None
-                avg_hamming_history.append(0.0)
-                avg_l1_history.append(0.0)
-                avg_entropy_history.append(0.0)
+        if collect_pairwise_metrics:
+            avg_js, pairwise_js = metrics.compute_average_js(strategy.agents)
+            avg_l2, pairwise_l2 = metrics.compute_l2_distance(strategy.agents)
+            avg_js_history.append(avg_js if avg_js is not None else 0.0)
+            avg_l2_history.append(avg_l2 if avg_l2 is not None else 0.0)
+            hamming_pairwise_history.append(pairwise_matrix.tolist() if pairwise_matrix is not None else None)
+            js_pairwise_history.append(pairwise_js.tolist() if pairwise_js is not None else None)
+            l2_pairwise_history.append(pairwise_l2.tolist() if pairwise_l2 is not None else None)
+            l1_pairwise_history.append(pairwise_l1.tolist() if pairwise_l1 is not None else None)
+            entropy_agent_history.append(per_agent_entropy if per_agent_entropy is not None else None)
+        else:
+            avg_js_history.append(0.0)
+            avg_l2_history.append(0.0)
+            hamming_pairwise_history.append(None)
+            js_pairwise_history.append(None)
+            l2_pairwise_history.append(None)
+            l1_pairwise_history.append(None)
 
-            if collect_pairwise_metrics:
-                avg_js, pairwise_js = metrics.compute_average_js(strategy.agents)
-                avg_l2, pairwise_l2 = metrics.compute_l2_distance(strategy.agents)
-                avg_js_history.append(avg_js if avg_js is not None else 0.0)
-                avg_l2_history.append(avg_l2 if avg_l2 is not None else 0.0)
-                hamming_pairwise_history.append(pairwise_matrix.tolist() if pairwise_matrix is not None else None)
-                js_pairwise_history.append(pairwise_js.tolist() if pairwise_js is not None else None)
-                l2_pairwise_history.append(pairwise_l2.tolist() if pairwise_l2 is not None else None)
-                l1_pairwise_history.append(pairwise_l1.tolist() if pairwise_l1 is not None else None)
-                entropy_agent_history.append(per_agent_entropy if per_agent_entropy is not None else None)
-            else:
-                avg_js_history.append(0.0)
-                avg_l2_history.append(0.0)
-                hamming_pairwise_history.append(None)
-                js_pairwise_history.append(None)
-                l2_pairwise_history.append(None)
-                l1_pairwise_history.append(None)
-                entropy_agent_history.append(None)
+        if collect_entropy_metrics:
+            avg_entropy, per_agent_entropy = metrics.compute_entropy(strategy.agents)
+            avg_entropy_history.append(avg_entropy if avg_entropy is not None else 0.0)
+            entropy_agent_history.append(per_agent_entropy if per_agent_entropy is not None else None)
+        else:
+            avg_entropy = None
+
+        kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
+        kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
+        if kernel_stats:
+            avg_kernel_value_history.append(kernel_stats.get("avg_kernel_value", 0.0))
+            avg_kernel_grad_history.append(kernel_stats.get("avg_kernel_grad", 0.0))
+        else:
+            avg_kernel_value_history.append(0.0)
+            avg_kernel_grad_history.append(0.0)
+
+        fitness_snapshot_fn = getattr(strategy, "get_agent_fitness_snapshot", None)
+        if callable(fitness_snapshot_fn):
+            agent_fitness_history.append(fitness_snapshot_fn(tensor_score))
+        elif track_leader:
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
-            kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
-            kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
-            if kernel_stats:
-                avg_kernel_value_history.append(kernel_stats.get("avg_kernel_value", 0.0))
-                avg_kernel_grad_history.append(kernel_stats.get("avg_kernel_grad", 0.0))
-            else:
-                avg_kernel_value_history.append(0.0)
-                avg_kernel_grad_history.append(0.0)
 
         if use_tqdm:
             postfix = {"bestScore": global_best, "current_score": global_current}

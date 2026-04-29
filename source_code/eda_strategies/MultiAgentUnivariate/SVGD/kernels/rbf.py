@@ -20,7 +20,7 @@ class RBF(nn.Module):
         super().__init__()
         self.bandwith_kernel = bandwith_kernel
 
-    def forward(self, Thetas, probs=None):
+    def forward(self, Thetas, probs=None, support_thetas=None, support_probs=None):
         """
         X : (B, M, N)
         Y : (B, P, N)
@@ -28,6 +28,47 @@ class RBF(nn.Module):
         Retourne :
             K : (B, M, P) avec K[b, i, j] = exp( - bandwith_kernel * || X_{b,i} - Y_{b,j} ||^2 )
         """
+        if support_thetas is not None:
+            query = Thetas.requires_grad_(True)
+            support = support_thetas.detach()
+            if query.dim() + 1 != support.dim():
+                raise ValueError(
+                    f"support_thetas must have query dims + 1, got query={query.shape}, support={support.shape}."
+                )
+
+            if query.dim() == 4:
+                query_expanded = query.unsqueeze(2)
+                diff = query_expanded - support
+                dnorm2 = (diff ** 2).sum(dim=-1).sum(dim=-1)
+            else:
+                query_expanded = query.unsqueeze(2)
+                diff = query_expanded - support
+                dnorm2 = (diff ** 2).sum(dim=-1)
+
+            if self.bandwith_kernel is None:
+                bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
+            else:
+                bandwith_kernel = self.bandwith_kernel
+
+            K = torch.exp(-bandwith_kernel * dnorm2)
+
+            if query.dim() == 4:
+                grad_Thetas = (
+                    2.0
+                    * bandwith_kernel
+                    * diff
+                    * K.unsqueeze(-1).unsqueeze(-1)
+                ).sum(dim=2)
+            else:
+                grad_Thetas = (
+                    2.0
+                    * bandwith_kernel
+                    * diff
+                    * K.unsqueeze(-1)
+                ).sum(dim=2)
+
+            return K, grad_Thetas
+
         Thetas = Thetas.requires_grad_(True)
 
         if Thetas.dim() == 4:

@@ -10,7 +10,7 @@ class SVGD:
         self.no_repulsion = bool(no_repulsion)
         self.last_kernel_stats = None
 
-    def phi(self, thetas, score, probs=None):
+    def phi(self, thetas, score, probs=None, support_thetas=None, support_probs=None):
         """
         B => Nombre d'instances
         N => Nombre de variables
@@ -21,6 +21,38 @@ class SVGD:
         Standard SVGD update:
             φ_i = (1/M) * [ Σ_j k(θ_j, θ_i) * score_j  +  Σ_j ∇_θ_j k(θ_j, θ_i) ]
         """
+        if support_thetas is not None:
+            if support_thetas.dim() < thetas.dim() + 1:
+                raise ValueError("support_thetas must add one support dimension to thetas.")
+            support_count = support_thetas.size(2)
+            if support_count <= 0:
+                raise ValueError("support_thetas must contain at least one support particle.")
+            K, grad_term = self.kernel(
+                thetas,
+                probs=probs,
+                support_thetas=support_thetas,
+                support_probs=support_probs,
+            )
+            if torch.isnan(K).any() or torch.isinf(K).any():
+                K = torch.nan_to_num(K, nan=0.0, posinf=0.0, neginf=0.0)
+            if torch.isnan(grad_term).any() or torch.isinf(grad_term).any():
+                grad_term = torch.nan_to_num(grad_term, nan=0.0, posinf=0.0, neginf=0.0)
+            if score.dim() == 5:
+                score_term = (K.unsqueeze(-1).unsqueeze(-1) * score).sum(dim=2)
+            else:
+                score_term = (K.unsqueeze(-1) * score).sum(dim=2)
+            if self.no_repulsion:
+                phi = (score_term / self.gamma) / support_count
+            else:
+                phi = (score_term / self.gamma + grad_term) / support_count
+            if torch.isnan(phi).any() or torch.isinf(phi).any():
+                phi = torch.nan_to_num(phi, nan=0.0, posinf=0.0, neginf=0.0)
+            self.last_kernel_stats = {
+                "avg_kernel_value": float(K.mean().item()),
+                "avg_kernel_grad": float(grad_term.mean().item()),
+            }
+            return phi
+
         if thetas.dim() == 4:
             B, M, N, _ = thetas.shape
         else:
