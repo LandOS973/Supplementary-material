@@ -8,6 +8,7 @@ from environment.nk import problem_NKlandscape
 import torch
 import random
 from eda import BOA, MIMIC, PBIL
+from eda.optimizer.ppbil import PPBIL
 from eda.optimizer.replacement import RestrictedTournament, Truncation
 from eda.optimizer.selection import Top
 
@@ -42,12 +43,23 @@ random.seed(seed)
 
 
 def pbil_builder(dim, categories):
-            
+
     return PBIL(
         categories=categories,
         lr=0.1,
         lam=32,
         negative_lr=0.075,
+        mut_prob=0.02,
+        mut_shift=0.05,
+    )
+
+
+def ppbil_builder(dim, categories):
+
+    return PPBIL(
+        categories=categories,
+        lr=0.1,
+        lam=32,
         mut_prob=0.02,
         mut_shift=0.05,
     )
@@ -329,6 +341,9 @@ if (name_algo == "Tabu"):
 
 if (name_algo == "PBIL"):
     list_algos = [EDASearchWrapper(budget, pbil_builder, name_algo, categories, i) for i in range(nb_instances)]
+
+if (name_algo == "PPBIL"):
+    list_algos = [EDASearchWrapper(budget, ppbil_builder, name_algo, categories, i) for i in range(nb_instances)]
 
 if (name_algo == "MIMIC"):
     list_algos = [EDASearchWrapper(budget, mimic_builder, name_algo, categories, i) for i in range(nb_instances)]
