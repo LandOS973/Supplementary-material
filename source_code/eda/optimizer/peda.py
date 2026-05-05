@@ -170,3 +170,126 @@ class PEDA:
             self._grid_rows, self._grid_cols,
             {i: self._neighbours[i] for i in range(self.sub_num)},
         )
+
+
+class PEDAGpu:
+    """
+    GPU-batched PEDA: B = nb_instances * nb_restarts runs in parallel on device.
+
+    Same algorithm as PEDA (UMDA + MDR torus migration) but all tensor ops
+    run on GPU so that sampling and updates are fully vectorised across the
+    batch dimension B.
+    """
+
+    def __init__(self, B, categories, lam=1280, sub_num=8, p_select=0.7, epo=4,
+                 device='cuda'):
+        import torch
+        assert lam % sub_num == 0, "lam must be divisible by sub_num"
+
+        self._torch       = torch
+        self.B            = B
+        self.d            = len(categories)
+        self.Cmax         = int(np.max(categories))
+        self.lam          = lam
+        self.sub_num      = sub_num
+        self.sub_pop_size = lam // sub_num
+        self.n_select     = max(1, int(self.sub_pop_size * p_select))
+        self.epo          = epo
+        self.device       = torch.device(device)
+
+        # (B, sub_num, d, Cmax) — uniform init
+        self.thetas = torch.full(
+            (B, sub_num, self.d, self.Cmax),
+            1.0 / self.Cmax,
+            dtype=torch.float32, device=self.device,
+        )
+
+        rows = int(np.sqrt(sub_num))
+        while sub_num % rows != 0:
+            rows -= 1
+        self._grid_rows = rows
+        self._grid_cols = sub_num // rows
+        self._neighbours = [self._compute_neighbours(i) for i in range(sub_num)]
+
+        self.generation = 0
+
+    # ------------------------------------------------------------------
+    # Topology (identical to CPU PEDA)
+    # ------------------------------------------------------------------
+
+    def _compute_neighbours(self, i):
+        r, c = divmod(i, self._grid_cols)
+        nbrs = {
+            ((r - 1) % self._grid_rows) * self._grid_cols + c,
+            ((r + 1) % self._grid_rows) * self._grid_cols + c,
+            r * self._grid_cols + (c - 1) % self._grid_cols,
+            r * self._grid_cols + (c + 1) % self._grid_cols,
+        }
+        nbrs.discard(i)
+        return list(nbrs)
+
+    # ------------------------------------------------------------------
+    # Sampling
+    # ------------------------------------------------------------------
+
+    def sample_island(self, island_idx):
+        """
+        Draw sub_pop_size solutions for every batch item from island k.
+
+        Returns (B, sub_pop_size, d) int64 tensor with category indices in [0, Cmax-1].
+        Uses torch.multinomial for vectorised categorical sampling.
+        """
+        torch = self._torch
+        theta = self.thetas[:, island_idx, :, :]          # (B, d, Cmax)
+        B, d, C = theta.shape
+        theta_flat = theta.reshape(B * d, C)               # (B*d, Cmax)
+        samples = torch.multinomial(theta_flat, self.sub_pop_size, replacement=True)
+        # (B*d, sub_pop_size) → (B, sub_pop_size, d)
+        return samples.reshape(B, d, self.sub_pop_size).permute(0, 2, 1).contiguous()
+
+    # ------------------------------------------------------------------
+    # Update
+    # ------------------------------------------------------------------
+
+    def update(self, all_pops, all_costs):
+        """
+        Parameters
+        ----------
+        all_pops  : list[sub_num] of (B, sub_pop_size, d) int64 tensors
+        all_costs : list[sub_num] of (B, sub_pop_size) float32 tensors (minimise)
+        """
+        torch = self._torch
+        self.generation += 1
+        arange_B = torch.arange(self.B, device=self.device)
+
+        # --- MDR migration every epo generations ---
+        if self.generation % self.epo == 0:
+            # Snapshot bests BEFORE any modification
+            bests_pop  = []
+            bests_cost = []
+            for k in range(self.sub_num):
+                best_idx = all_costs[k].argmin(dim=1)             # (B,)
+                bests_pop.append(
+                    all_pops[k][arange_B, best_idx, :].clone())   # (B, d)
+                bests_cost.append(
+                    all_costs[k][arange_B, best_idx].clone())      # (B,)
+
+            # Each island k sends its best to its neighbours j
+            for k in range(self.sub_num):
+                for j in self._neighbours[k]:
+                    slots = torch.randint(
+                        0, self.sub_pop_size, (self.B,), device=self.device)
+                    all_pops[j][arange_B, slots, :]  = bests_pop[k]
+                    all_costs[j][arange_B, slots]    = bests_cost[k]
+
+        # --- Selection + UMDA frequency update per island ---
+        for k in range(self.sub_num):
+            pop   = all_pops[k]    # (B, sub_pop_size, d) int64
+            costs = all_costs[k]   # (B, sub_pop_size) float32
+
+            elite_idx = costs.argsort(dim=1)[:, :self.n_select]   # (B, n_select)
+            elite = pop.gather(
+                1, elite_idx.unsqueeze(2).expand(-1, -1, self.d))  # (B, n_select, d)
+
+            for c in range(self.Cmax):
+                self.thetas[:, k, :, c] = (elite == c).float().mean(dim=1)  # (B, d)

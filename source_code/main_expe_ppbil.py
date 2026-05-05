@@ -12,9 +12,16 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 os.chdir(SCRIPT_DIR)
 
-from environment.nk import problem_NKlandscape
+from environment.nk import problem_NKlandscape, getTensorInstances_NK
+from environment.qubo import getTensorInstances_QUBO
 from utils.walsh_expansion import WalshExpansion
-from eda.optimizer.ppbil import PPBIL
+from eda.optimizer.ppbil import PPBIL, PPBILGpu
+
+try:
+    import torch
+    _TORCH_AVAILABLE = True
+except ImportError:
+    _TORCH_AVAILABLE = False
 
 
 parser = argparse.ArgumentParser(
@@ -22,6 +29,7 @@ parser = argparse.ArgumentParser(
                 'Omit --dim / --type-instance to run all available configurations.'
 )
 parser.add_argument('type_problem',   type=str, choices=['NK', 'QUBO'])
+# Note: NK3 not supported (PPBIL is binary-only; NK3 uses D=3)
 parser.add_argument('dim',            type=int, nargs='?', default=None,
                     help='Problem dimension (omit to run all available)')
 parser.add_argument('type_instance',  type=int, nargs='?', default=None,
@@ -31,6 +39,8 @@ parser.add_argument('--budget',       type=int, default=50000)
 parser.add_argument('--nb-instances', type=int, default=10, dest='nb_instances')
 parser.add_argument('--nb-restarts',  type=int, default=10, dest='nb_restarts')
 parser.add_argument('--step-record',  type=int, default=100, dest='step_record')
+parser.add_argument('--no-gpu',       action='store_true', dest='no_gpu',
+                    help='Force CPU even if CUDA is available')
 
 args = parser.parse_args()
 
@@ -42,6 +52,18 @@ step_record   = args.step_record
 
 np.random.seed(args.seed)
 random.seed(args.seed)
+
+_use_gpu = (
+    not args.no_gpu
+    and _TORCH_AVAILABLE
+    and torch.cuda.is_available()
+)
+if _use_gpu:
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+    _device = torch.device('cuda')
+else:
+    _device = None
 
 
 # ------------------------------------------------------------------
@@ -89,6 +111,135 @@ if not all_configs:
     sys.exit(1)
 
 print(f'Running PPBIL on {len(all_configs)} config(s): {all_configs}')
+
+
+# ------------------------------------------------------------------
+# GPU helpers (NK only)
+# ------------------------------------------------------------------
+
+def _eval_nk_batch(tensor_solution, locus, contrib, vectorIndex, N):
+    """
+    tensor_solution : (B, pop, N, 1)       int64,  values in [0, D-1]
+    locus           : (B, 1,   N, K+1)     int64
+    contrib         : (B, 1,   N, D^(K+1)) float32
+    vectorIndex     : (K+1,)               float32, [D^K, ..., 1]
+    Returns (B, pop) float32 — raw sum of NK contributions (to maximise).
+    """
+    pop         = tensor_solution.size(1)
+    locus_exp   = locus.expand(-1, pop, -1, -1)
+    contrib_exp = contrib.expand(-1, pop, -1, -1)
+    sol_rep     = tensor_solution.transpose(2, 3).expand(-1, -1, N, -1)
+    sol_locus   = sol_rep.gather(3, locus_exp).float()
+    idx         = (sol_locus * vectorIndex).sum(dim=3).long().unsqueeze(3)
+    return contrib_exp.gather(3, idx).squeeze(3).sum(dim=2)
+
+
+def _eval_qubo_batch(tensor_solution, tensor_Q):
+    """
+    tensor_solution : (B, pop, N, 1) int64, values in {0, 1}
+    tensor_Q        : (B, N, N)      float32 — symmetric Q matrix
+    Returns (B, pop) float32 — x^T Q x with x = 2*solution - 1 ∈ {-1,+1}
+    (same value as WalshExpansion.eval, to maximise).
+    """
+    pop   = tensor_solution.size(1)
+    x     = tensor_solution.float() * 2 - 1
+    Q_exp = tensor_Q.unsqueeze(1).expand(-1, pop, -1, -1)
+    return (x.transpose(2, 3) @ (Q_exp @ x)).squeeze(3).squeeze(2)
+
+
+def run_config_gpu(dim, type_instance):
+    """
+    GPU path for NK / QUBO: all B = nb_instances * nb_restarts runs in parallel.
+    Scores written to files match the CPU format.
+    """
+    B = nb_instances * nb_restarts
+
+    # --- Build eval function and normalisation factor ---
+    if type_problem == 'QUBO':
+        path     = os.path.join('instances', 'QUBO') + os.sep
+        tensor_Q = getTensorInstances_QUBO(
+            path, nb_instances, nb_restarts, dim, type_instance, _device, 'train',
+        ).to(_device)
+        def eval_fn(sol_t):
+            return _eval_qubo_batch(sol_t, tensor_Q)
+        norm_factor = 1
+    else:  # NK
+        K           = type_instance
+        vectorIndex = torch.tensor(
+            [2 ** (K - i) for i in range(K + 1)],
+            dtype=torch.float32, device=_device,
+        )
+        path = os.path.join('instances', 'nk', str(dim), str(K)) + os.sep
+        tensor_locus, tensor_contrib, _ = getTensorInstances_NK(
+            path, nb_instances, nb_restarts, 1, dim, 2, K, _device,
+        )
+        def eval_fn(sol_t):
+            return _eval_nk_batch(sol_t, tensor_locus, tensor_contrib, vectorIndex, dim)
+        norm_factor = dim
+
+    optimizer = PPBILGpu(
+        B=B, d=dim,
+        lr=0.1, lam=32, mut_prob=0.02, mut_shift=0.05,
+        device=str(_device),
+    )
+
+    best_score = torch.full((B,), float('-inf'), device=_device)
+    num_evals  = 0
+    rows_all   = [[] for _ in range(B)]
+
+    while num_evals < budget:
+        if budget - num_evals < optimizer.lam:
+            break
+
+        prev_evals     = num_evals
+        pop1_s, pop2_s = optimizer.sample()
+
+        score1 = eval_fn(pop1_s.unsqueeze(3))
+        score2 = eval_fn(pop2_s.unsqueeze(3))
+
+        pos      = torch.arange(optimizer.pop_max, device=_device).unsqueeze(0)
+        mask1    = pos < optimizer.pop1.unsqueeze(1)
+        mask2    = pos < optimizer.pop2.unsqueeze(1)
+        gen_best = torch.maximum(
+            score1.masked_fill(~mask1, float('-inf')).max(dim=1).values,
+            score2.masked_fill(~mask2, float('-inf')).max(dim=1).values,
+        )
+        best_score = torch.maximum(best_score, gen_best)
+
+        num_evals += optimizer.lam
+
+        first_rec = ((prev_evals // step_record) + 1) * step_record
+        if first_rec <= num_evals:
+            bs_np = (best_score / norm_factor).cpu().numpy()
+            for rec_pt in range(first_rec, num_evals + 1, step_record):
+                for b in range(B):
+                    rows_all[b].append((rec_pt, float(bs_np[b])))
+
+        optimizer.update(pop1_s, score1, pop2_s, score2)
+
+    out_dir = os.path.join(
+        REPO_ROOT, 'results', 'nevergrad', 'PPBIL',
+        type_problem, str(dim), str(type_instance),
+    )
+    os.makedirs(out_dir, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
+    for b in range(B):
+        i = b // nb_restarts
+        r = b % nb_restarts
+        filename = (
+            'results_nevergrad_PPBIL_' + type_problem + '_' + str(dim)
+            + '_' + str(type_instance) + '_budget_' + str(budget)
+            + '_' + timestamp + '_i_' + str(i) + '_r_' + str(r) + '.txt'
+        )
+        with open(os.path.join(out_dir, filename), 'w') as f:
+            f.write('runtime, score\n')
+            for runtime, score in rows_all[b]:
+                f.write(str(runtime) + ',' + str(score) + '\n')
+
+        best_final = rows_all[b][-1][1] if rows_all[b] else float('nan')
+        print(f'  [PPBIL GPU {type_problem} dim={dim} k={type_instance}]'
+              f' i={i} r={r}  best={best_final:.6f}')
 
 
 # ------------------------------------------------------------------
@@ -190,6 +341,14 @@ def run_config(dim, type_instance):
 # ------------------------------------------------------------------
 # Main loop over all configs
 # ------------------------------------------------------------------
+if _use_gpu:
+    print(f'GPU mode: device={_device}  (batch B={nb_instances * nb_restarts})')
+else:
+    print('CPU mode')
+
 for dim, type_instance in all_configs:
     print(f'\n=== {type_problem}  dim={dim}  k={type_instance} ===')
-    run_config(dim, type_instance)
+    if _use_gpu:
+        run_config_gpu(dim, type_instance)
+    else:
+        run_config(dim, type_instance)
