@@ -187,7 +187,7 @@ def get_Score_trajectoriesNK_cuda(
     solutions_history = [] if enable_visualization else None
     metrics = MetricsCalculator(normalization_factor=N)
 
-    use_tqdm = bool(verbose and enable_visualization)
+    use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
 
     def _evaluate_population(tensor_solution):

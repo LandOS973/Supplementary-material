@@ -446,16 +446,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         baseline = self.baseline.gather(1, active_indices).reshape(active_BM)
 
         if self.use_categorical:
-            active_probs = self.current_active_probs
-            if active_probs is None:
-                D = self.theta.size(-1)
-                gather_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)
-                theta = self.theta.gather(1, gather_index).reshape(active_BM, N, D)
-                active_probs = self._compute_probs_from_theta(theta.view(B, l_active, N, D)).reshape(active_BM, N, D)
-            else:
-                D = active_probs.size(-1)
-                theta = self.theta.gather(1, active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)).reshape(active_BM, N, D)
-                active_probs = active_probs.reshape(active_BM, N, D)
+            D = self.theta.size(-1)
+            gather_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)
+            theta = self.theta.gather(1, gather_index).reshape(active_BM, N, D)
+            active_probs = self._compute_probs_from_theta(theta.view(B, l_active, N, D)).reshape(active_BM, N, D)
             all_Pi_Theta_expanded = active_probs.unsqueeze(1).expand(-1, λa, -1, -1)
             log_probs = torch.log(all_Pi_Theta_expanded + 1e-10)
             indices = indivduals.long().unsqueeze(-1)
@@ -463,11 +457,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         else:
             gather_index = active_indices.unsqueeze(-1).expand(B, l_active, N)
             theta = self.theta.gather(1, gather_index).reshape(active_BM, N)
-            active_probs = self.current_active_probs
-            if active_probs is None:
-                active_probs = self._compute_probs_from_theta(theta.view(B, l_active, N)).reshape(active_BM, N)
-            else:
-                active_probs = active_probs.reshape(active_BM, N)
+            active_probs = self._compute_probs_from_theta(theta.view(B, l_active, N)).reshape(active_BM, N)
             all_Pi_Theta_expanded = active_probs.unsqueeze(1).expand(-1, λa, -1)
             Pi_selected = torch.where(
                 indivduals == 1.0,
@@ -488,15 +478,17 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         loss_per_instance = torch.mean(advantages * log_Pi, dim=1)
         loss = loss_per_instance.sum()
 
-        grad_theta, = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
-        grad_theta = grad_theta.detach()
-        self.last_theta_grad = grad_theta.clone()
+        grad_active, = torch.autograd.grad(loss, theta, create_graph=False)
+        grad_active = grad_active.detach().view(B, l_active, *theta.shape[1:])
+
         if self.gradient_memory is None:
-            self.gradient_memory = torch.zeros_like(grad_theta)
+            self.gradient_memory = torch.zeros_like(self.theta.detach())
+        if self.last_theta_grad is None:
+            self.last_theta_grad = torch.zeros_like(self.theta.detach())
 
         with torch.no_grad():
-            for batch_idx in range(B):
-                self.gradient_memory[batch_idx, active_indices[batch_idx]] = grad_theta[batch_idx, active_indices[batch_idx]]
+            self.gradient_memory.scatter_(1, gather_index, grad_active)
+            self.last_theta_grad.scatter_(1, gather_index, grad_active)
             baseline_new = scoreList.view(B, l_active, λa).mean(dim=2)
             for batch_idx in range(B):
                 self.baseline[batch_idx, active_indices[batch_idx]] = baseline_new[batch_idx]

@@ -361,7 +361,7 @@ def main(cfg: DictConfig):
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
 
-    if not is_nasbench and type_problem_upper != "VIENNARNA":
+    if visualization_enabled and not is_nasbench and type_problem_upper != "VIENNARNA":
         try:
             plot_agents_tsne(
                 strategy,
@@ -374,7 +374,7 @@ def main(cfg: DictConfig):
     elif is_nasbench:
         print("[INFO] t-SNE skipped for nasbench (categorical variables).")
     else:
-        print("[INFO] t-SNE skipped for ViennaRNA.")
+        print("[INFO] t-SNE.")
 
 
 if __name__ == "__main__":
