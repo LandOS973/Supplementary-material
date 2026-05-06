@@ -21,6 +21,8 @@ SUMMARY_HEADERS = [
     "gamma",
     "decay_start_ratio",
     "decay_min_factor",
+    "l_active",
+    "r_influence",
     "nasbench_avg_score",
     "mean_rank",
     "median_rank",
@@ -65,6 +67,8 @@ def _infer_params_from_name(config_name: str) -> dict:
         "decay_start_ratio": None,
         "decay_min_factor": None,
         "bandwith_kernel": None,
+        "l_active": None,
+        "r_influence": None,
     }
     def parse_float(token: str):
         token = token.replace("p", ".").replace("m", "-")
@@ -97,6 +101,16 @@ def _infer_params_from_name(config_name: str) -> dict:
             out["decay_min_factor"] = parse_float(p[2:])
         elif p.startswith("bw"):
             out["bandwith_kernel"] = parse_float(p[2:])
+        elif p.startswith("la"):
+            try:
+                out["l_active"] = int(p[2:])
+            except Exception:
+                pass
+        elif p.startswith("ri"):
+            try:
+                out["r_influence"] = int(p[2:])
+            except Exception:
+                pass
     return out
 
 
@@ -286,6 +300,8 @@ def _collect_config_stats_from_csv(config_dir: Path, config_name: str, params: d
         gamma=_round_float(params["gamma"]),
         decay_start_ratio=_round_float(params["decay_start_ratio"]),
         decay_min_factor=_round_float(params["decay_min_factor"]),
+        l_active=params.get("l_active"),
+        r_influence=params.get("r_influence"),
         mean_rank=float(np.mean(ranks)) if ranks else None,
         median_rank=float(np.median(ranks)) if ranks else None,
         std_percent=float(np.std(percents)) if len(percents) > 1 else (0.0 if percents else None),

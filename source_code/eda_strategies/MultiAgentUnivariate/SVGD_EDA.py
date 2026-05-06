@@ -577,66 +577,68 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             return
 
         theta = self.theta
-        full_phi = torch.zeros_like(theta)
-        kernel_values = []
-        kernel_grads = []
         B = self.nb_instances
         l_active = self.l_active
+        N = self.N
+        active_indices = self.current_active_indices  # [B, l_active]
 
+        # Eligible pool: particles already visited OR currently active
+        eligible_mask = self.visited_mask | self.current_active_mask  # [B, M]
+
+        # Vectorised support sampling: pick r_eff indices per instance from the eligible pool.
+        # All active particles within an instance share the same support set.
+        r_eff = max(1, min(self.r_influence, int(eligible_mask.sum(dim=1).min().item())))
+        perm_scores = torch.rand(B, self.M, device=self.device)
+        perm_scores.masked_fill_(~eligible_mask, -1.0)
+        _, support_indices = perm_scores.topk(r_eff, dim=1)  # [B, r_eff]
+
+        if theta.dim() == 4:
+            # Categorical (NK3): theta [B, M, N, D]
+            D = theta.size(-1)
+
+            query_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)
+            query_theta = theta.gather(1, query_index)  # [B, l_active, N, D]
+
+            sup_index_ND = support_indices.unsqueeze(-1).unsqueeze(-1).expand(B, r_eff, N, D)
+            support_theta_inst = theta.detach().gather(1, sup_index_ND)  # [B, r_eff, N, D]
+            support_theta = support_theta_inst.unsqueeze(1).expand(B, l_active, r_eff, N, D).contiguous()
+
+            support_score_inst = self.gradient_memory.gather(1, sup_index_ND)  # [B, r_eff, N, D]
+            support_score = support_score_inst.unsqueeze(1).expand(B, l_active, r_eff, N, D).contiguous()
+
+            scatter_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)
+        else:
+            # Binary: theta [B, M, N]
+            query_index = active_indices.unsqueeze(-1).expand(B, l_active, N)
+            query_theta = theta.gather(1, query_index)  # [B, l_active, N]
+
+            sup_index_N = support_indices.unsqueeze(-1).expand(B, r_eff, N)
+            support_theta_inst = theta.detach().gather(1, sup_index_N)  # [B, r_eff, N]
+            support_theta = support_theta_inst.unsqueeze(1).expand(B, l_active, r_eff, N).contiguous()
+
+            support_score_inst = self.gradient_memory.gather(1, sup_index_N)  # [B, r_eff, N]
+            support_score = support_score_inst.unsqueeze(1).expand(B, l_active, r_eff, N).contiguous()
+
+            scatter_index = active_indices.unsqueeze(-1).expand(B, l_active, N)
+
+        # Single batched phi call — replaces the B-iteration loop
+        full_phi = torch.zeros_like(theta)
         with torch.enable_grad():
-            for batch_idx in range(B):
-                active_indices = self.current_active_indices[batch_idx]
-                eligible_mask = self.visited_mask[batch_idx].clone()
-                eligible_mask[active_indices] = True
-                eligible_indices = torch.nonzero(eligible_mask, as_tuple=False).squeeze(1)
-                if eligible_indices.numel() == 0:
-                    continue
-                r_effective = min(self.r_influence, int(eligible_indices.numel()))
-                support_rows = []
-                for particle_idx in active_indices:
-                    others = eligible_indices[eligible_indices != particle_idx]
-                    num_others = min(max(r_effective - 1, 0), int(others.numel()))
-                    if num_others > 0:
-                        chosen = others[torch.randperm(others.numel(), device=self.device)[:num_others]]
-                        support_rows.append(torch.cat([particle_idx.view(1), chosen], dim=0))
-                    else:
-                        support_rows.append(particle_idx.view(1))
-                support_indices = torch.stack(support_rows, dim=0)
+            phi = self.svgd.phi(
+                query_theta,
+                support_score,
+                probs=None,
+                support_thetas=support_theta,
+                support_probs=None,
+            )  # [B, l_active, N] or [B, l_active, N, D]
 
-                if theta.dim() == 4:
-                    D = theta.size(-1)
-                    query_index = active_indices.view(1, l_active, 1, 1).expand(1, l_active, self.N, D)
-                    query_theta = theta[batch_idx:batch_idx + 1].gather(1, query_index)
-                    support_theta = theta[batch_idx, support_indices].unsqueeze(0)
-                    support_score = self.gradient_memory[batch_idx, support_indices].unsqueeze(0)
-                else:
-                    query_index = active_indices.view(1, l_active, 1).expand(1, l_active, self.N)
-                    query_theta = theta[batch_idx:batch_idx + 1].gather(1, query_index)
-                    support_theta = theta[batch_idx, support_indices].unsqueeze(0)
-                    support_score = self.gradient_memory[batch_idx, support_indices].unsqueeze(0)
+        kernel_stats = self.svgd.get_last_kernel_stats()
+        if kernel_stats:
+            self.kernel_metric_history.append(kernel_stats)
 
-                phi_batch = self.svgd.phi(
-                    query_theta,
-                    support_score,
-                    probs=None,
-                    support_thetas=support_theta,
-                    support_probs=None,
-                )
-                kernel_stats = self.svgd.get_last_kernel_stats()
-                if kernel_stats:
-                    kernel_values.append(kernel_stats.get("avg_kernel_value", 0.0))
-                    kernel_grads.append(kernel_stats.get("avg_kernel_grad", 0.0))
-                full_phi[batch_idx, active_indices] = phi_batch.squeeze(0)
-
-        if kernel_values:
-            self.kernel_metric_history.append(
-                {
-                    "avg_kernel_value": float(np.mean(kernel_values)),
-                    "avg_kernel_grad": float(np.mean(kernel_grads)) if kernel_grads else 0.0,
-                }
-            )
-
+        # Scatter phi back to full theta positions and update
         with torch.no_grad():
+            full_phi.scatter_(1, scatter_index, phi.detach())
             self.theta += self.epsilon_svgd * full_phi
             self.visited_mask |= self.current_active_mask
             self.probs = None

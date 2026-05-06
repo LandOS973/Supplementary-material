@@ -38,14 +38,16 @@ DEFAULTS = dict(
 )
 DEFAULT_GRIDS = [
     dict(
-        kernels=["jsd"],
+        kernels=["rbf"],
         advantages=["globalrankweighted"],
-        M_values=[10],
-        lambda_values=[10, 14],
-        epsilon_svgd=[0.10, 0.12],
+        M_values=[10,20,30,40,50],
+        lambda_values=[13],
+        epsilon_svgd=[0.08],
         gamma=[0.01, 0.015],
-        decay_start_ratio=[0.03, 0.05],
+        decay_start_ratio=[0.03],
         decay_min_factor=[0.01],
+        l_active=[7],
+        r_influence=[7],
     )
 ]
 
@@ -103,6 +105,10 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
     ]
     if params.get("bandwith_kernel") is not None:
         parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
+    if params.get("l_active") is not None:
+        parts.append(f"la{_slugify(params['l_active'])}")
+    if params.get("r_influence") is not None:
+        parts.append(f"ri{_slugify(params['r_influence'])}")
     if prefix:
         return f"{prefix}__" + "__".join(parts)
     return "__".join(parts)
@@ -121,6 +127,8 @@ def _expand_grid(grid: dict):
                 "decay_start_ratio": float(cfg["decay_start_ratio"]),
                 "decay_min_factor": float(cfg["decay_min_factor"]),
                 "bandwith_kernel": cfg.get("bandwith_kernel"),
+                "l_active": int(cfg["l_active"]) if "l_active" in cfg else None,
+                "r_influence": int(cfg["r_influence"]) if "r_influence" in cfg else None,
             }
             cfg_name = _build_config_name(None, params)
             yield cfg_name, params
@@ -135,8 +143,10 @@ def _expand_grid(grid: dict):
     decay_start_ratio = grid.get("decay_start_ratio", [0.8])
     decay_min_factor = grid.get("decay_min_factor", [0.1])
     bandwith_kernel = grid.get("bandwith_kernel", [None])
+    l_active_vals = grid.get("l_active", [None])
+    r_influence_vals = grid.get("r_influence", [None])
 
-    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw) in itertools.product(
+    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw, la, ri) in itertools.product(
         kernels,
         advantages,
         M_values,
@@ -146,6 +156,8 @@ def _expand_grid(grid: dict):
         decay_start_ratio,
         decay_min_factor,
         bandwith_kernel,
+        l_active_vals,
+        r_influence_vals,
     ):
         params = dict(
             kernel=str(kernel).lower(),
@@ -157,6 +169,8 @@ def _expand_grid(grid: dict):
             decay_start_ratio=float(ds),
             decay_min_factor=float(dm),
             bandwith_kernel=bw,
+            l_active=int(la) if la is not None else None,
+            r_influence=int(ri) if ri is not None else None,
         )
         cfg_name = _build_config_name(None, params)
         yield cfg_name, params
@@ -362,6 +376,8 @@ def _run_once(
     decay_start_ratio,
     decay_min_factor,
     bandwith_kernel,
+    l_active=None,
+    r_influence=None,
     device=None,
     nb_restarts=None,
 ):
@@ -392,6 +408,8 @@ def _run_once(
         no_interact=False,
         is_nk3=(problem_ctx["type_problem"] == "NK3"),
     ).to(device)
+    if l_active is not None or r_influence is not None:
+        strategy.configure_partial_updates(l_active, r_influence)
 
     if problem_ctx["type_problem"] == "QUBO":
         list_scores, history = get_Score_trajectoriesQUBO_cuda(
@@ -502,7 +520,7 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None, c
     score_p90 = history.get("score_p90", [])
     score_p95 = history.get("score_p95", [])
     score_p98 = history.get("score_p98", [])
-    rows = zip(
+    rows = itertools.zip_longest(
         runtime,
         history.get("best_fitness", []),
         history.get("avg_hamming", []),
@@ -520,6 +538,7 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None, c
         score_p90,
         score_p95,
         score_p98,
+        fillvalue=0.0,
     )
     csv_path = os.path.join(out_dir, "best_metrics.csv")
     with open(csv_path, "w") as f:
@@ -886,6 +905,12 @@ def main():
     )
     args = parser.parse_args()
 
+    device = DEFAULTS["device"]
+    if torch.cuda.is_available():
+        print(f"[DEVICE] GPU — {torch.cuda.get_device_name(device)}")
+    else:
+        print("[DEVICE] CPU")
+
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     out_root = args.outdir or os.path.join(repo_root, "results", "config")
     Path(out_root).mkdir(parents=True, exist_ok=True)
@@ -941,6 +966,8 @@ def main():
                             params["decay_start_ratio"],
                             params["decay_min_factor"],
                             params.get("bandwith_kernel"),
+                            l_active=params.get("l_active"),
+                            r_influence=params.get("r_influence"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                         )
@@ -999,6 +1026,8 @@ def main():
                             params["decay_start_ratio"],
                             params["decay_min_factor"],
                             params.get("bandwith_kernel"),
+                            l_active=params.get("l_active"),
+                            r_influence=params.get("r_influence"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                         )
@@ -1057,6 +1086,8 @@ def main():
                             params["decay_start_ratio"],
                             params["decay_min_factor"],
                             params.get("bandwith_kernel"),
+                            l_active=params.get("l_active"),
+                            r_influence=params.get("r_influence"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                         )
