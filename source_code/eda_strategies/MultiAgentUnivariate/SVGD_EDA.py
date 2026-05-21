@@ -137,7 +137,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.current_active_mask = None
         self.current_active_probs = None
         self.l_active = self.M
-        self.r_influence = self.M
         self.partial_updates_enabled = False
 
     def forward(self):
@@ -201,23 +200,17 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.latest_advantages = None
         self.probs = None
 
-    def configure_partial_updates(self, l_active=None, r_influence=None):
+    def configure_partial_updates(self, l_active=None):
         if l_active is None:
             l_active = self.M
-        if r_influence is None:
-            r_influence = self.M
         l_active = int(l_active)
-        r_influence = int(r_influence)
         if l_active < 1 or l_active > self.M:
             raise ValueError(f"l_active must be in [1, {self.M}], got {l_active}.")
-        if r_influence < 1 or r_influence > self.M:
-            raise ValueError(f"r_influence must be in [1, {self.M}], got {r_influence}.")
         if l_active < self.M and self.kernel_name != "rbf":
             raise ValueError(
                 f"Partial particle updates are only supported with the rbf kernel, got '{self.kernel_name}'."
             )
         self.l_active = l_active
-        self.r_influence = r_influence
         self.partial_updates_enabled = bool(self.l_active < self.M)
         self.lambda_ = self.lambda_per_agent * self.l_active
         if self.partial_updates_enabled:
@@ -580,17 +573,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         B = self.nb_instances
         l_active = self.l_active
         N = self.N
+        M = self.M
         active_indices = self.current_active_indices  # [B, l_active]
 
-        # Eligible pool: particles already visited OR currently active
+        # Support set: toutes les particules ayant eu de l'activité (visitées OU actives)
         eligible_mask = self.visited_mask | self.current_active_mask  # [B, M]
-
-        # Vectorised support sampling: pick r_eff indices per instance from the eligible pool.
-        # All active particles within an instance share the same support set.
-        r_eff = max(1, min(self.r_influence, int(eligible_mask.sum(dim=1).min().item())))
-        perm_scores = torch.rand(B, self.M, device=self.device)
-        perm_scores.masked_fill_(~eligible_mask, -1.0)
-        _, support_indices = perm_scores.topk(r_eff, dim=1)  # [B, r_eff]
 
         if theta.dim() == 4:
             # Categorical (NK3): theta [B, M, N, D]
@@ -599,12 +586,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             query_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)
             query_theta = theta.gather(1, query_index)  # [B, l_active, N, D]
 
-            sup_index_ND = support_indices.unsqueeze(-1).unsqueeze(-1).expand(B, r_eff, N, D)
-            support_theta_inst = theta.detach().gather(1, sup_index_ND)  # [B, r_eff, N, D]
-            support_theta = support_theta_inst.unsqueeze(1).expand(B, l_active, r_eff, N, D).contiguous()
-
-            support_score_inst = self.gradient_memory.gather(1, sup_index_ND)  # [B, r_eff, N, D]
-            support_score = support_score_inst.unsqueeze(1).expand(B, l_active, r_eff, N, D).contiguous()
+            # Support = toutes les M particules ; eligible_mask filtre les inéligibles dans phi
+            support_theta = theta.detach().unsqueeze(1).expand(B, l_active, M, N, D).contiguous()
+            support_score = self.gradient_memory.unsqueeze(1).expand(B, l_active, M, N, D).contiguous()
 
             scatter_index = active_indices.unsqueeze(-1).unsqueeze(-1).expand(B, l_active, N, D)
         else:
@@ -612,16 +596,12 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             query_index = active_indices.unsqueeze(-1).expand(B, l_active, N)
             query_theta = theta.gather(1, query_index)  # [B, l_active, N]
 
-            sup_index_N = support_indices.unsqueeze(-1).expand(B, r_eff, N)
-            support_theta_inst = theta.detach().gather(1, sup_index_N)  # [B, r_eff, N]
-            support_theta = support_theta_inst.unsqueeze(1).expand(B, l_active, r_eff, N).contiguous()
-
-            support_score_inst = self.gradient_memory.gather(1, sup_index_N)  # [B, r_eff, N]
-            support_score = support_score_inst.unsqueeze(1).expand(B, l_active, r_eff, N).contiguous()
+            # Support = toutes les M particules ; eligible_mask filtre les inéligibles dans phi
+            support_theta = theta.detach().unsqueeze(1).expand(B, l_active, M, N).contiguous()
+            support_score = self.gradient_memory.unsqueeze(1).expand(B, l_active, M, N).contiguous()
 
             scatter_index = active_indices.unsqueeze(-1).expand(B, l_active, N)
 
-        # Single batched phi call — replaces the B-iteration loop
         full_phi = torch.zeros_like(theta)
         with torch.enable_grad():
             phi = self.svgd.phi(
@@ -630,13 +610,13 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 probs=None,
                 support_thetas=support_theta,
                 support_probs=None,
+                support_mask=eligible_mask,
             )  # [B, l_active, N] or [B, l_active, N, D]
 
         kernel_stats = self.svgd.get_last_kernel_stats()
         if kernel_stats:
             self.kernel_metric_history.append(kernel_stats)
 
-        # Scatter phi back to full theta positions and update
         with torch.no_grad():
             full_phi.scatter_(1, scatter_index, phi.detach())
             self.theta += self.epsilon_svgd * full_phi

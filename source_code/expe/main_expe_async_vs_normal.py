@@ -51,7 +51,6 @@ DEFAULT_GRIDS = [
         decay_start_ratio=[0.03],
         decay_min_factor=[0.01],
         l_active=[5],
-        r_influence=[20],
     )
 ]
 
@@ -81,7 +80,6 @@ def _run_variant(
     inst: dict,
     params: dict,
     l_active: int | None,
-    r_influence: int | None,
     config_name: str,
     out_root: str,
     repo_root: str,
@@ -117,7 +115,6 @@ def _run_variant(
                 params["decay_min_factor"],
                 params.get("bandwith_kernel"),
                 l_active=l_active,
-                r_influence=r_influence,
                 device=DEFAULTS["device"],
                 nb_restarts=nb_restarts,
             )
@@ -274,7 +271,6 @@ def main():
     for grid in grids:
         for config_name, params in _expand_grid(grid):
             l_active = params.get("l_active")
-            r_influence = params.get("r_influence")
 
             if l_active is None or l_active >= params["M"]:
                 print(f"[SKIP] {config_name} — l_active={l_active} not < M={params['M']}")
@@ -282,7 +278,7 @@ def main():
 
             async_name = config_name
             # Normal baseline: M = l_active, no partial updates — same per-step compute budget
-            normal_params = {**params, "M": l_active, "l_active": None, "r_influence": None}
+            normal_params = {**params, "M": l_active, "l_active": None}
             normal_name = _build_config_name(None, normal_params)
 
             print(f"\n[PAIR]")
@@ -294,15 +290,15 @@ def main():
                 inst_label = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
                 print(f"  [{inst_label}]")
 
-                print(f"    -> async  (M={params['M']}, l_active={l_active}, r_influence={r_influence})")
+                print(f"    -> async  (M={params['M']}, l_active={l_active})")
                 t0 = time.time()
-                res_async = _run_variant(inst, params, l_active, r_influence, async_name, out_root, repo_root)
+                res_async = _run_variant(inst, params, l_active, async_name, out_root, repo_root)
                 score_str = f"{res_async[0]:.6f}" if res_async else "FAILED"
                 print(f"       {score_str}  rank={res_async[1] if res_async else '?'}  ({time.time()-t0:.1f}s)")
 
                 print(f"    -> normal (M={l_active}, full updates)")
                 t0 = time.time()
-                res_normal = _run_variant(inst, normal_params, None, None, normal_name, out_root, repo_root)
+                res_normal = _run_variant(inst, normal_params, None, normal_name, out_root, repo_root)
                 score_str = f"{res_normal[0]:.6f}" if res_normal else "FAILED"
                 print(f"       {score_str}  rank={res_normal[1] if res_normal else '?'}  ({time.time()-t0:.1f}s)")
 

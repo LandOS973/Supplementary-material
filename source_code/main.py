@@ -101,11 +101,8 @@ def main(cfg: DictConfig):
     enable_greedy_final = bool(enable_greedy_final)
     M = int(agent_val("M") or cfg.get("M") or 1)
     l_active = int(agent_val("l_active") or cfg.get("l_active") or 10)
-    r_influence = int(agent_val("r_influence") or cfg.get("r_influence") or 10)
     if l_active > M:
         raise ValueError(f"l_active must be <= M (got l_active={l_active}, M={M}).")
-    if r_influence > M:
-        raise ValueError(f"r_influence must be <= M (got r_influence={r_influence}, M={M}).")
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
@@ -151,7 +148,7 @@ def main(cfg: DictConfig):
 
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
-        f"M={M} l_active={l_active} r_influence={r_influence} lambda={lambda_} eps={epsilon_svgd} gamma={svgd_gamma} | "
+        f"M={M} l_active={l_active} lambda={lambda_} eps={epsilon_svgd} gamma={svgd_gamma} | "
         f"kernel={kernel_name} advantage={advantage_cfg} decay={decay_enabled} "
         f"greedy_final={enable_greedy_final}"
     )
@@ -260,7 +257,7 @@ def main(cfg: DictConfig):
     ).to(device)
     configure_partial_updates = getattr(strategy, "configure_partial_updates", None)
     if callable(configure_partial_updates):
-        configure_partial_updates(l_active=l_active, r_influence=r_influence)
+        configure_partial_updates(l_active=l_active)
     if l_active < M and enable_greedy_final:
         print("[INFO] disabling greedy_final while partial particle updates are enabled.")
         strategy.sample_greedy_agent_solutions = None

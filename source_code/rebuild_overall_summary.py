@@ -301,7 +301,6 @@ def _collect_config_stats_from_csv(config_dir: Path, config_name: str, params: d
         decay_start_ratio=_round_float(params["decay_start_ratio"]),
         decay_min_factor=_round_float(params["decay_min_factor"]),
         l_active=params.get("l_active"),
-        r_influence=params.get("r_influence"),
         mean_rank=float(np.mean(ranks)) if ranks else None,
         median_rank=float(np.median(ranks)) if ranks else None,
         std_percent=float(np.std(percents)) if len(percents) > 1 else (0.0 if percents else None),

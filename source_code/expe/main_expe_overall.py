@@ -47,7 +47,6 @@ DEFAULT_GRIDS = [
         decay_start_ratio=[0.03],
         decay_min_factor=[0.01],
         l_active=[7],
-        r_influence=[7],
     )
 ]
 
@@ -107,8 +106,6 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
         parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
     if params.get("l_active") is not None:
         parts.append(f"la{_slugify(params['l_active'])}")
-    if params.get("r_influence") is not None:
-        parts.append(f"ri{_slugify(params['r_influence'])}")
     if prefix:
         return f"{prefix}__" + "__".join(parts)
     return "__".join(parts)
@@ -144,9 +141,8 @@ def _expand_grid(grid: dict):
     decay_min_factor = grid.get("decay_min_factor", [0.1])
     bandwith_kernel = grid.get("bandwith_kernel", [None])
     l_active_vals = grid.get("l_active", [None])
-    r_influence_vals = grid.get("r_influence", [None])
 
-    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw, la, ri) in itertools.product(
+    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw, la) in itertools.product(
         kernels,
         advantages,
         M_values,
@@ -157,7 +153,6 @@ def _expand_grid(grid: dict):
         decay_min_factor,
         bandwith_kernel,
         l_active_vals,
-        r_influence_vals,
     ):
         params = dict(
             kernel=str(kernel).lower(),
@@ -170,7 +165,6 @@ def _expand_grid(grid: dict):
             decay_min_factor=float(dm),
             bandwith_kernel=bw,
             l_active=int(la) if la is not None else None,
-            r_influence=int(ri) if ri is not None else None,
         )
         cfg_name = _build_config_name(None, params)
         yield cfg_name, params
@@ -377,7 +371,6 @@ def _run_once(
     decay_min_factor,
     bandwith_kernel,
     l_active=None,
-    r_influence=None,
     device=None,
     nb_restarts=None,
 ):
@@ -408,8 +401,8 @@ def _run_once(
         no_interact=False,
         is_nk3=(problem_ctx["type_problem"] == "NK3"),
     ).to(device)
-    if l_active is not None or r_influence is not None:
-        strategy.configure_partial_updates(l_active, r_influence)
+    if l_active is not None:
+        strategy.configure_partial_updates(l_active)
 
     if problem_ctx["type_problem"] == "QUBO":
         list_scores, history = get_Score_trajectoriesQUBO_cuda(
@@ -967,7 +960,6 @@ def main():
                             params["decay_min_factor"],
                             params.get("bandwith_kernel"),
                             l_active=params.get("l_active"),
-                            r_influence=params.get("r_influence"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                         )
@@ -1027,7 +1019,6 @@ def main():
                             params["decay_min_factor"],
                             params.get("bandwith_kernel"),
                             l_active=params.get("l_active"),
-                            r_influence=params.get("r_influence"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                         )
@@ -1087,7 +1078,6 @@ def main():
                             params["decay_min_factor"],
                             params.get("bandwith_kernel"),
                             l_active=params.get("l_active"),
-                            r_influence=params.get("r_influence"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                         )

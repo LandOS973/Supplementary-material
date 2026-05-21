@@ -58,14 +58,14 @@ class RBF(nn.Module):
                     * bandwith_kernel
                     * diff
                     * K.unsqueeze(-1).unsqueeze(-1)
-                ).sum(dim=2)
+                )  # (B, l_active, M, N, D) — somme différée dans phi()
             else:
                 grad_Thetas = (
                     2.0
                     * bandwith_kernel
                     * diff
                     * K.unsqueeze(-1)
-                ).sum(dim=2)
+                )  # (B, l_active, M, N) — somme différée dans phi()
 
             return K, grad_Thetas
 
