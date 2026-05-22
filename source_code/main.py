@@ -103,6 +103,10 @@ def main(cfg: DictConfig):
     l_active = int(agent_val("l_active") or cfg.get("l_active") or 10)
     if l_active > M:
         raise ValueError(f"l_active must be <= M (got l_active={l_active}, M={M}).")
+    ucb_c_raw = agent_val("ucb_c") if agent_val("ucb_c") is not None else cfg.get("ucb_c")
+    ucb_c = float(ucb_c_raw) if ucb_c_raw is not None else None
+    ucb_adaptive_raw = agent_val("ucb_adaptive") if agent_val("ucb_adaptive") is not None else cfg.get("ucb_adaptive")
+    ucb_adaptive = bool(ucb_adaptive_raw) if ucb_adaptive_raw is not None else False
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
@@ -257,7 +261,7 @@ def main(cfg: DictConfig):
     ).to(device)
     configure_partial_updates = getattr(strategy, "configure_partial_updates", None)
     if callable(configure_partial_updates):
-        configure_partial_updates(l_active=l_active)
+        configure_partial_updates(l_active=l_active, ucb_c=ucb_c, ucb_adaptive=ucb_adaptive)
     if l_active < M and enable_greedy_final:
         print("[INFO] disabling greedy_final while partial particle updates are enabled.")
         strategy.sample_greedy_agent_solutions = None
@@ -357,6 +361,8 @@ def main(cfg: DictConfig):
 
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
+    if hasattr(strategy, "print_ucb_table"):
+        strategy.print_ucb_table(instance=0)
 
     if visualization_enabled and not is_nasbench and type_problem_upper != "VIENNARNA":
         try:

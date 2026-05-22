@@ -138,6 +138,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.current_active_probs = None
         self.l_active = self.M
         self.partial_updates_enabled = False
+        self.ucb_c = None
+        self.ucb_adaptive = False
+        self.ucb_n_activations = None
+        self.ucb_step = 0
 
     def forward(self):
         """
@@ -192,6 +196,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.gradient_memory = torch.zeros_like(self.theta.detach())
         self.agent_fitness_memory = torch.zeros((self.M,), dtype=torch.float32, device=self.device)
         self.visited_mask = torch.zeros((nb_instances, self.M), dtype=torch.bool, device=self.device)
+        self.ucb_n_activations = torch.zeros((nb_instances, self.M), dtype=torch.int64, device=self.device)
+        self.ucb_step = 0
         self.current_active_indices = None
         self.current_active_mask = None
         self.current_active_probs = None
@@ -200,7 +206,38 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.latest_advantages = None
         self.probs = None
 
-    def configure_partial_updates(self, l_active=None):
+    def _ucb_select_indices(self, B, M, l_active):
+        """Sélectionne l_active particules par instance via UCB.
+
+        Score UCB_i = fitness_norm_i + c * sqrt(ln(t+1) / (n_i + 1))
+        Les particules jamais activées (n_i=0) reçoivent un score artificiel ~1e6
+        pour garantir leur exploration en priorité, avec bruit aléatoire pour varier l'ordre.
+        """
+        fitness = self.baseline.detach().float()  # (B, M)
+        f_min = fitness.min(dim=1, keepdim=True).values
+        f_max = fitness.max(dim=1, keepdim=True).values
+        fitness_norm = (fitness - f_min) / (f_max - f_min).clamp(min=1e-8)  # (B, M) ∈ [0, 1]
+
+        n = self.ucb_n_activations.float()  # (B, M)
+        log_t = math.log(self.ucb_step + 1)
+
+        if self.ucb_adaptive:
+            # c(t,b) = c_0 * std(fitness_norm_b) — par instance, ∈ [0, c_0 * 0.5]
+            c = self.ucb_c * fitness_norm.std(dim=1, keepdim=True)  # (B, 1)
+        else:
+            c = self.ucb_c
+
+        exploration = c * (log_t / (n + 1.0)).sqrt()
+
+        ucb_scores = fitness_norm + exploration
+        # Particules jamais activées : priorité absolue avec tiebreak aléatoire
+        tiebreak = torch.rand_like(ucb_scores)
+        ucb_scores = torch.where(n == 0, 1e6 + tiebreak, ucb_scores)
+
+        _, indices = ucb_scores.topk(l_active, dim=1)
+        return indices
+
+    def configure_partial_updates(self, l_active=None, ucb_c=None, ucb_adaptive=None):
         if l_active is None:
             l_active = self.M
         l_active = int(l_active)
@@ -217,6 +254,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self.agent_lambdas = []
         else:
             self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
+        if ucb_c is not None:
+            self.ucb_c = float(ucb_c)
+        if ucb_adaptive is not None:
+            self.ucb_adaptive = bool(ucb_adaptive)
 
     def _compute_probs_from_theta(self, theta):
         if self.use_categorical:
@@ -264,10 +305,18 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         λ_total = λa * active_count
 
         if self.partial_updates_enabled:
-            active_indices = torch.stack(
-                [torch.randperm(M, device=self.device)[:active_count] for _ in range(B)],
-                dim=0,
-            )
+            if self.ucb_c is not None and self.ucb_n_activations is not None:
+                active_indices = self._ucb_select_indices(B, M, active_count)
+            else:
+                active_indices = torch.stack(
+                    [torch.randperm(M, device=self.device)[:active_count] for _ in range(B)],
+                    dim=0,
+                )
+            if self.ucb_n_activations is not None:
+                delta = torch.zeros((B, M), dtype=torch.int64, device=self.device)
+                delta.scatter_(1, active_indices, 1)
+                self.ucb_n_activations += delta
+                self.ucb_step += 1
             active_mask = torch.zeros((B, M), dtype=torch.bool, device=self.device)
             active_mask.scatter_(1, active_indices, True)
             self.current_active_indices = active_indices
@@ -525,6 +574,43 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self.agent_fitness_memory.copy_(scores)
             return self.agent_fitness_memory.detach().cpu().tolist()
 
+
+    def print_ucb_table(self, instance: int = 0) -> None:
+        """Affiche un tableau UCB pour l'instance donnée (défaut : 0)."""
+        if not self.partial_updates_enabled or self.ucb_c is None:
+            print("[UCB] Non activé (sélection aléatoire).")
+            return
+        if self.ucb_n_activations is None or self.baseline is None:
+            print("[UCB] Pas encore initialisé.")
+            return
+
+        fitness = self.baseline[instance].detach().float()  # (M,)
+        n = self.ucb_n_activations[instance].float()        # (M,)
+
+        f_min, f_max = fitness.min(), fitness.max()
+        fitness_norm = (fitness - f_min) / (f_max - f_min).clamp(min=1e-8)
+
+        log_t = math.log(self.ucb_step + 1)
+        if self.ucb_adaptive:
+            c_val = float(self.ucb_c * fitness_norm.std())
+        else:
+            c_val = float(self.ucb_c)
+        exploration = c_val * (log_t / (n + 1.0)).sqrt()
+        ucb_scores = fitness_norm + exploration
+
+        header = f"{'Part':>5}  {'Visites':>7}  {'Fit/N':>8}  {'Fit_norm':>8}  {'Explor':>8}  {'UCB':>8}"
+        sep = "-" * len(header)
+        c_label = "adaptive" if self.ucb_adaptive else f"{c_val:.3f}"
+        print(f"\n[UCB Table — instance {instance} | step={self.ucb_step} | c={c_label}]")
+        print(header)
+        print(sep)
+        order = n.long().argsort(descending=True)
+        for i in order.tolist():
+            print(
+                f"{i:>5}  {int(n[i]):>7}  {fitness[i] / self.N:>8.4f}  "
+                f"{fitness_norm[i]:>8.4f}  {exploration[i]:>8.4f}  {ucb_scores[i]:>8.4f}"
+            )
+        print(sep)
 
     def toString(self):
         return f"MultiAgent_Collaborative_M{self.M}_lambdaPerAgent{self.lambda_per_agent}"
