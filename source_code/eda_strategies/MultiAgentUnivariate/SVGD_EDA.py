@@ -47,6 +47,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         is_nk3=False,
         adaptive_lambda=False,
         lr_lambda=0.1,
+        lambda_range=0.6,
     ):
         self.M = M
         self.N = N
@@ -119,10 +120,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.lambda_per_agent_init = self.lambda_per_agent
         self.adaptive_lambda = bool(adaptive_lambda)
         if self.adaptive_lambda:
-            self.lr_lambda = float(lr_lambda)
-            self.delta_base = round(self.lr_lambda * self.lambda_per_agent_init)
-            self.lambda_min_per_agent = max(1, round(0.4 * self.lambda_per_agent_init))
-            self.lambda_max_per_agent = 2 * self.lambda_per_agent_init - self.lambda_min_per_agent
+            self.lr_lambda    = float(lr_lambda)
+            self.lambda_range = float(lambda_range)
+            self.delta_base   = round(self.lr_lambda * self.lambda_per_agent_init)
+            self.lambda_min_per_agent = max(1, round((1 - self.lambda_range) * self.lambda_per_agent_init))
+            self.lambda_max_per_agent = round((1 + self.lambda_range) * self.lambda_per_agent_init)
         self.agents = []
 
         kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)

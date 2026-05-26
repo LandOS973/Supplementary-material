@@ -66,6 +66,15 @@ def main(cfg: DictConfig):
         except Exception:
             return None
 
+    def _get(*keys, default=None):
+        for key in keys:
+            v = agent_val(key)
+            if v is None:
+                v = cfg.get(key)
+            if v is not None:
+                return v
+        return default
+
     type_problem = cfg.problem.name if "problem" in cfg and "name" in cfg.problem else cfg.get("type_problem", "QUBO")
     type_problem = str(type_problem)
     type_problem_upper = type_problem.upper()
@@ -84,65 +93,45 @@ def main(cfg: DictConfig):
     nb_restarts = int(cfg.nb_restarts)
     nb_instances_test = int(cfg.nb_instances_test)
     seed = int(cfg.seed)
-    lambda_ = int(agent_val("lambda") or cfg.get("lambda") or cfg.get("lambda_") or 10)
+    lambda_ = int(_get("lambda", "lambda_", default=10))
     verbose = bool(cfg.get("verbose", True))
     budget = int(cfg.get("budget", 10000))
     visualization_enabled = bool(cfg.get("visualization", True))
-    advantage_cfg = agent_val("advantage") or cfg.get("advantage") or "baseline"
+    advantage_cfg = _get("advantage", default="baseline")
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
-    no_interact = bool(agent_val("no_interact") or cfg.get("no_interact") or False)
-    no_repulsion = bool(agent_val("no_repulsion") or cfg.get("no_repulsion") or False)
-    decay_enabled = bool(agent_val("decay") or cfg.get("decay") or False)
-    enable_greedy_final = agent_val("enable_greedy_final")
-    if enable_greedy_final is None:
-        enable_greedy_final = cfg.get("enable_greedy_final", True)
-    enable_greedy_final = bool(enable_greedy_final)
-    M = int(agent_val("M") or cfg.get("M") or 1)
+    no_interact = bool(_get("no_interact", default=False))
+    no_repulsion = bool(_get("no_repulsion", default=False))
+    decay_enabled = bool(_get("decay", default=False))
+    enable_greedy_final = bool(_get("enable_greedy_final", default=True))
+    M = int(_get("M", default=1))
 
-    kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
+    kernel_name = str(_get("kernel", default="hk")).lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    prob_eps_override = agent_val("prob_eps_clamp") or cfg.get("prob_eps_clamp")
+    prob_eps_override = _get("prob_eps_clamp")
     if prob_eps_override is not None:
         kernel_cfg["prob_eps_clamp"] = float(prob_eps_override)
-    natural_grad_override = agent_val("natural_grad") or cfg.get("natural_grad")
+    natural_grad_override = _get("natural_grad")
     if natural_grad_override is not None:
         kernel_cfg["natural_grad"] = bool(natural_grad_override)
-    bandwith_override = agent_val("bandwith_kernel") or cfg.get("bandwith_kernel")
+    bandwith_override = _get("bandwith_kernel")
     if bandwith_override is not None:
         kernel_cfg["bandwith_kernel"] = bandwith_override
 
     kernel_lr = kernel_cfg.get("epsilon_svgd")
     kernel_gamma = kernel_cfg.get("gamma")
-    epsilon_svgd = float(
-        agent_val("epsilon_svgd")
-        or cfg.get("epsilon_svgd")
-        or kernel_lr
-        or 0.5
-    )
-    svgd_gamma = float(
-        agent_val("gamma")
-        or cfg.get("gamma")
-        or kernel_gamma
-        or 10.0
-    )
+    _eps = _get("epsilon_svgd")
+    epsilon_svgd = float(_eps if _eps is not None else (kernel_lr if kernel_lr is not None else 0.5))
+    _gamma = _get("gamma")
+    svgd_gamma = float(_gamma if _gamma is not None else (kernel_gamma if kernel_gamma is not None else 10.0))
 
     decay_default_start_ratio = 0.0 if decay_enabled else 0.8
     decay_default_min_factor = 0.05 if decay_enabled else 0.1
-    decay_start_ratio = float(
-        agent_val("decay_start_ratio")
-        or cfg.get("decay_start_ratio")
-        or decay_default_start_ratio
-    )
-    decay_min_factor = float(
-        agent_val("min_factor")
-        or agent_val("decay_min_factor")
-        or cfg.get("min_factor")
-        or cfg.get("decay_min_factor")
-        or decay_default_min_factor
-    )
-    adaptive_lambda = bool(agent_val("adaptive_lambda") or cfg.get("adaptive_lambda") or False)
-    lr_lambda = float(agent_val("lr_lambda") or cfg.get("lr_lambda") or 0.1)
+    decay_start_ratio = float(_get("decay_start_ratio", default=decay_default_start_ratio))
+    decay_min_factor = float(_get("min_factor", "decay_min_factor", default=decay_default_min_factor))
+    adaptive_lambda = bool(_get("adaptive_lambda", default=False))
+    lr_lambda = float(_get("lr_lambda", default=0.1))
+    lambda_range = float(_get("lambda_range", default=0.6))
 
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
@@ -254,6 +243,7 @@ def main(cfg: DictConfig):
         is_nk3=(type_problem_upper == "NK3"),
         adaptive_lambda=adaptive_lambda,
         lr_lambda=lr_lambda,
+        lambda_range=lambda_range,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None

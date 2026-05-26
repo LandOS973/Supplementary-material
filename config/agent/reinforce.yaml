@@ -10,5 +10,6 @@ enable_greedy_final: false
 decay_start_ratio: 0.03
 min_factor: 0.1
 decay: true
-adaptive_lambda: false
+adaptive_lambda: true
 lr_lambda: 0.25
+lambda_range: 0.3

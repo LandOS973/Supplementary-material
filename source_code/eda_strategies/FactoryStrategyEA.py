@@ -32,6 +32,7 @@ class FactoryStrategyEA:
         is_nk3=False,
         adaptive_lambda=False,
         lr_lambda=0.1,
+        lambda_range=0.6,
     ):
         match typeStrategy:
             case "UMDA":
@@ -59,6 +60,7 @@ class FactoryStrategyEA:
                     is_nk3=is_nk3,
                     adaptive_lambda=adaptive_lambda,
                     lr_lambda=lr_lambda,
+                    lambda_range=lambda_range,
                 )
             case _:
                 raise ValueError(f"Unknown strategy type: {typeStrategy}")
