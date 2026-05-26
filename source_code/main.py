@@ -141,6 +141,8 @@ def main(cfg: DictConfig):
         or cfg.get("decay_min_factor")
         or decay_default_min_factor
     )
+    adaptive_lambda = bool(agent_val("adaptive_lambda") or cfg.get("adaptive_lambda") or False)
+    lr_lambda = float(agent_val("lr_lambda") or cfg.get("lr_lambda") or 0.1)
 
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
@@ -250,6 +252,8 @@ def main(cfg: DictConfig):
         no_interact=no_interact,
         no_repulsion=no_repulsion,
         is_nk3=(type_problem_upper == "NK3"),
+        adaptive_lambda=adaptive_lambda,
+        lr_lambda=lr_lambda,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None
@@ -343,6 +347,36 @@ def main(cfg: DictConfig):
 
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
+
+    if adaptive_lambda and strategy.M > 1 and strategy.baseline.numel() > 0:
+        import torch as _torch
+        # Instance 0 : scores et lambdas de la première instance
+        scores_i0 = strategy.baseline.detach()[0] / strategy.N            # (M,) normalisé
+        if hasattr(strategy, "agent_lambdas_bi"):
+            lambdas_i0 = strategy.agent_lambdas_bi[0].tolist()
+        else:
+            lambdas_i0 = list(strategy.agent_lambdas)
+        order = sorted(
+            range(strategy.M),
+            key=lambda m: float(scores_i0[m].item()),
+            reverse=True,
+        )
+        col_w = [6, 8, 8, 14]
+        header = f"{'Rang':>{col_w[0]}} {'Agent':>{col_w[1]}} {'Lambda':>{col_w[2]}} {'Score moyen':>{col_w[3]}}"
+        sep    = "-" * (sum(col_w) + len(col_w) - 1)
+        print("\n=== Classement final des particules (instance 0) ===")
+        print(f"  (tri : score décroissant)")
+        print(header)
+        print(sep)
+        for rank, agent_idx in enumerate(order, start=1):
+            score = float(scores_i0[agent_idx].item())
+            lam   = lambdas_i0[agent_idx]
+            print(f"{rank:>{col_w[0]}} {agent_idx:>{col_w[1]}} {lam:>{col_w[2]}} {score:>{col_w[3]}.4f}")
+        print(sep)
+        print(f"  λ_init={strategy.lambda_per_agent_init}  "
+              f"λ_min={strategy.lambda_min_per_agent}  "
+              f"λ_max={strategy.lambda_max_per_agent}  "
+              f"δ_base={strategy.delta_base}")
 
     if not is_nasbench and type_problem_upper != "VIENNARNA":
         try:

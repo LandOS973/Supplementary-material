@@ -69,6 +69,7 @@ def get_Score_trajectoriesQUBO_cuda(
     score_p95_history = []
     score_p98_history = []
     agent_fitness_history = []
+    lambda_history = []
     hamming_pairwise_history = []
     js_pairwise_history = []
     l2_pairwise_history = []
@@ -244,6 +245,11 @@ def get_Score_trajectoriesQUBO_cuda(
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
+            if getattr(strategy, "adaptive_lambda", False):
+                if hasattr(strategy, "agent_lambdas_bi"):
+                    lambda_history.append(strategy.agent_lambdas_bi.float().mean(dim=0).tolist())
+                else:
+                    lambda_history.append(list(strategy.agent_lambdas))
             kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
             kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
             if kernel_stats:
@@ -371,6 +377,7 @@ def get_Score_trajectoriesQUBO_cuda(
             entropy_agent_history,
             avg_kernel_value_history,
             avg_kernel_grad_history,
+            lambda_history=lambda_history or None,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

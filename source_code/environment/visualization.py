@@ -44,6 +44,7 @@ def render_agent_dashboard(
     sample_entropy_agent_history=None,
     sample_hamming_history=None,
     sample_hamming_pairwise_history=None,
+    lambda_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -187,6 +188,8 @@ def render_agent_dashboard(
 
         fitness_available = bool(agent_fitness_history and num_agents > 0)
         show_fitness_var = tk.IntVar(value=1 if fitness_available else 0)
+        lambda_available = bool(lambda_history and num_agents > 0)
+        show_lambda_var = tk.IntVar(value=1 if lambda_available else 0)
 
         theta_available = bool(solutions_history and solutions_history.get("values"))
         theta_var = tk.IntVar(value=1 if theta_available else 0)
@@ -236,18 +239,23 @@ def render_agent_dashboard(
 
         fitness_ax = None
         fitness_lines = []
+        lambda_ax = None
+        lambda_lines = []
 
-        def draw_fitness_axis(total_rows):
+        def is_lambda_enabled():
+            return lambda_available and show_lambda_var.get() == 1
+
+        def draw_fitness_axis(total_rows, row_idx):
             if not is_fitness_enabled():
                 return None, []
-            ax = fig.add_subplot(total_rows, 1, total_rows)
+            ax = fig.add_subplot(total_rows, 1, row_idx)
             ax.set_title("Agent Fitness Evolution")
             ax.set_ylabel("Fitness")
             if iterations:
                 lines = []
                 for agent_idx in range(num_agents):
                     series = [epoch[agent_idx] for epoch in agent_fitness_history]
-                    (line,) = ax.plot(iterations, series, label=f"Agent {agent_idx}")
+                    (line,) = ax.plot(iterations, series, label=f"Agent {agent_idx}", color=color_map(agent_idx % color_map.N))
                     lines.append((agent_idx, line))
             else:
                 lines = []
@@ -255,13 +263,34 @@ def render_agent_dashboard(
             ax.legend()
             return ax, lines
 
+        def draw_lambda_axis(total_rows, row_idx):
+            if not is_lambda_enabled():
+                return None, []
+            ax = fig.add_subplot(total_rows, 1, row_idx)
+            ax.set_title("Lambda par agent")
+            ax.set_ylabel("λ")
+            if iterations:
+                steps = min(len(iterations), len(lambda_history))
+                x_axis = iterations[:steps]
+                lines = []
+                for agent_idx in range(num_agents):
+                    series = [lambda_history[t][agent_idx] for t in range(steps)]
+                    (line,) = ax.plot(x_axis, series, label=f"Agent {agent_idx}", color=color_map(agent_idx % color_map.N))
+                    lines.append((agent_idx, line))
+            else:
+                lines = []
+            ax.grid(True, linestyle="--", alpha=0.4)
+            ax.legend(fontsize="small", ncol=max(1, num_agents // 4))
+            return ax, lines
+
         def draw_metrics():
-            nonlocal fitness_ax, fitness_lines
+            nonlocal fitness_ax, fitness_lines, lambda_ax, lambda_lines
             fig.clear()
             plot_handles.clear()
             overlay_lines.clear()
             total_metric_rows = len(selected_metrics)
-            total_rows = total_metric_rows + (1 if is_fitness_enabled() else 0)
+            extra_rows = (1 if is_fitness_enabled() else 0) + (1 if is_lambda_enabled() else 0)
+            total_rows = total_metric_rows + extra_rows
             if total_rows == 0:
                 fig.text(0.5, 0.5, "No metrics to display", ha="center", va="center")
                 canvas.draw_idle()
@@ -281,9 +310,12 @@ def render_agent_dashboard(
                 plot_handles[metric_name] = dict(axis=ax, avg_line=avg_line)
                 overlay_lines[metric_name] = []
 
-            nonlocal fitness_ax, fitness_lines
-            fitness_ax, fitness_lines = draw_fitness_axis(total_rows)
-            last_axis = fitness_ax if fitness_ax is not None else (
+            fitness_ax, fitness_lines = draw_fitness_axis(total_rows, row)
+            if is_fitness_enabled():
+                row += 1
+            lambda_ax, lambda_lines = draw_lambda_axis(total_rows, row)
+
+            last_axis = lambda_ax or fitness_ax or (
                 plot_handles[selected_metrics[-1]]["axis"] if selected_metrics else None
             )
             if last_axis is not None:
@@ -398,6 +430,22 @@ def render_agent_dashboard(
                     if leg:
                         leg.remove()
 
+            if lambda_lines and lambda_ax:
+                if show_average or anchor_idx is None or not is_lambda_enabled():
+                    for _, line in lambda_lines:
+                        line.set_visible(True)
+                else:
+                    for idx, line in lambda_lines:
+                        line.set_visible(idx == anchor_idx)
+                visible = [(line, line.get_label()) for _, line in lambda_lines if line.get_visible()]
+                if visible:
+                    handles_vis, labels_vis = zip(*visible)
+                    lambda_ax.legend(handles_vis, labels_vis, loc="upper right")
+                else:
+                    leg = lambda_ax.get_legend()
+                    if leg:
+                        leg.remove()
+
             canvas.draw_idle()
 
         def _toggle_theta_panel():
@@ -451,6 +499,13 @@ def render_agent_dashboard(
                 options_frame,
                 text="Show Fitness",
                 variable=show_fitness_var,
+                command=draw_metrics,
+            ).pack(side="left", padx=4)
+        if lambda_available:
+            tk.Checkbutton(
+                options_frame,
+                text="Show Lambda",
+                variable=show_lambda_var,
                 command=draw_metrics,
             ).pack(side="left", padx=4)
         if theta_panel is not None:

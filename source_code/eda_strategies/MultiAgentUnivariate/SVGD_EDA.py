@@ -45,6 +45,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         advantage_cfg=None,
         kernel_config=None,
         is_nk3=False,
+        adaptive_lambda=False,
+        lr_lambda=0.1,
     ):
         self.M = M
         self.N = N
@@ -114,6 +116,13 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self._last_phi_stats = None
 
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
+        self.lambda_per_agent_init = self.lambda_per_agent
+        self.adaptive_lambda = bool(adaptive_lambda)
+        if self.adaptive_lambda:
+            self.lr_lambda = float(lr_lambda)
+            self.delta_base = round(self.lr_lambda * self.lambda_per_agent_init)
+            self.lambda_min_per_agent = max(1, round(0.4 * self.lambda_per_agent_init))
+            self.lambda_max_per_agent = 2 * self.lambda_per_agent_init - self.lambda_min_per_agent
         self.agents = []
 
         kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
@@ -178,9 +187,16 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         self.baseline.resize_(nb_instances, self.M).zero_()
 
+        if self.adaptive_lambda:
+            self.agent_lambdas = [self.lambda_per_agent_init] * self.M
+            self.agent_lambdas_bi = torch.full(
+                (nb_instances, self.M), self.lambda_per_agent_init, dtype=torch.int32, device=self.device
+            )
+
         self.theta_history = []
         self.kernel_metric_history = []
         self.last_theta_grad = None
+        self.latest_advantages = None
         if self.enable_visualization:
             self._record_theta()
         self.latest_advantages = None
@@ -188,32 +204,42 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
     def sample_solutions(self):
         """
-        Génère (nb_instances, λ, N, 1) en une seule fois.
+        Génère (nb_instances, λ_total, N, 1).
 
-        Chaque agent possède son propre budget λ_agent (= lambda_per_agent),
-        on échantillonne (B, M, λ_agent, N), puis on aplati en (B, λ_total, N, 1)
-        avec λ_total = M * λ_agent.
+        Fast path (lambdas uniformes) : opération matricielle unique (B, M, λa, N).
+        Slow path (lambdas adaptés) : boucle par agent, concaténation finale.
         """
         B, M, N = self.nb_instances, self.M, self.N
-        λa = self.lambda_per_agent
         λ_total = self.total_lambda
 
         self.probs = self.forward()
 
-        if self.use_categorical:
-            probs = self.probs                
-            D = probs.size(-1)
-            flat = probs.reshape(-1, D)              
-            samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)               
-            samples_agents = samples_flat.view(B, M, N, λa).permute(0, 1, 3, 2)                 
-            samples = samples_agents.reshape(B, λ_total, N).unsqueeze(-1).float()
-            return samples
+        if len(set(self.agent_lambdas)) == 1:
+            λa = self.agent_lambdas[0]
+            if self.use_categorical:
+                D = self.probs.size(-1)
+                flat = self.probs.reshape(-1, D)
+                samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)
+                samples_agents = samples_flat.view(B, M, N, λa).permute(0, 1, 3, 2)
+                return samples_agents.reshape(B, λ_total, N).unsqueeze(-1).float()
+            u = torch.rand((B, M, λa, N), device=self.device)
+            samples_agents = (u < self.probs.unsqueeze(2)).float()
+            return samples_agents.view(B, λ_total, N).unsqueeze(-1)
 
-        u = torch.rand((B, M, λa, N), device=self.device)
-        samples_agents = (u < self.probs.unsqueeze(2)).float()                 
-
-        samples = samples_agents.view(B, λ_total, N).unsqueeze(-1)
-        return samples
+        # Slow path : lambdas hétérogènes
+        samples_list = []
+        for m, lam_m in enumerate(self.agent_lambdas):
+            probs_m = self.probs[:, m]  # (B, N) ou (B, N, D)
+            if self.use_categorical:
+                D = probs_m.size(-1)
+                flat = probs_m.reshape(B * N, D)
+                idx = torch.multinomial(flat, num_samples=lam_m, replacement=True)
+                s_m = idx.view(B, N, lam_m).permute(0, 2, 1).float()  # (B, lam_m, N)
+            else:
+                u = torch.rand((B, lam_m, N), device=self.device)
+                s_m = (u < probs_m.unsqueeze(1)).float()               # (B, lam_m, N)
+            samples_list.append(s_m)
+        return torch.cat(samples_list, dim=1).unsqueeze(-1)             # (B, λ_total, N, 1)
 
     def sample_greedy_agent_solutions(self):
         """
@@ -236,6 +262,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self._debug_step += 1
         total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
         self._apply_svgd()
+        self.adapt_lambdas()
         if self.enable_visualization:
             self._record_theta()
         if self._should_debug():
@@ -245,12 +272,42 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
     def _updateDistribution_REINFORCE(self, solutionList, scoreList):
         B, M, N = self.nb_instances, self.M, self.N
-        λa = self.lambda_per_agent
         BM = B * M
-        indivduals = solutionList.view(BM, λa, N)
-        fitness = scoreList.view(BM, λa)
-        baseline = self.baseline.view(BM)
+        mask = None
 
+        use_per_instance = (
+            self.adaptive_lambda
+            and hasattr(self, "agent_lambdas_bi")
+            and not (self.agent_lambdas_bi == self.lambda_per_agent_init).all()
+        )
+
+        if not use_per_instance:
+            # Fast path : lambdas uniformes — reshape direct
+            λa = self.lambda_per_agent_init
+            indivduals = solutionList.view(BM, λa, N)
+            fitness = scoreList.view(BM, λa)
+        else:
+            # Slow path : masque par instance, λa constant = lambda_per_agent_init
+            # On génère toujours lambda_per_agent_init solutions par agent ;
+            # seul le masque REINFORCE varie par instance → zéro overhead d'évaluation.
+            λa = self.lambda_per_agent_init
+            indivduals = solutionList.view(BM, λa, N)
+            # Masque vectorisé : mask[b*M+m, i] = 1 si i < agent_lambdas_bi[b,m]
+            lambdas_bm = self.agent_lambdas_bi.view(BM).to(self.device)   # (BM,)
+            arange     = torch.arange(λa, device=self.device)             # (λa,)
+            mask       = (arange.unsqueeze(0) < lambdas_bm.unsqueeze(1)).float()  # (BM, λa)
+            # Pad les slots invalides avec le score moyen des slots valides
+            # (pour que la stratégie d'avantage ait des valeurs neutres hors masque)
+            fitness_raw = scoreList.view(BM, λa)
+            valid_cnt   = mask.sum(dim=1).clamp(min=1)                    # (BM,)
+            mean_fit    = (fitness_raw * mask).sum(dim=1) / valid_cnt     # (BM,)
+            fitness     = torch.where(
+                mask.bool(),
+                fitness_raw,
+                mean_fit.unsqueeze(1).expand_as(fitness_raw),
+            )
+
+        baseline = self.baseline.view(BM)
         if self.baseline.numel() == 0:
             baseline = torch.zeros(BM, device=self.device)
 
@@ -259,22 +316,22 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 self.forward()
             D = self.probs.size(-1)
             theta = self.theta.view(BM, N, D)
-            all_Pi_Theta = self.probs.view(BM, N, D)              
-            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)                  
+            all_Pi_Theta = self.probs.view(BM, N, D)
+            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)
             log_probs = torch.log(all_Pi_Theta_expanded + 1e-10)
-            indices = indivduals.long().unsqueeze(-1)                  
-            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)            
+            indices = indivduals.long().unsqueeze(-1)
+            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)
         else:
             theta = self.theta.view(BM, N)
-            all_Pi_Theta = self.probs.view(BM, N)           
-            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)               
-
+            all_Pi_Theta = self.probs.view(BM, N)
+            all_Pi_Theta_expanded = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)
             Pi_selected = torch.where(
                 indivduals == 1.0,
                 all_Pi_Theta_expanded,
                 1.0 - all_Pi_Theta_expanded,
-            )               
-            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)            
+            )
+            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)
+
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
             baseline=baseline,
@@ -283,9 +340,16 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             probs=all_Pi_Theta_expanded,
             nb_instances=B,
             num_agents=M,
-        )            
-        loss_per_instance = torch.mean(advantages * log_Pi, dim=1)         
+        )
+
+        if mask is not None:
+            valid_counts = mask.sum(dim=1).clamp(min=1)
+            loss_per_instance = (advantages * log_Pi * mask).sum(dim=1) / valid_counts
+        else:
+            loss_per_instance = torch.mean(advantages * log_Pi, dim=1)
+
         loss = loss_per_instance.sum()
+
         if self.debug_svgd:
             with torch.no_grad():
                 self._last_debug_stats = {
@@ -309,10 +373,13 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                     "adv_nan": bool(torch.isnan(advantages).any().item()),
                     "prob_nan": bool(torch.isnan(all_Pi_Theta).any().item()),
                 }
+
         with torch.no_grad():
-            reshaped_adv = advantages.detach().view(B, M, λa)
-            per_instance = reshaped_adv.view(B, self.lambda_)
-            self.latest_advantages = per_instance.cpu()
+            if mask is not None:
+                # Per-instance : garder le tenseur complet (B*M, λa), masque inclus
+                self.latest_advantages = advantages.detach().cpu()
+            else:
+                self.latest_advantages = advantages.detach().view(B, M, λa).view(B, self.lambda_).cpu()
 
         grad_theta, = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
         self.last_theta_grad = grad_theta.detach().clone()
@@ -321,7 +388,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 self._last_debug_stats["theta_grad_norm"] = float(grad_theta.norm().item())
 
         with torch.no_grad():
-            baseline_new = fitness.mean(dim=1)         
+            if mask is not None:
+                valid_counts_bm = mask.sum(dim=1).clamp(min=1)
+                baseline_new = (fitness * mask).sum(dim=1) / valid_counts_bm
+            else:
+                baseline_new = fitness.mean(dim=1)
             self.baseline = baseline_new.view(B, M)
 
         return loss_per_instance.mean()
@@ -331,9 +402,54 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             return None
         return self.latest_advantages.detach().cpu()
 
+    def adapt_lambdas(self):
+        """
+        Redistribution du budget λ par instance, convergence vers une cible linéaire.
+
+        Les cibles sont linéairement espacées de lambda_max (rang 1) à lambda_min (rang M).
+        Pour chaque paire (rang k ↔ rang M-k), on transfère au plus delta_base unités,
+        limité par la distance restante à la cible de chaque agent.
+        Le total Σ_m agent_lambdas_bi[b,m] reste constant par instance.
+        """
+        if not self.adaptive_lambda or self.baseline.numel() == 0:
+            return
+        if not hasattr(self, "agent_lambdas_bi"):
+            return
+
+        B, M = self.baseline.shape
+        lam_max = self.lambda_max_per_agent
+        lam_min = self.lambda_min_per_agent
+
+        # Cibles linéaires : rang 0 (meilleur) → lam_max, rang M-1 (pire) → lam_min
+        targets = [
+            round(lam_min + (lam_max - lam_min) * (M - 1 - k) / max(M - 1, 1))
+            for k in range(M)
+        ]
+
+        for b in range(B):
+            scores = self.baseline[b].detach()
+            sorted_indices = torch.argsort(scores, descending=True).tolist()
+
+            for k in range(M // 2):
+                winner = sorted_indices[k]
+                loser  = sorted_indices[M - 1 - k]
+
+                if scores[winner].item() <= scores[loser].item():
+                    continue
+
+                needed_gain = max(0, targets[k]       - int(self.agent_lambdas_bi[b, winner].item()))
+                needed_give = max(0, int(self.agent_lambdas_bi[b, loser].item()) - targets[M - 1 - k])
+
+                transfer = min(self.delta_base, needed_gain, needed_give)
+                if transfer > 0:
+                    self.agent_lambdas_bi[b, winner] += transfer
+                    self.agent_lambdas_bi[b, loser]  -= transfer
 
     def toString(self):
-        return f"MultiAgent_Collaborative_M{self.M}_lambdaPerAgent{self.lambda_per_agent}"
+        base = f"MultiAgent_Collaborative_M{self.M}_lambdaPerAgent{self.lambda_per_agent}"
+        if self.adaptive_lambda:
+            return base + f"_adaptiveLambda_lr{self.lr_lambda}"
+        return base
 
     def _apply_svgd(self):
         """

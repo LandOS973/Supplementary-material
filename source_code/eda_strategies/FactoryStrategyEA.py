@@ -30,6 +30,8 @@ class FactoryStrategyEA:
         no_interact=False,
         no_repulsion=False,
         is_nk3=False,
+        adaptive_lambda=False,
+        lr_lambda=0.1,
     ):
         match typeStrategy:
             case "UMDA":
@@ -55,6 +57,8 @@ class FactoryStrategyEA:
                     no_interact=no_interact,
                     no_repulsion=no_repulsion,
                     is_nk3=is_nk3,
+                    adaptive_lambda=adaptive_lambda,
+                    lr_lambda=lr_lambda,
                 )
             case _:
                 raise ValueError(f"Unknown strategy type: {typeStrategy}")
