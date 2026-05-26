@@ -349,34 +349,31 @@ def main(cfg: DictConfig):
     print("average_test_score:", avg)
 
     if adaptive_lambda and strategy.M > 1 and strategy.baseline.numel() > 0:
-        import torch as _torch
-        # Instance 0 : scores et lambdas de la première instance
-        scores_i0 = strategy.baseline.detach()[0] / strategy.N            # (M,) normalisé
-        if hasattr(strategy, "agent_lambdas_bi"):
-            lambdas_i0 = strategy.agent_lambdas_bi[0].tolist()
-        else:
-            lambdas_i0 = list(strategy.agent_lambdas)
-        order = sorted(
-            range(strategy.M),
-            key=lambda m: float(scores_i0[m].item()),
-            reverse=True,
-        )
-        col_w = [6, 8, 8, 14]
-        header = f"{'Rang':>{col_w[0]}} {'Agent':>{col_w[1]}} {'Lambda':>{col_w[2]}} {'Score moyen':>{col_w[3]}}"
-        sep    = "-" * (sum(col_w) + len(col_w) - 1)
-        print("\n=== Classement final des particules (instance 0) ===")
-        print(f"  (tri : score décroissant)")
-        print(header)
-        print(sep)
-        for rank, agent_idx in enumerate(order, start=1):
-            score = float(scores_i0[agent_idx].item())
-            lam   = lambdas_i0[agent_idx]
-            print(f"{rank:>{col_w[0]}} {agent_idx:>{col_w[1]}} {lam:>{col_w[2]}} {score:>{col_w[3]}.4f}")
-        print(sep)
-        print(f"  λ_init={strategy.lambda_per_agent_init}  "
+        B_total  = strategy.baseline.shape[0]
+        nb_print = min(5, B_total)
+        col_w    = [6, 8, 8, 14]
+        header   = f"{'Rang':>{col_w[0]}} {'Agent':>{col_w[1]}} {'Lambda':>{col_w[2]}} {'Score moyen':>{col_w[3]}}"
+        sep      = "-" * (sum(col_w) + len(col_w) - 1)
+        print(f"\n=== Classement final des particules "
+              f"(λ_init={strategy.lambda_per_agent_init}  "
               f"λ_min={strategy.lambda_min_per_agent}  "
               f"λ_max={strategy.lambda_max_per_agent}  "
-              f"δ_base={strategy.delta_base}")
+              f"δ_base={strategy.delta_base}) ===")
+        for i in range(nb_print):
+            scores_i  = strategy.baseline.detach()[i] / strategy.N
+            lambdas_i = (strategy.agent_lambdas_bi[i].tolist()
+                         if hasattr(strategy, "agent_lambdas_bi")
+                         else list(strategy.agent_lambdas))
+            order = sorted(range(strategy.M),
+                           key=lambda m: float(scores_i[m].item()),
+                           reverse=True)
+            print(f"\n  Instance {i}  (tri : score décroissant)")
+            print(f"  {header}")
+            print(f"  {sep}")
+            for rank, agent_idx in enumerate(order, start=1):
+                score = float(scores_i[agent_idx].item())
+                lam   = lambdas_i[agent_idx]
+                print(f"  {rank:>{col_w[0]}} {agent_idx:>{col_w[1]}} {lam:>{col_w[2]}} {score:>{col_w[3]}.4f}")
 
     if not is_nasbench and type_problem_upper != "VIENNARNA":
         try:

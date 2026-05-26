@@ -206,14 +206,42 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         """
         Génère (nb_instances, λ_total, N, 1).
 
-        Fast path (lambdas uniformes) : opération matricielle unique (B, M, λa, N).
-        Slow path (lambdas adaptés) : boucle par agent, concaténation finale.
+        Adaptive : toujours lambda_max_per_agent solutions par agent → les gagnants
+                   utilisent toutes leurs solutions pour le gradient.
+        Non-adaptive fast path : opération matricielle unique (B, M, λa, N).
+        Non-adaptive slow path : boucle par agent (lambdas hétérogènes).
         """
         B, M, N = self.nb_instances, self.M, self.N
-        λ_total = self.total_lambda
 
         self.probs = self.forward()
 
+        if self.adaptive_lambda and hasattr(self, "agent_lambdas_bi"):
+            # Génère exactement agent_lambdas_bi[b,m] solutions pour chaque (instance, agent).
+            # Total par instance = M × lambda_per_agent_init (conservation de la somme).
+            # Boucle sur (b, m) : overhead Python acceptable, pas d'éval gaspillée.
+            output = torch.zeros(B, self.total_lambda, N, device=self.device)
+            cum = torch.zeros(B, dtype=torch.int32)
+            for m in range(M):
+                for b in range(B):
+                    lam_bm  = int(self.agent_lambdas_bi[b, m].item())
+                    off_bm  = int(cum[b].item())
+                    probs_bm = self.probs[b, m]                                # (N,)
+                    if self.use_categorical:
+                        D = probs_bm.size(-1)
+                        idx = torch.multinomial(probs_bm.unsqueeze(0).expand(N, -1)
+                                                if probs_bm.dim() == 1 else probs_bm,
+                                                num_samples=lam_bm, replacement=True)
+                        # Simplifié : arrondi depuis probs pour catégoriel
+                        flat = probs_bm.reshape(N, -1)
+                        idx  = torch.multinomial(flat, num_samples=lam_bm, replacement=True)
+                        output[b, off_bm:off_bm + lam_bm] = idx.t().float()
+                    else:
+                        u = torch.rand(lam_bm, N, device=self.device)
+                        output[b, off_bm:off_bm + lam_bm] = (u < probs_bm.unsqueeze(0)).float()
+                    cum[b] += lam_bm
+            return output.unsqueeze(-1)
+
+        # Non-adaptive : fast path si lambdas uniformes
         if len(set(self.agent_lambdas)) == 1:
             λa = self.agent_lambdas[0]
             if self.use_categorical:
@@ -221,25 +249,25 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 flat = self.probs.reshape(-1, D)
                 samples_flat = torch.multinomial(flat, num_samples=λa, replacement=True)
                 samples_agents = samples_flat.view(B, M, N, λa).permute(0, 1, 3, 2)
-                return samples_agents.reshape(B, λ_total, N).unsqueeze(-1).float()
+                return samples_agents.reshape(B, self.total_lambda, N).unsqueeze(-1).float()
             u = torch.rand((B, M, λa, N), device=self.device)
             samples_agents = (u < self.probs.unsqueeze(2)).float()
-            return samples_agents.view(B, λ_total, N).unsqueeze(-1)
+            return samples_agents.view(B, self.total_lambda, N).unsqueeze(-1)
 
-        # Slow path : lambdas hétérogènes
+        # Non-adaptive slow path : lambdas hétérogènes
         samples_list = []
         for m, lam_m in enumerate(self.agent_lambdas):
-            probs_m = self.probs[:, m]  # (B, N) ou (B, N, D)
+            probs_m = self.probs[:, m]
             if self.use_categorical:
                 D = probs_m.size(-1)
                 flat = probs_m.reshape(B * N, D)
                 idx = torch.multinomial(flat, num_samples=lam_m, replacement=True)
-                s_m = idx.view(B, N, lam_m).permute(0, 2, 1).float()  # (B, lam_m, N)
+                s_m = idx.view(B, N, lam_m).permute(0, 2, 1).float()
             else:
                 u = torch.rand((B, lam_m, N), device=self.device)
-                s_m = (u < probs_m.unsqueeze(1)).float()               # (B, lam_m, N)
+                s_m = (u < probs_m.unsqueeze(1)).float()
             samples_list.append(s_m)
-        return torch.cat(samples_list, dim=1).unsqueeze(-1)             # (B, λ_total, N, 1)
+        return torch.cat(samples_list, dim=1).unsqueeze(-1)
 
     def sample_greedy_agent_solutions(self):
         """
@@ -275,37 +303,49 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         BM = B * M
         mask = None
 
-        use_per_instance = (
-            self.adaptive_lambda
-            and hasattr(self, "agent_lambdas_bi")
-            and not (self.agent_lambdas_bi == self.lambda_per_agent_init).all()
-        )
-
-        if not use_per_instance:
-            # Fast path : lambdas uniformes — reshape direct
-            λa = self.lambda_per_agent_init
+        if self.adaptive_lambda and hasattr(self, "agent_lambdas_bi"):
+            # Chemin adaptatif : chaque (b, m) a exactement agent_lambdas_bi[b,m] solutions
+            # placées à une position variable dans solutionList.
+            # On reconstruit un tenseur paddé (BM, λa_max, N) + masque pour REINFORCE.
+            λa = self.lambda_max_per_agent
+            indivduals = solutionList.new_zeros(BM, λa, N)
+            fitness    = torch.zeros(BM, λa, device=self.device)
+            mask       = torch.zeros(BM, λa, device=self.device)
+            cum = torch.zeros(B, dtype=torch.int32)
+            for m in range(M):
+                for b in range(B):
+                    lam_bm  = int(self.agent_lambdas_bi[b, m].item())
+                    off_bm  = int(cum[b].item())
+                    row     = b * M + m
+                    indivduals[row, :lam_bm] = solutionList[b, off_bm:off_bm + lam_bm, :, 0]
+                    scores_bm = scoreList[b, off_bm:off_bm + lam_bm]
+                    fitness[row, :lam_bm]    = scores_bm
+                    mask[row, :lam_bm]       = 1.0
+                    if lam_bm < λa:
+                        fitness[row, lam_bm:] = scores_bm.mean()
+                    cum[b] += lam_bm
+        elif len(set(self.agent_lambdas)) == 1:
+            # Fast path non-adaptatif : lambdas uniformes — reshape direct
+            λa = self.agent_lambdas[0]
             indivduals = solutionList.view(BM, λa, N)
             fitness = scoreList.view(BM, λa)
         else:
-            # Slow path : masque par instance, λa constant = lambda_per_agent_init
-            # On génère toujours lambda_per_agent_init solutions par agent ;
-            # seul le masque REINFORCE varie par instance → zéro overhead d'évaluation.
-            λa = self.lambda_per_agent_init
-            indivduals = solutionList.view(BM, λa, N)
-            # Masque vectorisé : mask[b*M+m, i] = 1 si i < agent_lambdas_bi[b,m]
-            lambdas_bm = self.agent_lambdas_bi.view(BM).to(self.device)   # (BM,)
-            arange     = torch.arange(λa, device=self.device)             # (λa,)
-            mask       = (arange.unsqueeze(0) < lambdas_bm.unsqueeze(1)).float()  # (BM, λa)
-            # Pad les slots invalides avec le score moyen des slots valides
-            # (pour que la stratégie d'avantage ait des valeurs neutres hors masque)
-            fitness_raw = scoreList.view(BM, λa)
-            valid_cnt   = mask.sum(dim=1).clamp(min=1)                    # (BM,)
-            mean_fit    = (fitness_raw * mask).sum(dim=1) / valid_cnt     # (BM,)
-            fitness     = torch.where(
-                mask.bool(),
-                fitness_raw,
-                mean_fit.unsqueeze(1).expand_as(fitness_raw),
-            )
+            # Slow path non-adaptatif : lambdas hétérogènes entre agents
+            λa = max(self.agent_lambdas)
+            indivduals = solutionList.new_zeros(BM, λa, N)
+            fitness = torch.zeros(BM, λa, device=self.device)
+            mask = torch.zeros(BM, λa, device=self.device)
+            offset = 0
+            for m, lam_m in enumerate(self.agent_lambdas):
+                sols_m   = solutionList[:, offset:offset + lam_m, :, 0]
+                scores_m = scoreList[:, offset:offset + lam_m]
+                indivduals[m::M, :lam_m, :] = sols_m
+                fitness[m::M, :lam_m]       = scores_m
+                mask[m::M, :lam_m]          = 1.0
+                if lam_m < λa:
+                    mean_m = scores_m.mean(dim=1)
+                    fitness[m::M, lam_m:] = mean_m.unsqueeze(1).expand(-1, λa - lam_m)
+                offset += lam_m
 
         baseline = self.baseline.view(BM)
         if self.baseline.numel() == 0:
