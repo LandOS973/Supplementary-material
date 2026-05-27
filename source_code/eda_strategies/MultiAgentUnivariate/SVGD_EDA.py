@@ -382,6 +382,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             probs=all_Pi_Theta_expanded,
             nb_instances=B,
             num_agents=M,
+            mask=mask,
         )
 
         if mask is not None:

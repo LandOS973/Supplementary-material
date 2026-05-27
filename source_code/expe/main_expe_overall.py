@@ -364,6 +364,9 @@ def _run_once(
     bandwith_kernel,
     device=None,
     nb_restarts=None,
+    adaptive_lambda=False,
+    lr_lambda=0.1,
+    lambda_range=0.6,
 ):
     device = device or DEFAULTS["device"]
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
@@ -391,6 +394,9 @@ def _run_once(
         kernel_config=kernel_config,
         no_interact=False,
         is_nk3=(problem_ctx["type_problem"] == "NK3"),
+        adaptive_lambda=adaptive_lambda,
+        lr_lambda=lr_lambda,
+        lambda_range=lambda_range,
     ).to(device)
 
     if problem_ctx["type_problem"] == "QUBO":

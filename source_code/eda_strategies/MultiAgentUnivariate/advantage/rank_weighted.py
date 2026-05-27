@@ -20,21 +20,29 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def compute(self, fitness, nb_instances=None, num_agents=None, **context):
+    def compute(self, fitness, nb_instances=None, num_agents=None, mask=None, **context):
         nb_instances = nb_instances or context.get("nb_instances")
         num_agents = num_agents or context.get("num_agents")
         nb_instances = int(nb_instances)
         num_agents = int(num_agents)
 
-        BM, lambda_per_agent = fitness.shape              
-        reshaped = fitness.view(nb_instances, num_agents, lambda_per_agent)
-        per_instance = reshaped.view(nb_instances, -1)                 
+        BM, lambda_per_agent = fitness.shape
+        per_instance = fitness.view(nb_instances, -1)
 
-        num_individuals = per_instance.shape[1]
-        total_individuals = lambda_per_agent * num_agents
-        greater_counts = (per_instance[:, :, None] < per_instance[:, None, :]).sum(dim=2)
-        ranks = greater_counts
-        ranks = ranks.to(dtype=fitness.dtype)
+        if mask is not None:
+            # Remplace les faux samples par -inf : ils se retrouvent derniers dans le
+            # classement et n'affectent pas le rang des vrais samples.
+            # La somme réelle est conservée (M × λ_init), donc total_individuals est
+            # le même pour toutes les instances.
+            mask_2d = mask.view(nb_instances, -1)
+            ranking_fitness = per_instance.masked_fill(mask_2d == 0, float("-inf"))
+            total_individuals = int(mask_2d[0].sum().item())
+        else:
+            ranking_fitness = per_instance
+            total_individuals = lambda_per_agent * num_agents
+
+        greater_counts = (ranking_fitness[:, :, None] < ranking_fitness[:, None, :]).sum(dim=2)
+        ranks = greater_counts.to(dtype=fitness.dtype)
         ranked = 1.0 - 2.0 * (ranks / total_individuals)
         return ranked.view(BM, lambda_per_agent)
 
