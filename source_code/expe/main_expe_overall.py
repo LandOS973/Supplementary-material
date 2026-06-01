@@ -106,6 +106,10 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
         parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
     if params.get("l_active") is not None:
         parts.append(f"la{_slugify(params['l_active'])}")
+    if params.get("ucb_c") is not None:
+        parts.append(f"uc{_slugify(params['ucb_c'])}")
+    if params.get("ucb_adaptive"):
+        parts.append("ucadapt1")
     if prefix:
         return f"{prefix}__" + "__".join(parts)
     return "__".join(parts)
@@ -141,8 +145,10 @@ def _expand_grid(grid: dict):
     decay_min_factor = grid.get("decay_min_factor", [0.1])
     bandwith_kernel = grid.get("bandwith_kernel", [None])
     l_active_vals = grid.get("l_active", [None])
+    ucb_c_vals = grid.get("ucb_c", [None])
+    ucb_adaptive_vals = grid.get("ucb_adaptive", [False])
 
-    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw, la) in itertools.product(
+    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw, la, uc, ua) in itertools.product(
         kernels,
         advantages,
         M_values,
@@ -153,6 +159,8 @@ def _expand_grid(grid: dict):
         decay_min_factor,
         bandwith_kernel,
         l_active_vals,
+        ucb_c_vals,
+        ucb_adaptive_vals,
     ):
         params = dict(
             kernel=str(kernel).lower(),
@@ -165,6 +173,8 @@ def _expand_grid(grid: dict):
             decay_min_factor=float(dm),
             bandwith_kernel=bw,
             l_active=int(la) if la is not None else None,
+            ucb_c=float(uc) if uc is not None else None,
+            ucb_adaptive=bool(ua),
         )
         cfg_name = _build_config_name(None, params)
         yield cfg_name, params
@@ -371,6 +381,8 @@ def _run_once(
     decay_min_factor,
     bandwith_kernel,
     l_active=None,
+    ucb_c=None,
+    ucb_adaptive=False,
     device=None,
     nb_restarts=None,
 ):
@@ -402,7 +414,7 @@ def _run_once(
         is_nk3=(problem_ctx["type_problem"] == "NK3"),
     ).to(device)
     if l_active is not None:
-        strategy.configure_partial_updates(l_active)
+        strategy.configure_partial_updates(l_active, ucb_c=ucb_c, ucb_adaptive=ucb_adaptive)
 
     if problem_ctx["type_problem"] == "QUBO":
         list_scores, history = get_Score_trajectoriesQUBO_cuda(

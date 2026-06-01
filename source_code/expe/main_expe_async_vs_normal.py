@@ -1,6 +1,6 @@
 """
-Compare PPO-EDA async (l_active/r_influence < M) vs normal (l_active = r_influence = M).
-For each config in DEFAULT_GRIDS that defines l_active/r_influence, runs both variants
+Compare PPO-EDA async (l_active < M) vs normal (l_active = M).
+For each config in DEFAULT_GRIDS that defines l_active, runs both variants
 on all instances and writes a comparison report to <async_config_dir>/async_vs_normal.txt.
 """
 
@@ -51,6 +51,8 @@ DEFAULT_GRIDS = [
         decay_start_ratio=[0.03],
         decay_min_factor=[0.01],
         l_active=[5],
+        ucb_c=[50],
+        ucb_adaptive=[True],
     )
 ]
 
@@ -83,6 +85,8 @@ def _run_variant(
     config_name: str,
     out_root: str,
     repo_root: str,
+    ucb_c: float | None = None,
+    ucb_adaptive: bool = False,
 ) -> tuple[float, int | None, int] | None:
     """Run one variant on one instance. Returns (avg_score, rank, n_rank) or None."""
     inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
@@ -115,6 +119,8 @@ def _run_variant(
                 params["decay_min_factor"],
                 params.get("bandwith_kernel"),
                 l_active=l_active,
+                ucb_c=ucb_c,
+                ucb_adaptive=ucb_adaptive,
                 device=DEFAULTS["device"],
                 nb_restarts=nb_restarts,
             )
@@ -290,9 +296,13 @@ def main():
                 inst_label = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
                 print(f"  [{inst_label}]")
 
-                print(f"    -> async  (M={params['M']}, l_active={l_active})")
+                ucb_c = params.get("ucb_c")
+                ucb_adaptive = bool(params.get("ucb_adaptive", False))
+
+                print(f"    -> async  (M={params['M']}, l_active={l_active}, ucb_c={ucb_c})")
                 t0 = time.time()
-                res_async = _run_variant(inst, params, l_active, async_name, out_root, repo_root)
+                res_async = _run_variant(inst, params, l_active, async_name, out_root, repo_root,
+                                         ucb_c=ucb_c, ucb_adaptive=ucb_adaptive)
                 score_str = f"{res_async[0]:.6f}" if res_async else "FAILED"
                 print(f"       {score_str}  rank={res_async[1] if res_async else '?'}  ({time.time()-t0:.1f}s)")
 

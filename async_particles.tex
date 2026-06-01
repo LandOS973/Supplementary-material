@@ -1,0 +1,130 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\title{Mise à jour asynchrone des particules dans PPO-EDA}
+\author{Thomas Landais}
+\date{Juin 2026}
+
+\begin{document}
+\maketitle
+
+\section{Mise à jour partielle asynchrone}
+
+PPO-EDA maintient $M$ particules $\theta \in \mathbb{R}^{B \times M \times N}$.
+En mode asynchrone, seules $\ell_{\mathrm{active}} < M$ particules sont activées par itération,
+pour un budget d'évaluation de $\ell_{\mathrm{active}} \times \lambda$ solutions (identique
+à un algorithme synchrone à $\ell_{\mathrm{active}}$ agents).
+
+\subsection{Sélection des particules actives}
+
+Deux stratégies de sélection sont disponibles.
+
+\paragraph{Sélection aléatoire.}
+On tire sans remise $\ell_{\mathrm{active}}$ indices parmi $\{1,\ldots,M\}$ à chaque itération,
+indépendamment de la performance des particules.
+
+\paragraph{Sélection UCB.}
+On attribue à chaque particule $i$ un score qui dépend du nombre de fois où elle a déjà
+été visitée. Plus une particule a été peu activée, plus son terme d'exploration est élevé,
+ce qui la rend prioritaire pour assurer que toutes les particules sont explorées :
+\begin{equation}
+  \mathrm{UCB}_{i}(t) = \tilde{f}_{i} + c \sqrt{\frac{\ln(t+1)}{n_{i} + 1}}
+\end{equation}
+où $\tilde{f}_i \in [0,1]$ est la fitness normalisée, $n_i$ le nombre d'activations passées
+de la particule $i$, et $c > 0$ le paramètre d'exploration (\texttt{ucb\_c}).
+Les $\ell_{\mathrm{active}}$ particules ayant le score le plus élevé sont sélectionnées.
+Une particule jamais visitée ($n_i = 0$) reçoit un score artificiel $10^6$ pour
+garantir son activation avant que la sélection compétitive ne commence.
+
+En mode adaptatif (\texttt{ucb\_adaptive}), $c$ est pondéré par $\mathrm{std}(\tilde{f})$,
+ce qui réduit automatiquement l'exploration quand les particules convergent vers des
+performances similaires.
+
+\subsection{Mémoire de gradient}
+
+Un buffer \texttt{gradient\_memory} $\in \mathbb{R}^{B \times M \times N}$ accumule
+le gradient REINFORCE de chaque particule :
+\begin{equation}
+  g_i \leftarrow \nabla_{\theta_i} \mathcal{L}_{\mathrm{REINFORCE}}
+  \quad \text{uniquement si } i \in \mathcal{A}_t
+\end{equation}
+Les gradients des particules inactives sont conservés d'une itération à l'autre.
+
+\subsection{SVGD partiel}
+
+Seules les particules actives sont mises à jour. Leur support SVGD inclut toutes
+les particules ayant été activées au moins une fois (\texttt{visited\_mask}) :
+\begin{equation}
+  \phi_i = \frac{1}{|\mathcal{S}_t|} \sum_{j \in \mathcal{S}_t}
+  \left[ k(\theta_j, \theta_i)\, g_j + \nabla_{\theta_j} k(\theta_j, \theta_i) \right],
+  \quad \mathcal{S}_t = \texttt{visited\_mask} \cup \mathcal{A}_t
+\end{equation}
+puis $\theta_i \leftarrow \theta_i + \varepsilon \cdot \phi_i$ pour $i \in \mathcal{A}_t$.
+
+\section{Résultats}
+
+\subsection{Exemple de table UCB}
+
+Le tableau~\ref{tab:ucb} illustre l'état de la sélection UCB après $t=3846$ itérations
+sur 10 particules ($M=10$, mode adaptatif). La colonne \emph{Fit/N} est la fitness
+moyenne normalisée par $N$, \emph{Fit\_norm} $= \tilde{f}_i \in [0,1]$,
+\emph{Explor} $= c \sqrt{\ln(t+1)/(n_i+1)}$, et \emph{UCB} = Fit\_norm + Explor.
+La particule~4 est la moins visitée (242 visites) et présente le score d'exploration le
+plus élevé, bien que sa fitness soit la plus faible.
+
+\begin{table}[ht]
+  \centering
+  \caption{Table UCB à l'instance 0, $t=3846$, $c$ adaptatif ($M=10$).}
+  \label{tab:ucb}
+  \begin{tabular}{rrrrrr}
+    \toprule
+    Particule & Visites & Fit/$N$ & $\tilde{f}$ & Explor & UCB \\
+    \midrule
+    6 & 569 & 3.4087 & 1.0000 & 1.7396 & 2.7396 \\
+    5 & 499 & 3.3269 & 0.9302 & 1.8574 & 2.7876 \\
+    7 & 412 & 3.0529 & 0.6961 & 2.0437 & 2.7398 \\
+    8 & 411 & 3.0865 & 0.7248 & 2.0462 & 2.7710 \\
+    3 & 410 & 3.0529 & 0.6961 & 2.0487 & 2.7448 \\
+    2 & 356 & 2.9038 & 0.5688 & 2.1982 & 2.7670 \\
+    1 & 326 & 2.7933 & 0.4743 & 2.2968 & 2.7711 \\
+    0 & 315 & 2.7212 & 0.4127 & 2.3364 & 2.7492 \\
+    9 & 306 & 2.7115 & 0.4045 & 2.3704 & 2.7749 \\
+    4 & 242 & 2.2380 & 0.0000 & 2.6644 & 2.6644 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Comparaison Async vs Normal}
+
+Comparaison à budget constant ($\ell_{\mathrm{active}} \times \lambda$ évaluations/itération) :
+async ($M$ grande, $\ell_{\mathrm{active}}$ actives, UCB) vs.\ normal ($M' = \ell_{\mathrm{active}}$).
+
+\begin{table}[ht]
+  \centering
+  \caption{Score moyen (plus grand = meilleur). \textbf{TODO} : remplir après exécution de
+           \texttt{main\_expe\_async\_vs\_normal.py}.}
+  \label{tab:results}
+  \begin{tabular}{lcccc}
+    \toprule
+    Instance & $M$ & Score Async & Score Normal & $\Delta$ \\
+    \midrule
+    NK dim64  $k$=1  & -- & -- & -- & -- \\
+    NK dim128 $k$=2  & -- & -- & -- & -- \\
+    NK dim256 $k$=4  & -- & -- & -- & -- \\
+    NK3 dim64  $k$=1 & -- & -- & -- & -- \\
+    NK3 dim128 $k$=2 & -- & -- & -- & -- \\
+    QUBO dim64       & -- & -- & -- & -- \\
+    QUBO dim128      & -- & -- & -- & -- \\
+    \midrule
+    Wins async / normal & & & & -- / -- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+\end{document}
