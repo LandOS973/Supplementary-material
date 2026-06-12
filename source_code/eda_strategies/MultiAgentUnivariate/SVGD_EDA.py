@@ -326,20 +326,18 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             log_Pi = self._compute_log_pi(indivduals)  # (BM, λa), dans le graphe de calcul
 
             # Ratio d'importance sampling : r = exp(log π_θ - log π_θ_old)
-            ratio = torch.exp(log_Pi - log_Pi_old)     # (BM, λa)
-
-            with torch.no_grad():
-                ratio_inst0 = ratio.view(B, M, λa)[0]  # (M, λa) — instance 0
-                print(f"[PPO ratio | epoch {k+1}/{self.ppo_epochs}]")
-                for agent_idx in range(M):
-                    vals = ratio_inst0[agent_idx].cpu().tolist()
-                    vals_str = " ".join(f"{v:.3f}" for v in vals)
-                    print(f"  agent {agent_idx}: {vals_str}")
-
+            ratio = torch.exp((log_Pi - log_Pi_old) / N) # (BM, λa) normalisé par N
+            # with torch.no_grad():
+            #     ratio_inst0 = ratio.view(B, M, λa)[0]  # (M, λa) — instance 0
+            #     print(f"[PPO ratio | epoch {k+1}/{self.ppo_epochs}]")
+            #     for agent_idx in range(M):
+            #         vals = ratio_inst0[agent_idx].cpu().tolist()
+            #         vals_str = " ".join(f"{v:.3f}" for v in vals)
+            #         print(f"  agent {agent_idx}: {vals_str}")
             # Objectif surrogate PPO (POSITIF : ascension, pas descente)
             surr1 = ratio * advantages
             surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
-            surrogate = torch.min(surr1, surr2)         # (BM, λa)
+            surrogate = torch.min(surr1, surr2) * N         # (BM, λa)
 
             # Objectif : (1/λ) · Σ_l min(...)  — γ géré en interne par SVGD
             objective = surrogate.mean(dim=1).sum()
