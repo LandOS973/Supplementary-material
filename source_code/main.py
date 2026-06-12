@@ -141,12 +141,18 @@ def main(cfg: DictConfig):
         or cfg.get("decay_min_factor")
         or decay_default_min_factor
     )
+    ppo_epochs = int(agent_val("ppo_epochs") or cfg.get("ppo_epochs") or 4)
+    _clip_eps = agent_val("clip_eps")
+    if _clip_eps is None:
+        _clip_eps = cfg.get("clip_eps")
+    clip_eps = float(_clip_eps if _clip_eps is not None else 0.2)
 
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
         f"M={M} lambda={lambda_} eps={epsilon_svgd} gamma={svgd_gamma} | "
         f"kernel={kernel_name} advantage={advantage_cfg} decay={decay_enabled} "
-        f"greedy_final={enable_greedy_final}"
+        f"greedy_final={enable_greedy_final} | "
+        f"ppo_epochs={ppo_epochs} clip_eps={clip_eps}"
     )
     if decay_enabled:
         print(f"Decay params: start_ratio={decay_start_ratio} min_factor={decay_min_factor}")
@@ -250,6 +256,8 @@ def main(cfg: DictConfig):
         no_interact=no_interact,
         no_repulsion=no_repulsion,
         is_nk3=(type_problem_upper == "NK3"),
+        ppo_epochs=ppo_epochs,
+        clip_eps=clip_eps,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None
