@@ -9,3 +9,5 @@ scontrol show job $Job_ID
 
 Cancel :
 scancel $Job_ID
+
+tail -n 100 -f outputs/test_mainnumjob.out
