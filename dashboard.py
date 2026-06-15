@@ -25,7 +25,8 @@ PARSERS = [
     ("ds",  "decay_start_ratio", float),
     ("dm",  "decay_min_factor", float),
     ("bw",  "bandwith_kernel", float),
-    ("pe",  "ppo_epochs", int),
+    ("ks",  "ppo_epochs", int),
+    ("pe",  "ppo_epochs", int),   # legacy (anciens résultats)
     ("ce",  "clip_eps", float),
     ("M",   "M", int),
     ("L",   "lambda", int),

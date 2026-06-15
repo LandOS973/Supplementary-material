@@ -106,7 +106,7 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
     if params.get("bandwith_kernel") is not None:
         parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
     if params.get("ppo_epochs") is not None:
-        parts.append(f"pe{_slugify(params['ppo_epochs'])}")
+        parts.append(f"ks{_slugify(params['ppo_epochs'])}")
     if params.get("clip_eps") is not None:
         parts.append(f"ce{_slugify(params['clip_eps'])}")
     if prefix:
