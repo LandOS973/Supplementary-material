@@ -38,14 +38,16 @@ DEFAULTS = dict(
 )
 DEFAULT_GRIDS = [
     dict(
-        kernels=["jsd"],
+        kernels=["rbf"],
         advantages=["globalrankweighted"],
-        M_values=[10],
-        lambda_values=[10, 14],
-        epsilon_svgd=[0.10, 0.12],
-        gamma=[0.01, 0.015],
-        decay_start_ratio=[0.03, 0.05],
+        M_values=[7],
+        lambda_values=[13],
+        epsilon_svgd=[0.009,0.05,0.015,0.08],
+        gamma=[0.015],
+        decay_start_ratio=[0.03],
         decay_min_factor=[0.01],
+        ppo_epochs=[1, 2, 3, 4, 5, 8],
+        clip_eps=[0.2],
     )
 ]
 
@@ -103,6 +105,10 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
     ]
     if params.get("bandwith_kernel") is not None:
         parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
+    if params.get("ppo_epochs") is not None:
+        parts.append(f"pe{_slugify(params['ppo_epochs'])}")
+    if params.get("clip_eps") is not None:
+        parts.append(f"ce{_slugify(params['clip_eps'])}")
     if prefix:
         return f"{prefix}__" + "__".join(parts)
     return "__".join(parts)
@@ -135,8 +141,10 @@ def _expand_grid(grid: dict):
     decay_start_ratio = grid.get("decay_start_ratio", [0.8])
     decay_min_factor = grid.get("decay_min_factor", [0.1])
     bandwith_kernel = grid.get("bandwith_kernel", [None])
+    ppo_epochs = grid.get("ppo_epochs", [None])
+    clip_eps = grid.get("clip_eps", [None])
 
-    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw) in itertools.product(
+    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw, pe, ce) in itertools.product(
         kernels,
         advantages,
         M_values,
@@ -146,6 +154,8 @@ def _expand_grid(grid: dict):
         decay_start_ratio,
         decay_min_factor,
         bandwith_kernel,
+        ppo_epochs,
+        clip_eps,
     ):
         params = dict(
             kernel=str(kernel).lower(),
@@ -157,6 +167,8 @@ def _expand_grid(grid: dict):
             decay_start_ratio=float(ds),
             decay_min_factor=float(dm),
             bandwith_kernel=bw,
+            ppo_epochs=int(pe) if pe is not None else None,
+            clip_eps=float(ce) if ce is not None else None,
         )
         cfg_name = _build_config_name(None, params)
         yield cfg_name, params
@@ -364,6 +376,8 @@ def _run_once(
     bandwith_kernel,
     device=None,
     nb_restarts=None,
+    ppo_epochs=None,
+    clip_eps=None,
 ):
     device = device or DEFAULTS["device"]
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
@@ -391,6 +405,8 @@ def _run_once(
         kernel_config=kernel_config,
         no_interact=False,
         is_nk3=(problem_ctx["type_problem"] == "NK3"),
+        ppo_epochs=int(ppo_epochs) if ppo_epochs is not None else 4,
+        clip_eps=float(clip_eps) if clip_eps is not None else 0.2,
     ).to(device)
 
     if problem_ctx["type_problem"] == "QUBO":
@@ -469,6 +485,8 @@ def _run_once(
         decay_start_ratio=decay_start_ratio,
         decay_min_factor=decay_min_factor,
         bandwith_kernel=bandwith_kernel,
+        ppo_epochs=ppo_epochs,
+        clip_eps=clip_eps,
         no_interact=False,
         avg_score=avg_score,
         median_score=median_score,
@@ -943,6 +961,8 @@ def main():
                             params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
+                            ppo_epochs=params.get("ppo_epochs"),
+                            clip_eps=params.get("clip_eps"),
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
@@ -1001,6 +1021,8 @@ def main():
                             params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
+                            ppo_epochs=params.get("ppo_epochs"),
+                            clip_eps=params.get("clip_eps"),
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
@@ -1059,6 +1081,8 @@ def main():
                             params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
+                            ppo_epochs=params.get("ppo_epochs"),
+                            clip_eps=params.get("clip_eps"),
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
