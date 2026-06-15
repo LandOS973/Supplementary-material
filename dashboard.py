@@ -92,17 +92,6 @@ def _get_rank(problem: str, dim: int, t: int, score: float) -> int | None:
 CACHE_FILE = RESULTS_DIR / ".dashboard_cache.parquet"
 
 
-def _cache_is_fresh() -> bool:
-    if not CACHE_FILE.exists():
-        return False
-    cache_mtime = CACHE_FILE.stat().st_mtime
-    for config_dir in RESULTS_DIR.iterdir():
-        if config_dir.is_dir() and config_dir.name.startswith("k"):
-            if config_dir.stat().st_mtime > cache_mtime:
-                return False
-    return True
-
-
 def _rank_stats(sub: pd.DataFrame) -> dict:
     if sub.empty:
         return {"mean_rank": None, "top1": 0, "top3": 0, "top5": 0, "top10": 0}
@@ -115,78 +104,106 @@ def _rank_stats(sub: pd.DataFrame) -> dict:
     }
 
 
-@st.cache_data(show_spinner=False)
+def _compute_config_row(config_dir: Path) -> dict | None:
+    """Compute summary stats for one config directory. Returns None if no data."""
+    params = parse_config_name(config_dir.name)
+    if not params:
+        return None
+
+    instance_rows = []
+    for inst_dir in sorted(config_dir.iterdir()):
+        if not inst_dir.is_dir():
+            continue
+        m = INSTANCE_RE.match(inst_dir.name)
+        if not m:
+            continue
+        metrics = inst_dir / "best_metrics.csv"
+        if not metrics.exists():
+            continue
+        try:
+            df = pd.read_csv(metrics)
+            score = abs(float(df["best_fitness"].iloc[-1]))
+        except Exception:
+            continue
+        rank = _get_rank(m.group("problem"), int(m.group("dim")), int(m.group("t")), score)
+        if rank is not None:
+            instance_rows.append({"problem": m.group("problem"), "rank": rank, "score": score})
+
+    if not instance_rows:
+        return None
+    idf = pd.DataFrame(instance_rows)
+
+    all_s  = _rank_stats(idf)
+    nk_s   = _rank_stats(idf[idf["problem"] == "NK"])
+    nk3_s  = _rank_stats(idf[idf["problem"] == "NK3"])
+    qubo_s = _rank_stats(idf[idf["problem"] == "QUBO"])
+
+    return {
+        "config": config_dir.name,
+        **params,
+        "mean_rank":      all_s["mean_rank"],
+        "median_rank":    round(float(idf["rank"].median()), 1),
+        "top1":  all_s["top1"],  "top3":  all_s["top3"],
+        "top5":  all_s["top5"],  "top10": all_s["top10"],
+        "top1_NK":        nk_s["top1"],
+        "top1_NK3":       nk3_s["top1"],
+        "top1_QUBO":      qubo_s["top1"],
+        "mean_rank_NK":   nk_s["mean_rank"],
+        "mean_rank_NK3":  nk3_s["mean_rank"],
+        "mean_rank_QUBO": qubo_s["mean_rank"],
+        "top3_NK":        nk_s["top3"],
+        "top3_NK3":       nk3_s["top3"],
+        "top3_QUBO":      qubo_s["top3"],
+        "n_instances":    len(idf),
+    }
+
+
 def load_summary() -> pd.DataFrame:
-    if _cache_is_fresh():
-        return pd.read_parquet(CACHE_FILE)
+    all_dirs = [d for d in sorted(RESULTS_DIR.iterdir())
+                if d.is_dir() and d.name.startswith("k")]
 
+    # Load existing cache
+    existing = pd.DataFrame()
+    if CACHE_FILE.exists():
+        try:
+            existing = pd.read_parquet(CACHE_FILE)
+        except Exception:
+            pass
+
+    # Detect configs on disk that are absent from the cache (name-based, not mtime)
+    cached_names = set(existing["config"].tolist()) if not existing.empty else set()
+    new_dirs = [d for d in all_dirs if d.name not in cached_names]
+
+    if not new_dirs:
+        return existing
+
+    # Recompute only new/modified configs
     rows = []
-    config_dirs = [d for d in sorted(RESULTS_DIR.iterdir())
-                   if d.is_dir() and d.name.startswith("k")]
-    progress = st.progress(0, text="Calcul du résumé…")
-
-    for i, config_dir in enumerate(config_dirs):
-        progress.progress((i + 1) / max(len(config_dirs), 1),
-                          text=f"Config {i+1}/{len(config_dirs)} — {config_dir.name[:50]}")
-        params = parse_config_name(config_dir.name)
-        if not params:
-            continue
-
-        instance_rows = []
-        for inst_dir in sorted(config_dir.iterdir()):
-            if not inst_dir.is_dir():
-                continue
-            m = INSTANCE_RE.match(inst_dir.name)
-            if not m:
-                continue
-            metrics = inst_dir / "best_metrics.csv"
-            if not metrics.exists():
-                continue
-            try:
-                df = pd.read_csv(metrics)
-                score = abs(float(df["best_fitness"].iloc[-1]))
-            except Exception:
-                continue
-            rank = _get_rank(m.group("problem"), int(m.group("dim")), int(m.group("t")), score)
-            if rank is not None:
-                instance_rows.append({
-                    "problem": m.group("problem"),
-                    "rank": rank,
-                    "score": score,
-                })
-
-        if not instance_rows:
-            continue
-        idf = pd.DataFrame(instance_rows)
-
-        all_s  = _rank_stats(idf)
-        nk_s   = _rank_stats(idf[idf["problem"] == "NK"])
-        nk3_s  = _rank_stats(idf[idf["problem"] == "NK3"])
-        qubo_s = _rank_stats(idf[idf["problem"] == "QUBO"])
-
-        rows.append({
-            "config": config_dir.name,
-            **params,
-            "mean_rank":    all_s["mean_rank"],
-            "median_rank":  round(float(idf["rank"].median()), 1),
-            "top1":  all_s["top1"],   "top3":  all_s["top3"],
-            "top5":  all_s["top5"],   "top10": all_s["top10"],
-            "top1_NK":   nk_s["top1"],
-            "top1_NK3":  nk3_s["top1"],
-            "top1_QUBO": qubo_s["top1"],
-            "mean_rank_NK":   nk_s["mean_rank"],
-            "mean_rank_NK3":  nk3_s["mean_rank"],
-            "mean_rank_QUBO": qubo_s["mean_rank"],
-            "top3_NK":   nk_s["top3"],
-            "top3_NK3":  nk3_s["top3"],
-            "top3_QUBO": qubo_s["top3"],
-            "n_instances": len(idf),
-        })
-
+    progress = st.progress(0, text="Mise à jour du cache…")
+    for i, config_dir in enumerate(new_dirs):
+        progress.progress(
+            (i + 1) / max(len(new_dirs), 1),
+            text=f"{i+1}/{len(new_dirs)} — {config_dir.name[:55]}",
+        )
+        row = _compute_config_row(config_dir)
+        if row is not None:
+            rows.append(row)
     progress.empty()
-    result = pd.DataFrame(rows).sort_values("mean_rank").reset_index(drop=True) if rows else pd.DataFrame()
-    if not result.empty:
-        result.to_parquet(CACHE_FILE)
+
+    if not rows and existing.empty:
+        return pd.DataFrame()
+
+    # Drop deleted configs and stale entries for recomputed configs
+    disk_names = {d.name for d in all_dirs}
+    updated = {d.name for d in new_dirs}
+    if not existing.empty:
+        existing = existing[existing["config"].isin(disk_names) & ~existing["config"].isin(updated)]
+
+    result = pd.concat(
+        [existing, pd.DataFrame(rows)], ignore_index=True
+    ).sort_values("mean_rank").reset_index(drop=True)
+
+    result.to_parquet(CACHE_FILE)
     return result
 
 
@@ -683,13 +700,24 @@ if df.empty:
     st.error(f"Aucun résultat trouvé dans `{RESULTS_DIR}`")
     st.stop()
 
+# Garder uniquement les configs avec au moins un raw_scores.csv
+def _has_raw(config_name: str) -> bool:
+    d = RESULTS_DIR / config_name
+    if not d.exists():
+        return False
+    return any((sub / "raw_scores.csv").exists() for sub in d.iterdir() if sub.is_dir())
+
+df = df[df["config"].apply(_has_raw)].reset_index(drop=True)
+if df.empty:
+    st.warning("Aucune config avec `raw_scores.csv` trouvée.")
+    st.stop()
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Filtres")
-    if st.button("🔄 Recalculer le cache", help="À utiliser après un rsync de nouveaux résultats"):
+    if st.button("🔄 Recalculer le cache", help="Supprime le cache disque et recalcule tout"):
         if CACHE_FILE.exists():
             CACHE_FILE.unlink()
-        st.cache_data.clear()
         st.rerun()
 
     def multisel(label, col):
@@ -720,7 +748,7 @@ for sel, col in [
     (l_sel,   "lambda"),
 ]:
     if sel is not None and col in df.columns:
-        mask &= df[col].isin(sel)
+        mask &= df[col].isin(sel) | df[col].isna()
 mask &= df["mean_rank"] <= rank_lim
 filtered = df[mask].head(int(show_n))
 
