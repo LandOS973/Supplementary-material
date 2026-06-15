@@ -15,7 +15,7 @@ export PYTHONUNBUFFERED=1
 
 # Passe les args directement à main.py (overrides Hydra via -m ou positionnels)
 # ex: sbatch test_main.slurm verbose=false budget=1000 problem=nk3
-srun $PYTHON -B /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main.py "$@"
+srun $PYTHON -B /home/t.lan@univ-angers.fr/Supplementary-material/source_code/main.py visualization=false "$@"
 
 echo "Job terminé à $(date)"
 

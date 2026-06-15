@@ -41,9 +41,9 @@ conda activate ppo_env
 export PYTHONUNBUFFERED=1
 
 if [ -n "$M_VALUES" ]; then
-  srun python source_code/main.py -m "$M_VALUES" "$@"
+  srun python source_code/main.py -m "$M_VALUES" visualization=false "$@"
 else
-  srun python source_code/main.py "$@"
+  srun python source_code/main.py visualization=false "$@"
 fi
 
 echo "Job terminé à $(date)"
