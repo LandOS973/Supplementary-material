@@ -218,35 +218,143 @@ def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
         return None
 
 
+from plotly.subplots import make_subplots
+
+
+def _config_label(row: pd.Series) -> str:
+    """Short human-readable label for a config row (used in selectboxes)."""
+    parts = []
+    for col, abbr in [
+        ("kernel", "k"), ("ppo_epochs", "ks"), ("epsilon_svgd", "eps"),
+        ("M", "M"), ("lambda", "L"), ("gamma", "g"),
+    ]:
+        if col in row.index and pd.notna(row.get(col)):
+            parts.append(f"{abbr}={row[col]}")
+    return "  ".join(parts) if parts else row["config"][:60]
+
+
+def _vs_top5_figure(sel_cfg: str, instance: str, label: str,
+                    problem: str, dim: int, t: int) -> go.Figure | None:
+    """Combined curve (top) + boxplot (bottom) figure vs global top 5."""
+    curve  = load_curve(sel_cfg, instance)
+    scores = load_raw_scores(sel_cfg, instance)
+    if curve is None and scores is None:
+        return None
+
+    ranking = load_ranking(problem, dim, t)
+    top5 = []
+    if ranking is not None:
+        for _, row in ranking.nlargest(5, "score").iterrows():
+            top5.append((row["name_algo"], float(row["score"])))
+
+    has_box = scores is not None
+    n_rows  = 2 if (curve is not None and has_box) else 1
+    titles  = []
+    if curve is not None:
+        titles.append("Convergence")
+    if has_box:
+        titles.append("Distribution finale")
+
+    fig = make_subplots(
+        rows=n_rows, cols=1,
+        subplot_titles=titles,
+        row_heights=[0.6, 0.4] if n_rows == 2 else [1.0],
+        vertical_spacing=0.12,
+    )
+    curve_row = 1
+    box_row   = 2 if (curve is not None and has_box) else 1
+
+    # ── Curve panel ──────────────────────────────────────────────────────────
+    if curve is not None:
+        fig.add_trace(go.Scatter(
+            x=curve["step"], y=_norm(curve["best_fitness"]),
+            name=label, line=dict(color=COLORS[0], width=3), mode="lines",
+        ), row=curve_row, col=1)
+        for j, (algo, score) in enumerate(top5):
+            color = COLORS[(j + 1) % len(COLORS)]
+            fig.add_trace(go.Scatter(
+                x=[curve["step"].iloc[0], curve["step"].iloc[-1]],
+                y=[score, score],
+                name=algo, mode="lines",
+                line=dict(dash="dash", color=color, width=1.5),
+            ), row=curve_row, col=1)
+        fig.update_xaxes(title_text="Évaluations", row=curve_row, col=1)
+        fig.update_yaxes(title_text="Score",        row=curve_row, col=1)
+
+    # ── Boxplot panel ─────────────────────────────────────────────────────────
+    if has_box:
+        fig.add_trace(go.Box(
+            y=scores, name=label,
+            marker_color=COLORS[0], boxpoints="outliers", showlegend=False,
+        ), row=box_row, col=1)
+        for j, (algo, score) in enumerate(top5):
+            color = COLORS[(j + 1) % len(COLORS)]
+            fig.add_hline(
+                y=score, row=box_row, col=1,
+                line=dict(dash="dash", color=color, width=1.5),
+                annotation_text=algo, annotation_position="bottom right",
+            )
+        fig.update_yaxes(title_text="Score final", row=box_row, col=1)
+
+    fig.update_layout(
+        height=720 if n_rows == 2 else 440,
+        margin=dict(r=140, t=40, b=10),
+        legend=dict(orientation="v", x=1.02, y=1),
+    )
+    return fig
+
+
 # ── Tab fragments ─────────────────────────────────────────────────────────────
 # Each tab is a @st.fragment: interacting with its widgets re-runs only that
 # function, not the full script — other tabs are unaffected.
 
 @st.fragment
 def tab_classement(filtered: pd.DataFrame) -> None:
+    problem_sel = st.radio(
+        "Problème", ["Tous", "NK", "NK3", "QUBO"],
+        horizontal=True, key="class_problem",
+    )
+
+    stat_cols = {
+        "Tous": ["mean_rank", "median_rank", "top1", "top3", "top5", "top10",
+                 "top1_NK", "top1_NK3", "top1_QUBO"],
+        "NK":   ["mean_rank_NK",   "top1_NK",   "top3_NK"],
+        "NK3":  ["mean_rank_NK3",  "top1_NK3",  "top3_NK3"],
+        "QUBO": ["mean_rank_QUBO", "top1_QUBO", "top3_QUBO"],
+    }[problem_sel]
+
+    rank_col = {
+        "Tous": "mean_rank", "NK": "mean_rank_NK",
+        "NK3": "mean_rank_NK3", "QUBO": "mean_rank_QUBO",
+    }[problem_sel]
+
+    display = filtered.dropna(subset=[rank_col]) if rank_col in filtered.columns else filtered
+    display = display.sort_values(rank_col) if rank_col in display.columns else display
+
     cols = [c for c in [
-        "mean_rank", "median_rank",
-        "top1", "top3", "top5", "top10",
-        "top1_NK", "top1_NK3", "top1_QUBO",
+        *stat_cols,
         "ppo_epochs", "clip_eps",
         "epsilon_svgd", "gamma", "M", "lambda",
         "kernel", "advantage",
         "decay_start_ratio", "decay_min_factor",
         "n_instances", "config",
-    ] if c in filtered.columns]
+    ] if c in display.columns]
 
     st.dataframe(
-        filtered[cols].reset_index(drop=True),
+        display[cols].reset_index(drop=True),
         use_container_width=True,
         height=620,
         column_config={
-            "config":       st.column_config.TextColumn("Config", width="large"),
-            "mean_rank":    st.column_config.NumberColumn("Rank moy",  format="%.2f"),
-            "median_rank":  st.column_config.NumberColumn("Rank med",  format="%.1f"),
-            "ppo_epochs":   st.column_config.NumberColumn("pe",        format="%d"),
-            "clip_eps":     st.column_config.NumberColumn("ce",        format="%.2f"),
-            "epsilon_svgd": st.column_config.NumberColumn("ε_svgd",   format="%.4f"),
-            "gamma":        st.column_config.NumberColumn("γ",         format="%.4f"),
+            "config":         st.column_config.TextColumn("Config",     width="large"),
+            "mean_rank":      st.column_config.NumberColumn("Rank moy", format="%.2f"),
+            "mean_rank_NK":   st.column_config.NumberColumn("Rank NK",  format="%.2f"),
+            "mean_rank_NK3":  st.column_config.NumberColumn("Rank NK3", format="%.2f"),
+            "mean_rank_QUBO": st.column_config.NumberColumn("Rank QUBO",format="%.2f"),
+            "median_rank":    st.column_config.NumberColumn("Rank med", format="%.1f"),
+            "ppo_epochs":     st.column_config.NumberColumn("ks",       format="%d"),
+            "clip_eps":       st.column_config.NumberColumn("ce",       format="%.2f"),
+            "epsilon_svgd":   st.column_config.NumberColumn("ε_svgd",  format="%.4f"),
+            "gamma":          st.column_config.NumberColumn("γ",        format="%.4f"),
         },
     )
 
@@ -260,7 +368,42 @@ def tab_courbes(filtered: pd.DataFrame, sorted_instances: list) -> None:
         for _, col in CURVE_PARAMS:
             st.session_state.pop(f"curve_{col}", None)
         st.session_state.pop("curve_inst", None)
+        st.session_state.pop("curve_vs_inst", None)
 
+    mode = st.radio("Mode", ["Multi-config", "vs Top 5"], horizontal=True, key="curve_mode")
+
+    # ── Mode vs Top 5 ──────────────────────────────────────────────────────────
+    if mode == "vs Top 5":
+        cfg_list = filtered["config"].tolist()
+        if not cfg_list:
+            st.info("Aucune config disponible.")
+            return
+
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            labels = [_config_label(filtered[filtered["config"] == c].iloc[0]) for c in cfg_list]
+            sel_idx = st.selectbox(
+                "Config", range(len(cfg_list)),
+                format_func=lambda i: labels[i],
+                key="curve_vs_idx",
+            )
+            sel_cfg = cfg_list[sel_idx]
+        with c2:
+            vs_inst = st.selectbox("Instance", sorted_instances, key="curve_vs_inst")
+
+        if not vs_inst:
+            return
+        m = INSTANCE_RE.match(vs_inst)
+        problem, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
+
+        fig = _vs_top5_figure(sel_cfg, vs_inst, labels[sel_idx], problem, dim, t)
+        if fig is None:
+            st.warning("Pas de données pour cette config / cette instance.")
+        else:
+            st.plotly_chart(fig, use_container_width=True)
+        return
+
+    # ── Mode Multi-config ──────────────────────────────────────────────────────
     st.markdown("##### Filtres configs")
     filter_cols = st.columns(5)
     curve_mask = pd.Series(True, index=filtered.index)
@@ -275,7 +418,7 @@ def tab_courbes(filtered: pd.DataFrame, sorted_instances: list) -> None:
         with filter_cols[idx % 5]:
             sel = st.multiselect(label, vals, default=vals, key=f"curve_{col}")
         if not sel:
-            sel = vals  # guard: stale session state → select all
+            sel = vals
         curve_mask &= filtered[col].isin(sel) | filtered[col].isna()
         active_filters[col] = sel
 
@@ -345,7 +488,42 @@ def tab_boxplots(filtered: pd.DataFrame, sorted_instances: list) -> None:
         for _, col in CURVE_PARAMS:
             st.session_state.pop(f"box_{col}", None)
         st.session_state.pop("box_inst", None)
+        st.session_state.pop("box_vs_inst", None)
 
+    mode = st.radio("Mode", ["Multi-config", "vs Top 5"], horizontal=True, key="box_mode")
+
+    # ── Mode vs Top 5 ──────────────────────────────────────────────────────────
+    if mode == "vs Top 5":
+        cfg_list = filtered["config"].tolist()
+        if not cfg_list:
+            st.info("Aucune config disponible.")
+            return
+
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            labels = [_config_label(filtered[filtered["config"] == c].iloc[0]) for c in cfg_list]
+            sel_idx = st.selectbox(
+                "Config", range(len(cfg_list)),
+                format_func=lambda i: labels[i],
+                key="box_vs_idx",
+            )
+            sel_cfg = cfg_list[sel_idx]
+        with c2:
+            vs_inst = st.selectbox("Instance", sorted_instances, key="box_vs_inst")
+
+        if not vs_inst:
+            return
+        m = INSTANCE_RE.match(vs_inst)
+        problem, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
+
+        fig = _vs_top5_figure(sel_cfg, vs_inst, labels[sel_idx], problem, dim, t)
+        if fig is None:
+            st.warning("Pas de données pour cette config / cette instance.")
+        else:
+            st.plotly_chart(fig, use_container_width=True)
+        return
+
+    # ── Mode Multi-config ──────────────────────────────────────────────────────
     st.markdown("##### Filtres configs")
     box_filter_cols = st.columns(5)
     box_mask = pd.Series(True, index=filtered.index)
@@ -360,7 +538,7 @@ def tab_boxplots(filtered: pd.DataFrame, sorted_instances: list) -> None:
         with box_filter_cols[idx % 5]:
             sel = st.multiselect(label, vals, default=vals, key=f"box_{col}")
         if not sel:
-            sel = vals  # guard: stale session state → select all
+            sel = vals
         box_mask &= filtered[col].isin(sel) | filtered[col].isna()
         box_active[col] = sel
 
@@ -373,27 +551,30 @@ def tab_boxplots(filtered: pd.DataFrame, sorted_instances: list) -> None:
             return cfg_row["config"][-40:]
         return "  ".join(f"{p}={cfg_row[p]}" for p in box_varying if pd.notna(cfg_row.get(p)))
 
-    st.caption(f"{len(box_configs)} configs sélectionnées")
     box_instance = st.selectbox("Instance", sorted_instances, key="box_inst")
 
     if box_configs and box_instance:
-        fig = go.Figure()
-        for i, cfg in enumerate(box_configs):
-            scores = load_raw_scores(cfg, box_instance)
-            if scores is None:
-                continue
-            row = box_filtered[box_filtered["config"] == cfg].iloc[0]
-            label = box_label(row)
-            fig.add_trace(go.Box(
-                y=scores,
-                name=label,
-                marker_color=COLORS[i % len(COLORS)],
-                boxpoints="outliers",
-            ))
+        # Only show configs that have raw_scores.csv for this instance
+        available = [cfg for cfg in box_configs
+                     if (RESULTS_DIR / cfg / box_instance / "raw_scores.csv").exists()]
+        st.caption(f"{len(available)}/{len(box_configs)} configs ont des scores bruts pour cette instance")
 
-        if not fig.data:
-            st.warning("Aucun fichier `raw_scores.csv` trouvé pour ces configs / cette instance.")
+        if not available:
+            st.warning("Aucun fichier `raw_scores.csv` pour ces configs / cette instance.")
         else:
+            fig = go.Figure()
+            for i, cfg in enumerate(available):
+                scores = load_raw_scores(cfg, box_instance)
+                if scores is None:
+                    continue
+                row = box_filtered[box_filtered["config"] == cfg].iloc[0]
+                label = box_label(row)
+                fig.add_trace(go.Box(
+                    y=scores,
+                    name=label,
+                    marker_color=COLORS[i % len(COLORS)],
+                    boxpoints="outliers",
+                ))
             fig.update_layout(
                 yaxis_title="Score final",
                 height=520,

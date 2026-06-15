@@ -691,10 +691,10 @@ def _metrics_ready(metrics_path: Path) -> bool:
 def _instance_already_done(inst_dir: str, problem: str, kernel_name: str) -> bool:
     inst_path = Path(inst_dir)
     metrics_path = inst_path / "best_metrics.csv"
-    if _metrics_ready(metrics_path):
+    if _metrics_ready(metrics_path) and (inst_path / "raw_scores.csv").exists():
         return True
     legacy_path = inst_path / f"{problem}_{kernel_name}_best_metrics.csv"
-    return _metrics_ready(legacy_path)
+    return _metrics_ready(legacy_path) and (inst_path / "raw_scores.csv").exists()
 
 
 def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_root: str):
