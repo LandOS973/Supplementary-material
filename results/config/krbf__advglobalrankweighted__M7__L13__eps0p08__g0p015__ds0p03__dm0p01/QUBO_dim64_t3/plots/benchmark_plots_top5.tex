@@ -1,0 +1,19 @@
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.56\textwidth}
+        \centering
+        \caption{}
+        \includegraphics[width=\linewidth]{comparison_qubo_64_t3.png}
+        \label{fig:comparison_qubo_64_t3}
+    \end{subfigure}
+    \vspace{0.5cm}
+    \begin{subfigure}[b]{0.42\textwidth}
+        \centering
+        \caption{}
+        \includegraphics[width=\linewidth]{boxplot_final_score_vs_top5.png}
+        \label{fig:boxplot_qubo_64_t3}
+    \end{subfigure}
+
+    \caption{Performance analysis on a QUBO instance distribution ($n=64, K=3$). (a) Evolution of the average score for \texttt{SVGD-EDA} and the top-five competitors. (b) Final score distribution after 50,000 evaluations. Both panels use the same labels/colors: SVGD-EDA, DiscreteDE, USERDL1+1, RDL1+1, SRDL1+1, SSRDL1+1. Acronyms in legends: USERDL1+1 = \texttt{UltraSmoothElitistRecombiningDiscreteLognormalOnePlusOne}; RDL1+1 = \texttt{RecombiningDiscreteLenglerOnePlusOne}; SRDL1+1 = \texttt{SmoothRecombiningDiscreteLenglerOnePlusOne}; SSRDL1+1 = \texttt{SuperSmoothRecombiningDiscreteLenglerOnePlusOne}.}
+    \label{fig:benchmark_plots_qubo_64_t3}
+\end{figure}

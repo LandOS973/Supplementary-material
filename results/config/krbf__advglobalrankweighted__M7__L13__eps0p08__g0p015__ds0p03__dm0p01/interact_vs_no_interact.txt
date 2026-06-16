@@ -1,0 +1,51 @@
+Interact vs No_Interact summary
+wins_interact: 32
+wins_no_interact: 10
+mean_gap: 5.09%
+mean_rank_interact: 6.071428571428571
+median_rank_interact: 2.0
+mean_rank_no_interact: 29.714285714285715
+median_rank_no_interact: 45.5
+per_instance_gap:
+QUBO_dim64_t0: interact=205.199997, no_interact=207.779999, gap=-1.24% (no_interact better)
+QUBO_dim64_t1: interact=151.240005, no_interact=154.100006, gap=-1.86% (no_interact better)
+QUBO_dim64_t2: interact=141.660004, no_interact=143.440002, gap=-1.24% (no_interact better)
+QUBO_dim64_t3: interact=425.480011, no_interact=432.239990, gap=-1.56% (no_interact better)
+QUBO_dim64_t4: interact=337.040009, no_interact=343.859985, gap=-1.98% (no_interact better)
+QUBO_dim64_t5: interact=316.179993, no_interact=319.260010, gap=-0.96% (no_interact better)
+QUBO_dim128_t0: interact=590.159973, no_interact=583.559998, gap=1.13% (interact better)
+QUBO_dim128_t1: interact=449.200012, no_interact=452.799988, gap=-0.80% (no_interact better)
+QUBO_dim128_t2: interact=438.679993, no_interact=432.959991, gap=1.32% (interact better)
+QUBO_dim128_t3: interact=1224.199951, no_interact=1203.459961, gap=1.72% (interact better)
+QUBO_dim128_t4: interact=958.719971, no_interact=949.700012, gap=0.95% (interact better)
+QUBO_dim128_t5: interact=931.280029, no_interact=900.580017, gap=3.41% (interact better)
+QUBO_dim256_t0: interact=1677.119995, no_interact=1491.459961, gap=12.45% (interact better)
+QUBO_dim256_t1: interact=1331.540039, no_interact=1222.180054, gap=8.95% (interact better)
+QUBO_dim256_t2: interact=1282.020020, no_interact=1125.979980, gap=13.86% (interact better)
+QUBO_dim256_t3: interact=3392.419922, no_interact=3014.820068, gap=12.52% (interact better)
+QUBO_dim256_t4: interact=2717.340088, no_interact=2467.600098, gap=10.12% (interact better)
+QUBO_dim256_t5: interact=2665.959961, no_interact=2303.879883, gap=15.72% (interact better)
+NK_dim128_t1: interact=0.711823, no_interact=0.711611, gap=0.03% (interact better)
+NK_dim128_t2: interact=0.740588, no_interact=0.739635, gap=0.13% (interact better)
+NK_dim128_t4: interact=0.764598, no_interact=0.756580, gap=1.06% (interact better)
+NK_dim128_t8: interact=0.745381, no_interact=0.704778, gap=5.76% (interact better)
+NK_dim256_t1: interact=0.709098, no_interact=0.704492, gap=0.65% (interact better)
+NK_dim256_t2: interact=0.739502, no_interact=0.727477, gap=1.65% (interact better)
+NK_dim256_t4: interact=0.759772, no_interact=0.723220, gap=5.05% (interact better)
+NK_dim256_t8: interact=0.733400, no_interact=0.637560, gap=15.03% (interact better)
+NK_dim64_t1: interact=0.712368, no_interact=0.712638, gap=-0.04% (no_interact better)
+NK_dim64_t2: interact=0.747475, no_interact=0.748761, gap=-0.17% (no_interact better)
+NK_dim64_t4: interact=0.760908, no_interact=0.763413, gap=-0.33% (no_interact better)
+NK_dim64_t8: interact=0.753842, no_interact=0.749290, gap=0.61% (interact better)
+NK3_dim128_t1: interact=0.797501, no_interact=0.710421, gap=12.26% (interact better)
+NK3_dim128_t2: interact=0.812338, no_interact=0.736571, gap=10.29% (interact better)
+NK3_dim128_t4: interact=0.798861, no_interact=0.751937, gap=6.24% (interact better)
+NK3_dim128_t8: interact=0.749072, no_interact=0.704765, gap=6.29% (interact better)
+NK3_dim256_t1: interact=0.788915, no_interact=0.699901, gap=12.72% (interact better)
+NK3_dim256_t2: interact=0.803453, no_interact=0.725589, gap=10.73% (interact better)
+NK3_dim256_t4: interact=0.782273, no_interact=0.719018, gap=8.80% (interact better)
+NK3_dim256_t8: interact=0.728531, no_interact=0.636870, gap=14.39% (interact better)
+NK3_dim64_t1: interact=0.789433, no_interact=0.702676, gap=12.35% (interact better)
+NK3_dim64_t2: interact=0.820363, no_interact=0.744785, gap=10.15% (interact better)
+NK3_dim64_t4: interact=0.806579, no_interact=0.765172, gap=5.41% (interact better)
+NK3_dim64_t8: interact=0.762672, no_interact=0.746560, gap=2.16% (interact better)

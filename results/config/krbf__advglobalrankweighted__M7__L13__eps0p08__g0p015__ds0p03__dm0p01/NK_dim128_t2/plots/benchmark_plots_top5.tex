@@ -1,0 +1,19 @@
+\begin{figure}[h]
+    \centering
+    \begin{subfigure}[b]{0.56\textwidth}
+        \centering
+        \caption{}
+        \includegraphics[width=\linewidth]{comparison_nk_128_t2.png}
+        \label{fig:comparison_nk_128_t2}
+    \end{subfigure}
+    \vspace{0.5cm}
+    \begin{subfigure}[b]{0.42\textwidth}
+        \centering
+        \caption{}
+        \includegraphics[width=\linewidth]{boxplot_final_score_vs_top5.png}
+        \label{fig:boxplot_nk_128_t2}
+    \end{subfigure}
+
+    \caption{Performance analysis on a NK instance distribution ($n=128, K=2$). (a) Evolution of the average score for \texttt{SVGD-EDA} and the top-five competitors. (b) Final score distribution after 50,000 evaluations. Both panels use the same labels/colors: SVGD-EDA, DiscreteDE, PBIL, HLD1+1, RDL1+1, SRDL1+1. Acronyms in legends: HLD1+1 = \texttt{HugeLognormalDiscreteOnePlusOne}; RDL1+1 = \texttt{RecombiningDiscreteLenglerOnePlusOne}; SRDL1+1 = \texttt{SmoothRecombiningDiscreteLenglerOnePlusOne}.}
+    \label{fig:benchmark_plots_nk_128_t2}
+\end{figure}
