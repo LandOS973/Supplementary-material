@@ -1043,21 +1043,26 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             hammings_a = [r[col_hamming_a] for r in summary_rows if r[col_hamming_a] is not None]
             hammings_b = [r[col_hamming_b] for r in summary_rows if r[col_hamming_b] is not None]
 
-            mc = st.columns(9)
+            top1_a = sum(1 for r in summary_rows if r[col_rank_a] == 1)
+            top1_b = sum(1 for r in summary_rows if r[col_rank_b] == 1)
+
+            mc = st.columns(11)
             mc[0].metric(f"Victoires {label_a}", wins_a)
-            mc[1].metric(f"Victoires {label_b}", wins_b)
-            mc[2].metric("Gap moyen", f"{mean_gap:+.2f}%",
+            mc[1].metric(f"Top 1 {label_a}", top1_a)
+            mc[2].metric(f"Victoires {label_b}", wins_b)
+            mc[3].metric(f"Top 1 {label_b}", top1_b)
+            mc[4].metric("Gap moyen", f"{mean_gap:+.2f}%",
                          help=f"+ si {label_a} meilleur, − si {label_b} meilleur")
             if ranks_a:
-                mc[3].metric(f"Rank moy {label_a}", f"{sum(ranks_a)/len(ranks_a):.1f}")
-                mc[4].metric(f"Rank méd {label_a}", f"{sorted(ranks_a)[len(ranks_a)//2]}")
+                mc[5].metric(f"Rank moy {label_a}", f"{sum(ranks_a)/len(ranks_a):.1f}")
+                mc[6].metric(f"Rank méd {label_a}", f"{sorted(ranks_a)[len(ranks_a)//2]}")
             if ranks_b:
-                mc[5].metric(f"Rank moy {label_b}", f"{sum(ranks_b)/len(ranks_b):.1f}")
-                mc[6].metric(f"Rank méd {label_b}", f"{sorted(ranks_b)[len(ranks_b)//2]}")
+                mc[7].metric(f"Rank moy {label_b}", f"{sum(ranks_b)/len(ranks_b):.1f}")
+                mc[8].metric(f"Rank méd {label_b}", f"{sorted(ranks_b)[len(ranks_b)//2]}")
             if hammings_a:
-                mc[7].metric(f"Hamming {label_a}", f"{sum(hammings_a)/len(hammings_a):.1f}")
+                mc[9].metric(f"Hamming {label_a}", f"{sum(hammings_a)/len(hammings_a):.1f}")
             if hammings_b:
-                mc[8].metric(f"Hamming {label_b}", f"{sum(hammings_b)/len(hammings_b):.1f}")
+                mc[10].metric(f"Hamming {label_b}", f"{sum(hammings_b)/len(hammings_b):.1f}")
 
             sdf = pd.DataFrame(summary_rows)
             st.dataframe(
@@ -1074,6 +1079,90 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     col_rank_b:   st.column_config.NumberColumn(col_rank_b,   format="%d"),
                 },
             )
+
+    # ── Convergence moyenne par famille ──────────────────────────────────────
+    if cfg_a and cfg_b:
+        # (cfg, problem) -> (mean Series, std Series), indexed by actual step values
+        _conv_data: dict = {}
+        for _cfg in [cfg_a, cfg_b]:
+            for _prob in ["NK", "NK3", "QUBO"]:
+                _series = []
+                for _inst in sorted_instances:
+                    _mi = INSTANCE_RE.match(_inst)
+                    if not _mi or _mi.group("problem") != _prob:
+                        continue
+                    _df = load_curve(_cfg, _inst)
+                    if _df is None or "best_fitness" not in _df.columns:
+                        continue
+                    _step_col = _df["step"] if "step" in _df.columns else pd.Series(range(len(_df)))
+                    _series.append(
+                        pd.Series(np.abs(_df["best_fitness"].values),
+                                  index=_step_col.values)
+                    )
+                if _series:
+                    _combined = pd.concat(_series, axis=1)
+                    _conv_data[(_cfg, _prob)] = (
+                        _combined.mean(axis=1),
+                        _combined.std(axis=1).fillna(0),
+                    )
+
+        _active_probs = [p for p in ["NK", "NK3", "QUBO"]
+                         if (_conv_data.get((cfg_a, p)) or _conv_data.get((cfg_b, p)))]
+        if _active_probs:
+            st.divider()
+            st.markdown("#### 📈 Convergence moyenne par famille")
+            fig_conv = make_subplots(
+                rows=1, cols=len(_active_probs),
+                subplot_titles=_active_probs,
+                horizontal_spacing=0.08,
+            )
+            for _ci, _prob in enumerate(_active_probs, 1):
+                for _cfg, _lbl, _color in [(cfg_a, label_a, COLORS[0]),
+                                           (cfg_b, label_b, COLORS[1])]:
+                    if (_cfg, _prob) not in _conv_data:
+                        continue
+                    _mean, _std = _conv_data[(_cfg, _prob)]
+                    _x = _mean.index.tolist()
+                    _y = _mean.tolist()
+                    _yu = (_mean + _std).tolist()
+                    _yl = (_mean - _std).tolist()
+                    # Bande ±std
+                    fig_conv.add_trace(go.Scatter(
+                        x=_x + _x[::-1],
+                        y=_yu + _yl[::-1],
+                        fill="toself",
+                        fillcolor=_color,
+                        opacity=0.12,
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo="skip",
+                        legendgroup=_lbl,
+                    ), row=1, col=_ci)
+                    # Courbe moyenne
+                    fig_conv.add_trace(go.Scatter(
+                        x=_x, y=_y,
+                        mode="lines",
+                        name=_lbl,
+                        line=dict(color=_color, width=2),
+                        showlegend=(_ci == 1),
+                        legendgroup=_lbl,
+                        hovertemplate=f"{_lbl}: %{{y:.4f}}<extra>{_prob}</extra>",
+                    ), row=1, col=_ci)
+                fig_conv.update_yaxes(title_text="Score", row=1, col=_ci,
+                                      gridcolor="#ebebeb", zeroline=False)
+                fig_conv.update_xaxes(title_text="Évaluations", row=1, col=_ci,
+                                      gridcolor="#ebebeb")
+            fig_conv.update_layout(
+                height=380,
+                margin=dict(t=45, b=20, l=10, r=10),
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.18),
+                hovermode="x unified",
+            )
+            for _ann in fig_conv.layout.annotations:
+                _ann.update(font=dict(size=13, color="#333"))
+            st.plotly_chart(fig_conv, use_container_width=True, key="conv_fig")
 
     for pair_start in range(0, len(instances), 2):
         pair = instances[pair_start:pair_start + 2]
