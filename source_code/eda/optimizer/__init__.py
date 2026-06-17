@@ -1,4 +1,5 @@
 from eda.optimizer.pbil import PBIL
+from eda.optimizer.ppbil import PPBIL
 from eda.optimizer.umda import UMDA
 from eda.optimizer.cga import CGA
 from eda.optimizer.mimic import MIMIC

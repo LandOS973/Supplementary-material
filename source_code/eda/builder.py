@@ -63,6 +63,11 @@ def build_optimizer(args, objective):
                     negative_lr=args.negative_lr,
                     mut_prob=args.mutation_prob,
                     mut_shift=args.mutation_shift)
+    elif args.optim_type == "ppbil":
+        return PPBIL(categories, args.lr,
+                     lam=args.lam,
+                     mut_prob=args.mutation_prob,
+                     mut_shift=args.mutation_shift)
     elif args.optim_type == "mimic":
         return MIMIC(categories, replacement,
                      lam=args.lam)

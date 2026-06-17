@@ -16,7 +16,7 @@ from typing import List, Tuple
 
 
 ROOT = Path(__file__).resolve().parent.parent
-INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
+INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK3|NK)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
 DEFAULT_CONFIG_NAME = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"
 
 
@@ -45,14 +45,14 @@ def _read_last_metric_score(metrics_path: Path) -> float | None:
 
 
 def _is_maximize(problem: str) -> bool:
-    return problem.upper() == "NK"
+    return problem.upper() in ("NK", "NK3")
 
 
 def _format_score(problem: str, value: float | None) -> str:
     if value is None:
         return "—"
     value = abs(value)
-    if problem.upper() == "NK":
+    if problem.upper() in ("NK", "NK3"):
         return f"{value:.4f}"
     return f"{value:.2f}"
 

@@ -47,9 +47,9 @@ fi
 echo "Job name: $JOB_NAME"
 
 if [ -n "$M_VALUES" ]; then
-  srun python source_code/main_expe_overall.py -m "$M_VALUES"
+  srun python source_code/expe/main_expe_overall.py -m "$M_VALUES"
 else
-  srun python source_code/main_expe_overall.py
+  srun python source_code/expe/main_expe_overall.py
 fi
 
 echo "Job terminé à $(date)"

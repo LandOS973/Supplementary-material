@@ -1,0 +1,22 @@
+defaults:
+  - problem: anr
+  - agent: reinforce
+  - _self_
+
+seed: 0
+verbose: true
+output_dir: outputs
+nb_instances_test: 1
+nb_restarts: 1
+budget: 100000
+visualization: false
+
+strategy_variants:
+  - label: Baseline
+    advantage: baseline
+  - label: Global rank weighted
+    advantage: globalrankweighted
+  - label: Per-agent rank weighted
+    advantage: peragentrankweighted
+  - label: Normalized fitness
+    advantage: normalizedfitness
