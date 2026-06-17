@@ -1,6 +1,6 @@
 name: REINFORCE-EDA
 updateMethod: REINFORCE
-M: 10
+M: 7
 l_active: 1
 lambda: 13
 advantage: globalrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
@@ -11,5 +11,3 @@ enable_greedy_final: false
 decay_start_ratio: 0.03
 min_factor: 0.1
 decay: true
-ucb_c: 50        # null = sélection aléatoire, float = UCB avec constante c
-ucb_adaptive: true  # true = c(t) = ucb_c * std(fitness_norm par instance)
