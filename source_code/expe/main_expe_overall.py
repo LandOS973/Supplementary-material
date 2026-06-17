@@ -39,7 +39,7 @@ DEFAULTS = dict(
 DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
-        advantages=["peragentrankweighted"],
+        advantages=["globalrankweighted"], 
         M_values=[10],
         lambda_values=[8,10,13,14],
         epsilon_svgd=[0.08,0.10, 0.12],
