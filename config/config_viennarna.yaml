@@ -1,16 +1,15 @@
 defaults:
-  - problem: qubo
+  - problem: anr
   - agent: reinforce
   - _self_
 
-# génériques
 seed: 0
 verbose: true
 output_dir: outputs
-nb_instances_test: 10
-nb_restarts: 10
-budget: 50000
-visualization: true
+nb_instances_test: 1
+nb_restarts: 1
+budget: 100000
+visualization: false
 
 strategy_variants:
   - label: Baseline
