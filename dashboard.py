@@ -95,6 +95,7 @@ DASHBOARD_DIR.mkdir(exist_ok=True)
 CACHE_FILE       = DASHBOARD_DIR / "cache.parquet"
 INSTANCES_FILE   = DASHBOARD_DIR / "instances.parquet"
 COMPARISONS_FILE = DASHBOARD_DIR / "comparisons.json"
+FAVORITES_FILE   = DASHBOARD_DIR / "favorites.json"
 
 # Migrate old files from previous locations
 _old_cache = RESULTS_DIR / ".dashboard_cache.parquet"
@@ -264,6 +265,7 @@ def load_summary() -> pd.DataFrame:
     return result
 
 
+@st.cache_data(show_spinner=False)
 def load_curve(config: str, instance: str) -> pd.DataFrame | None:
     p = RESULTS_DIR / config / instance / "best_metrics.csv"
     try:
@@ -272,6 +274,7 @@ def load_curve(config: str, instance: str) -> pd.DataFrame | None:
         return None
 
 
+@st.cache_data(show_spinner=False)
 def load_raw_scores(config: str, instance: str) -> pd.Series | None:
     p = RESULTS_DIR / config / instance / "raw_scores.csv"
     try:
@@ -280,6 +283,7 @@ def load_raw_scores(config: str, instance: str) -> pd.Series | None:
         return None
 
 
+@st.cache_data(show_spinner=False)
 def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     p = RANKING_DIR / fname
@@ -292,6 +296,7 @@ def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
         return None
 
 
+@st.cache_data(show_spinner=False)
 def load_comparisons() -> list[dict]:
     if COMPARISONS_FILE.exists():
         try:
@@ -303,6 +308,22 @@ def load_comparisons() -> list[dict]:
 
 def save_comparisons(comps: list[dict]) -> None:
     COMPARISONS_FILE.write_text(json.dumps(comps, indent=2))
+    load_comparisons.clear()
+
+
+@st.cache_data(show_spinner=False)
+def load_favorites() -> list[dict]:
+    if FAVORITES_FILE.exists():
+        try:
+            return json.loads(FAVORITES_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def save_favorites(favs: list[dict]) -> None:
+    FAVORITES_FILE.write_text(json.dumps(favs, indent=2))
+    load_favorites.clear()
 
 
 from plotly.subplots import make_subplots
@@ -1069,6 +1090,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 sdf,
                 use_container_width=True,
                 hide_index=True,
+                height=38 + len(summary_rows) * 35,
                 column_config={
                     "Gap %":      st.column_config.NumberColumn("Gap %",      format="%+.2f"),
                     col_score_a:  st.column_config.NumberColumn(col_score_a,  format="%.4f"),
@@ -1087,7 +1109,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         for _cfg in [cfg_a, cfg_b]:
             for _prob in ["NK", "NK3", "QUBO"]:
                 _series = []
-                for _inst in sorted_instances:
+                for _inst in instances:
                     _mi = INSTANCE_RE.match(_inst)
                     if not _mi or _mi.group("problem") != _prob:
                         continue
@@ -1279,6 +1301,183 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 st.plotly_chart(fig, use_container_width=True, key=f"comp_fig_{sel_idx}_{instance}")
 
 
+@st.fragment
+def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
+    favs        = load_favorites()
+    all_configs = all_df["config"].tolist()
+    sel_idx     = st.session_state.get("fav_sel_idx")
+
+    # ── Vue liste (dossiers) ──────────────────────────────────────────────────
+    if sel_idx is None or sel_idx >= len(favs):
+        h1, h2 = st.columns([6, 1])
+        h1.markdown("#### ⭐ Dossiers favoris")
+        if h2.button("+ Nouveau", key="fav_new", use_container_width=True):
+            favs.append({"name": f"Favoris {len(favs) + 1}",
+                         "configs": [], "aliases": {}, "instances": []})
+            save_favorites(favs)
+            st.session_state["fav_sel_idx"] = len(favs) - 1
+            st.rerun()
+
+        if not favs:
+            st.info("Aucun dossier. Cliquez sur « + Nouveau » pour commencer.")
+            return
+
+        grid = st.columns(3)
+        for i, fav in enumerate(favs):
+            with grid[i % 3]:
+                with st.container(border=True):
+                    t1, t2 = st.columns([5, 1])
+                    if t1.button(f"⭐ {fav['name']}", key=f"fav_sel_{i}", use_container_width=True):
+                        st.session_state["fav_sel_idx"] = i
+                        st.rerun()
+                    if t2.button("🗑", key=f"fav_del_{i}"):
+                        favs.pop(i)
+                        save_favorites(favs)
+                        st.rerun()
+                    n_cfg = len(fav.get("configs", []))
+                    if n_cfg:
+                        st.caption(f"{n_cfg} config{'s' if n_cfg > 1 else ''}")
+                    n_inst = len(fav.get("instances", []))
+                    if n_inst:
+                        st.caption(f"{n_inst} instance{'s' if n_inst > 1 else ''}")
+        return
+
+    # ── Vue détail ────────────────────────────────────────────────────────────
+    fav = favs[sel_idx]
+
+    hd1, hd2 = st.columns([1, 8])
+    if hd1.button("← Retour", key="fav_back"):
+        st.session_state.pop("fav_sel_idx", None)
+        st.rerun()
+    hd2.markdown(f"#### ⭐ {fav['name']}")
+
+    new_name = st.text_input("Nom du dossier", value=fav["name"], key=f"fav_name_{sel_idx}")
+    if new_name and new_name != fav["name"]:
+        favs[sel_idx]["name"] = new_name
+        save_favorites(favs)
+
+    st.divider()
+    st.markdown("##### Configs sauvegardées")
+
+    # Ajouter une config
+    existing_cfgs = fav.get("configs", [])
+    available_cfgs = [c for c in all_configs if c not in existing_cfgs]
+    ac1, ac2 = st.columns([4, 1])
+    add_cfg = ac1.selectbox("Ajouter une config", [""] + available_cfgs, key=f"fav_add_{sel_idx}")
+    if ac2.button("Ajouter", key=f"fav_add_btn_{sel_idx}", use_container_width=True, disabled=not add_cfg):
+        if add_cfg and add_cfg not in favs[sel_idx]["configs"]:
+            favs[sel_idx]["configs"].append(add_cfg)
+            save_favorites(favs)
+            st.rerun()
+
+    configs = fav.get("configs", [])
+    aliases = fav.get("aliases", {})
+
+    if not configs:
+        st.info("Aucune config ajoutée.")
+        return
+
+    for cfg in list(configs):
+        row_df = all_df[all_df["config"] == cfg]
+        default_lbl = _config_label(row_df.iloc[0]) if not row_df.empty else cfg[-40:]
+        r1, r2, r3 = st.columns([3, 3, 1])
+        r1.code(cfg[-40:], language=None)
+        alias = r2.text_input(
+            "Alias", value=aliases.get(cfg, ""),
+            key=f"fav_alias_{sel_idx}_{cfg}",
+            placeholder=default_lbl,
+            label_visibility="collapsed",
+        )
+        if alias != aliases.get(cfg, ""):
+            favs[sel_idx]["aliases"][cfg] = alias
+            save_favorites(favs)
+        if r3.button("✕", key=f"fav_rm_{sel_idx}_{cfg}", use_container_width=True):
+            favs[sel_idx]["configs"].remove(cfg)
+            favs[sel_idx]["aliases"].pop(cfg, None)
+            save_favorites(favs)
+            st.rerun()
+
+    def _fav_lbl(cfg: str) -> str:
+        al = aliases.get(cfg, "")
+        if al:
+            return al
+        row_df = all_df[all_df["config"] == cfg]
+        return _config_label(row_df.iloc[0]) if not row_df.empty else cfg[-30:]
+
+    st.divider()
+
+    # ── Sélection d'instances ─────────────────────────────────────────────────
+    saved_insts = [i for i in fav.get("instances", []) if i in sorted_instances]
+    inst_key    = f"fav_inst_{sel_idx}"
+
+    nk_insts   = [i for i in sorted_instances if INSTANCE_RE.match(i).group("problem") == "NK"]
+    nk3_insts  = [i for i in sorted_instances if INSTANCE_RE.match(i).group("problem") == "NK3"]
+    qubo_insts = [i for i in sorted_instances if INSTANCE_RE.match(i).group("problem") == "QUBO"]
+
+    b1, b2, b3 = st.columns(3)
+    if b1.button("+ Tout NK",   key=f"fav_nk_{sel_idx}",   use_container_width=True):
+        cur = list(st.session_state.get(inst_key, saved_insts))
+        st.session_state[inst_key] = sorted(set(cur) | set(nk_insts),   key=sorted_instances.index)
+    if b2.button("+ Tout NK3",  key=f"fav_nk3_{sel_idx}",  use_container_width=True):
+        cur = list(st.session_state.get(inst_key, saved_insts))
+        st.session_state[inst_key] = sorted(set(cur) | set(nk3_insts),  key=sorted_instances.index)
+    if b3.button("+ Tout QUBO", key=f"fav_qubo_{sel_idx}", use_container_width=True):
+        cur = list(st.session_state.get(inst_key, saved_insts))
+        st.session_state[inst_key] = sorted(set(cur) | set(qubo_insts), key=sorted_instances.index)
+
+    instances = st.multiselect(
+        "Instances", sorted_instances, default=saved_insts, key=inst_key,
+    )
+
+    if instances != saved_insts:
+        favs[sel_idx]["instances"] = instances
+        save_favorites(favs)
+
+    if not instances:
+        st.info("Sélectionnez au moins une instance.")
+        return
+
+    # ── Tableau récapitulatif ─────────────────────────────────────────────────
+    summary_rows = []
+    for inst in instances:
+        m_inst = INSTANCE_RE.match(inst)
+        prob, dim, t = m_inst.group("problem"), int(m_inst.group("dim")), int(m_inst.group("t"))
+        row: dict = {"Instance": inst}
+        for cfg in configs:
+            lbl   = _fav_lbl(cfg)
+            curve = load_curve(cfg, inst)
+            if curve is not None:
+                score = abs(float(curve["best_fitness"].iloc[-1]))
+                rank  = _get_rank(prob, dim, t, score)
+                row[f"Score {lbl}"] = round(score, 4)
+                row[f"Rang {lbl}"]  = rank
+            else:
+                row[f"Score {lbl}"] = None
+                row[f"Rang {lbl}"]  = None
+        summary_rows.append(row)
+
+    st.markdown("#### 📊 Résumé")
+    mc = st.columns(max(len(configs) * 2, 1))
+    for ci, cfg in enumerate(configs):
+        lbl    = _fav_lbl(cfg)
+        ranks  = [r[f"Rang {lbl}"]  for r in summary_rows if r.get(f"Rang {lbl}")  is not None]
+        top1   = sum(1 for r in summary_rows if r.get(f"Rang {lbl}") == 1)
+        mc[ci * 2].metric(
+            f"Rank moy — {lbl}",
+            f"{sum(ranks)/len(ranks):.1f}" if ranks else "—",
+        )
+        mc[ci * 2 + 1].metric(f"Top 1 — {lbl}", top1)
+
+    col_cfg_display = {}
+    for cfg in configs:
+        lbl = _fav_lbl(cfg)
+        col_cfg_display[f"Score {lbl}"] = st.column_config.NumberColumn(f"Score {lbl}", format="%.4f")
+        col_cfg_display[f"Rang {lbl}"]  = st.column_config.NumberColumn(f"Rang {lbl}",  format="%d")
+    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True,
+                 hide_index=True, column_config=col_cfg_display,
+                 height=38 + len(summary_rows) * 35)
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="PPO-EDA Dashboard", layout="wide", page_icon="📊")
@@ -1289,7 +1488,7 @@ if df.empty:
     st.error(f"Aucun résultat trouvé dans `{RESULTS_DIR}`")
     st.stop()
 
-# Garder uniquement les configs avec au moins un raw_scores.csv
+@st.cache_data(show_spinner=False)
 def _has_raw(config_name: str) -> bool:
     d = RESULTS_DIR / config_name
     if not d.exists():
@@ -1324,7 +1523,7 @@ with st.sidebar:
 
     max_rank = float(df["mean_rank"].max())
     rank_lim = st.slider("Rank moyen ≤", 1.0, max_rank, max_rank, step=0.5)
-    show_n   = st.number_input("Configs max", 5, 500, 100)
+    show_n   = st.number_input("Configs max", 5, 500, 200)
 
 # Apply filters
 mask = pd.Series(True, index=df.index)
@@ -1376,19 +1575,20 @@ with st.sidebar:
 
 st.caption(f"{len(filtered)} configs affichées sur {len(df)} disponibles")
 
-# ── Sorted instances (computed once, passed to tabs that need it) ──────────────
-all_instances: set[str] = set()
-for cfg in filtered["config"]:
-    d = RESULTS_DIR / cfg
-    if d.exists():
-        for sub in d.iterdir():
-            if sub.is_dir() and INSTANCE_RE.match(sub.name):
-                all_instances.add(sub.name)
-sorted_instances = sorted(all_instances)
+# ── Sorted instances (scan one config dir — all configs share the same instances)
+sorted_instances: list[str] = []
+for _cfg in df["config"]:
+    _d = RESULTS_DIR / _cfg
+    if _d.exists():
+        sorted_instances = sorted(
+            sub.name for sub in _d.iterdir()
+            if sub.is_dir() and INSTANCE_RE.match(sub.name)
+        )
+        break
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📋 Classement", "📈 Courbes", "📦 Boxplots", "🔍 Analyse", "⚖️ Comparaison"]
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["📋 Classement", "📈 Courbes", "📦 Boxplots", "🔍 Analyse", "⚖️ Comparaison", "⭐ Favoris"]
 )
 
 with tab1:
@@ -1405,3 +1605,6 @@ with tab4:
 
 with tab5:
     tab_comparaison(df, sorted_instances)
+
+with tab6:
+    tab_favoris(df, sorted_instances)
