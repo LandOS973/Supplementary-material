@@ -1,5 +1,5 @@
 """
-PPO-EDA Grid Search Dashboard
+SVGD-EDA Grid Search Dashboard
 Run: streamlit run dashboard.py
 """
 from __future__ import annotations
@@ -1480,8 +1480,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="PPO-EDA Dashboard", layout="wide", page_icon="📊")
-st.title("PPO-EDA — Grid Search Dashboard")
+st.set_page_config(page_title="SVGD-EDA Dashboard", layout="wide", page_icon="📊")
+st.title("SVGD-EDA — Grid Search Dashboard")
 
 df = load_summary()
 if df.empty:
