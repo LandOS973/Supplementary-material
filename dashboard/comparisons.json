@@ -96,5 +96,26 @@
       "QUBO_dim64_t4",
       "QUBO_dim64_t5"
     ]
+  },
+  {
+    "name": "ASYNC Normal VS Une par une",
+    "config_a": "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01",
+    "config_b": "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01__la1",
+    "instances": [
+      "NK_dim128_t1",
+      "NK_dim128_t2",
+      "NK_dim128_t4",
+      "NK_dim128_t8",
+      "NK_dim256_t1",
+      "NK_dim256_t2",
+      "NK_dim256_t4",
+      "NK_dim256_t8",
+      "NK_dim64_t1",
+      "NK_dim64_t2",
+      "NK_dim64_t4",
+      "NK_dim64_t8"
+    ],
+    "label_a": "Normal",
+    "label_b": "1 par 1"
   }
 ]

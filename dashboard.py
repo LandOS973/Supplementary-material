@@ -965,6 +965,8 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
     idx_a = cfg_options.index(grp["config_a"]) if grp.get("config_a") in cfg_options else 0
     idx_b = cfg_options.index(grp["config_b"]) if grp.get("config_b") in cfg_options else 0
 
+    COLOR_A, COLOR_B = "#1f77b4", "#2ca02c"
+
     cc1, cc2 = st.columns(2)
     with cc1:
         cfg_a = st.selectbox("Config A", cfg_options, index=idx_a, key=f"comp_cfg_a_{sel_idx}")
@@ -979,6 +981,24 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
     if not cfg_a or not cfg_b:
         st.info("Sélectionnez deux configs pour afficher la comparaison.")
         return
+
+    # Noms personnalisés
+    nc1, nc2 = st.columns(2)
+    label_a = nc1.text_input("Nom Config A", value=grp.get("label_a", "Config A"), key=f"comp_label_a_{sel_idx}", placeholder="Config A")
+    label_b = nc2.text_input("Nom Config B", value=grp.get("label_b", "Config B"), key=f"comp_label_b_{sel_idx}", placeholder="Config B")
+    label_a = label_a or "Config A"
+    label_b = label_b or "Config B"
+    if label_a != grp.get("label_a") or label_b != grp.get("label_b"):
+        comps[sel_idx]["label_a"] = label_a
+        comps[sel_idx]["label_b"] = label_b
+        save_comparisons(comps)
+
+    st.markdown(
+        f'<span style="color:{COLOR_A};font-weight:bold;font-size:16px;">■ {label_a}</span>'
+        f'&nbsp;&nbsp;&nbsp;&nbsp;'
+        f'<span style="color:{COLOR_B};font-weight:bold;font-size:16px;">■ {label_b}</span>',
+        unsafe_allow_html=True,
+    )
 
     saved_insts = [i for i in grp.get("instances", []) if i in sorted_instances]
     inst_key = f"comp_inst_{sel_idx}"
@@ -1012,12 +1032,6 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         comps[sel_idx]["instances"] = instances
         save_comparisons(comps)
 
-    if not instances:
-        st.info("Sélectionnez au moins une instance.")
-        return
-
-    label_a, label_b = _diff_labels(cfg_a, cfg_b)
-
     # ── Résumé A vs B ─────────────────────────────────────────────────────────
     summary_rows = []
     # column name helpers — built once, reused everywhere
@@ -1044,6 +1058,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         rb = _get_rank(prob, dim, t, sb)
         summary_rows.append({
             "Instance":     inst,
+            "_prob": prob, "_dim": dim, "_t": t,
             col_score_a:    round(sa, 4),
             col_score_b:    round(sb, 4),
             "Gap %":        round(gap, 2),
@@ -1067,40 +1082,93 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             top1_a = sum(1 for r in summary_rows if r[col_rank_a] == 1)
             top1_b = sum(1 for r in summary_rows if r[col_rank_b] == 1)
 
-            mc = st.columns(11)
-            mc[0].metric(f"Victoires {label_a}", wins_a)
-            mc[1].metric(f"Top 1 {label_a}", top1_a)
-            mc[2].metric(f"Victoires {label_b}", wins_b)
-            mc[3].metric(f"Top 1 {label_b}", top1_b)
-            mc[4].metric("Gap moyen", f"{mean_gap:+.2f}%",
-                         help=f"+ si {label_a} meilleur, − si {label_b} meilleur")
-            if ranks_a:
-                mc[5].metric(f"Rank moy {label_a}", f"{sum(ranks_a)/len(ranks_a):.1f}")
-                mc[6].metric(f"Rank méd {label_a}", f"{sorted(ranks_a)[len(ranks_a)//2]}")
-            if ranks_b:
-                mc[7].metric(f"Rank moy {label_b}", f"{sum(ranks_b)/len(ranks_b):.1f}")
-                mc[8].metric(f"Rank méd {label_b}", f"{sorted(ranks_b)[len(ranks_b)//2]}")
-            if hammings_a:
-                mc[9].metric(f"Hamming {label_a}", f"{sum(hammings_a)/len(hammings_a):.1f}")
-            if hammings_b:
-                mc[10].metric(f"Hamming {label_b}", f"{sum(hammings_b)/len(hammings_b):.1f}")
+            s_th  = "padding:8px 24px;font-size:18px;font-weight:700;border-bottom:2px solid #ccc;text-align:center;white-space:nowrap;"
+            s_td0 = "padding:7px 24px;font-size:17px;font-weight:600;border-bottom:1px solid #f0f0f0;white-space:nowrap;color:#555;"
+            s_td  = "padding:7px 24px;font-size:18px;font-weight:700;border-bottom:1px solid #f0f0f0;text-align:center;white-space:nowrap;"
 
-            sdf = pd.DataFrame(summary_rows)
-            st.dataframe(
-                sdf,
-                use_container_width=True,
-                hide_index=True,
-                height=38 + len(summary_rows) * 35,
-                column_config={
-                    "Gap %":      st.column_config.NumberColumn("Gap %",      format="%+.2f"),
-                    col_score_a:  st.column_config.NumberColumn(col_score_a,  format="%.4f"),
-                    col_score_b:  st.column_config.NumberColumn(col_score_b,  format="%.4f"),
-                    col_hamming_a:st.column_config.NumberColumn(col_hamming_a,format="%.2f"),
-                    col_hamming_b:st.column_config.NumberColumn(col_hamming_b,format="%.2f"),
-                    col_rank_a:   st.column_config.NumberColumn(col_rank_a,   format="%d"),
-                    col_rank_b:   st.column_config.NumberColumn(col_rank_b,   format="%d"),
-                },
+            stat_rows = [("Victoires", wins_a, wins_b), ("Top 1", top1_a, top1_b)]
+            if ranks_a and ranks_b:
+                stat_rows += [
+                    ("Rank moy", f"{sum(ranks_a)/len(ranks_a):.1f}", f"{sum(ranks_b)/len(ranks_b):.1f}"),
+                    ("Rank méd", sorted(ranks_a)[len(ranks_a)//2],   sorted(ranks_b)[len(ranks_b)//2]),
+                ]
+            if hammings_a and hammings_b:
+                stat_rows.append(("Hamming moy", f"{sum(hammings_a)/len(hammings_a):.1f}", f"{sum(hammings_b)/len(hammings_b):.1f}"))
+            stat_rows.append(("Gap moyen", f"{mean_gap:+.2f}%", ""))
+
+            html_stats = '<table style="border-collapse:collapse;margin-bottom:16px;">'
+            html_stats += (f'<thead><tr>'
+                           f'<th style="{s_th}color:#333;text-align:left;"></th>'
+                           f'<th style="{s_th}color:{COLOR_A};">{label_a}</th>'
+                           f'<th style="{s_th}color:{COLOR_B};">{label_b}</th>'
+                           f'</tr></thead><tbody>')
+            for stat, va, vb in stat_rows:
+                html_stats += (f'<tr>'
+                               f'<td style="{s_td0}">{stat}</td>'
+                               f'<td style="{s_td}color:{COLOR_A};">{va}</td>'
+                               f'<td style="{s_td}color:{COLOR_B};">{vb}</td>'
+                               f'</tr>')
+            html_stats += "</tbody></table>"
+            st.markdown(html_stats, unsafe_allow_html=True)
+
+            _PROB_ORDER_C = {"NK": 0, "NK3": 1, "QUBO": 2}
+            summary_rows.sort(key=lambda r: (_PROB_ORDER_C.get(r["_prob"], 99), r["_dim"], r["_t"]))
+
+            has_hamming = any(r.get(col_hamming_a) is not None or r.get(col_hamming_b) is not None for r in summary_rows)
+            data_cols_c = (
+                ["Instance", col_score_a, col_score_b, "Gap %"]
+                + ([col_hamming_a, col_hamming_b] if has_hamming else [])
+                + [col_rank_a, col_rank_b, "Résultat"]
             )
+            # couleur par colonne
+            col_colors = {
+                col_score_a: COLOR_A, col_rank_a: COLOR_A, col_hamming_a: COLOR_A,
+                col_score_b: COLOR_B, col_rank_b: COLOR_B, col_hamming_b: COLOR_B,
+            }
+
+            th_base = "padding:8px 28px;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
+            td_l    = "padding:7px 28px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;"
+            td_r    = "padding:7px 28px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;text-align:right;"
+            td_sep  = "padding:18px 10px 5px;font-weight:bold;font-size:19px;color:#333;border-top:2px solid #bbb;"
+
+            active_probs_c = [p for p in ["NK", "NK3", "QUBO"] if any(r["_prob"] == p for r in summary_rows)]
+
+            for prob in active_probs_c:
+                prob_rows = [r for r in summary_rows if r["_prob"] == prob]
+                st.markdown(f"## {prob}")
+                ncols = len(data_cols_c)
+                html = '<table style="border-collapse:collapse;">'
+                html += "<thead><tr>"
+                for col in data_cols_c:
+                    color = col_colors.get(col, "#333")
+                    align = "left" if col == "Instance" else "right"
+                    html += (f'<th style="{th_base}text-align:{align};color:{color};">'
+                             f'{col}</th>')
+                html += "</tr></thead><tbody>"
+                current_dim = None
+                for r in prob_rows:
+                    if r["_dim"] != current_dim:
+                        current_dim = r["_dim"]
+                        html += f'<tr><td colspan="{ncols}" style="{td_sep}">DIM {current_dim}</td></tr>'
+                    html += f'<tr><td style="{td_l}">{r["Instance"]}</td>'
+                    for col in data_cols_c[1:]:
+                        val = r.get(col)
+                        if val is None:
+                            cell = ""
+                        elif col in (col_score_a, col_score_b):
+                            cell = f"{val:.4f}"
+                        elif col in (col_hamming_a, col_hamming_b):
+                            cell = f"{val:.2f}"
+                        elif col == "Gap %":
+                            cell = f"{val:+.2f}%"
+                        elif col in (col_rank_a, col_rank_b):
+                            cell = str(int(val))
+                        else:
+                            cell = str(val)
+                        html += f'<td style="{td_r}">{cell}</td>'
+                    html += "</tr>"
+                html += "</tbody></table>"
+                st.markdown(html, unsafe_allow_html=True)
 
     # ── Convergence moyenne par famille ──────────────────────────────────────
     if cfg_a and cfg_b:
@@ -1139,8 +1207,8 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 horizontal_spacing=0.08,
             )
             for _ci, _prob in enumerate(_active_probs, 1):
-                for _cfg, _lbl, _color in [(cfg_a, label_a, COLORS[0]),
-                                           (cfg_b, label_b, COLORS[1])]:
+                for _cfg, _lbl, _color in [(cfg_a, label_a, COLOR_A),
+                                           (cfg_b, label_b, COLOR_B)]:
                     if (_cfg, _prob) not in _conv_data:
                         continue
                     _mean, _std = _conv_data[(_cfg, _prob)]
@@ -1249,7 +1317,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
                 if has_curve:
                     ref = curve_a if curve_a is not None else curve_b
-                    for curve, lbl, color in [(curve_a, label_a, COLORS[0]), (curve_b, label_b, COLORS[1])]:
+                    for curve, lbl, color in [(curve_a, label_a, COLOR_A), (curve_b, label_b, COLOR_B)]:
                         if curve is None:
                             continue
                         fig.add_trace(go.Scatter(
@@ -1266,7 +1334,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     fig.update_yaxes(title_text="Score",        row=curve_row, col=1)
 
                 if has_hamming:
-                    for curve, lbl, color in [(curve_a, label_a, COLORS[0]), (curve_b, label_b, COLORS[1])]:
+                    for curve, lbl, color in [(curve_a, label_a, COLOR_A), (curve_b, label_b, COLOR_B)]:
                         if curve is None or "avg_hamming" not in curve.columns:
                             continue
                         fig.add_trace(go.Scatter(
@@ -1278,7 +1346,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     fig.update_yaxes(title_text="Hamming moy.", row=hamming_row, col=1)
 
                 if has_box:
-                    for scores, lbl, color in [(scores_a, label_a, COLORS[0]), (scores_b, label_b, COLORS[1])]:
+                    for scores, lbl, color in [(scores_a, label_a, COLOR_A), (scores_b, label_b, COLOR_B)]:
                         if scores is None:
                             continue
                         fig.add_trace(go.Box(
@@ -1438,44 +1506,97 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
         return
 
     # ── Tableau récapitulatif ─────────────────────────────────────────────────
+    _PROB_ORDER = {"NK": 0, "NK3": 1, "QUBO": 2}
+
+    _LETTERS = "ABCDEFGHIJ"
+    config_shorts = {cfg: _LETTERS[i] for i, cfg in enumerate(configs)}
+
     summary_rows = []
     for inst in instances:
         m_inst = INSTANCE_RE.match(inst)
         prob, dim, t = m_inst.group("problem"), int(m_inst.group("dim")), int(m_inst.group("t"))
-        row: dict = {"Instance": inst}
+        row: dict = {"Instance": inst, "_prob": prob, "_dim": dim, "_t": t}
         for cfg in configs:
-            lbl   = _fav_lbl(cfg)
+            short = config_shorts[cfg]
             curve = load_curve(cfg, inst)
             if curve is not None:
                 score = abs(float(curve["best_fitness"].iloc[-1]))
                 rank  = _get_rank(prob, dim, t, score)
-                row[f"Score {lbl}"] = round(score, 4)
-                row[f"Rang {lbl}"]  = rank
+                row[f"Score {short}"] = round(score, 4)
+                row[f"Rang {short}"]  = rank
             else:
-                row[f"Score {lbl}"] = None
-                row[f"Rang {lbl}"]  = None
+                row[f"Score {short}"] = None
+                row[f"Rang {short}"]  = None
         summary_rows.append(row)
 
+    summary_rows.sort(key=lambda r: (_PROB_ORDER.get(r["_prob"], 99), r["_dim"], r["_t"]))
+
     st.markdown("#### 📊 Résumé")
+
+    # Légende #1 = …
+    for cfg in configs:
+        st.caption(f"{config_shorts[cfg]} = {_fav_lbl(cfg)}")
+
     mc = st.columns(max(len(configs) * 2, 1))
     for ci, cfg in enumerate(configs):
-        lbl    = _fav_lbl(cfg)
-        ranks  = [r[f"Rang {lbl}"]  for r in summary_rows if r.get(f"Rang {lbl}")  is not None]
-        top1   = sum(1 for r in summary_rows if r.get(f"Rang {lbl}") == 1)
-        mc[ci * 2].metric(
-            f"Rank moy — {lbl}",
-            f"{sum(ranks)/len(ranks):.1f}" if ranks else "—",
-        )
+        lbl   = _fav_lbl(cfg)
+        short = config_shorts[cfg]
+        ranks = [r[f"Rang {short}"] for r in summary_rows if r.get(f"Rang {short}") is not None]
+        top1  = sum(1 for r in summary_rows if r.get(f"Rang {short}") == 1)
+        mc[ci * 2].metric(f"Rank moy — {lbl}", f"{sum(ranks)/len(ranks):.1f}" if ranks else "—")
         mc[ci * 2 + 1].metric(f"Top 1 — {lbl}", top1)
 
-    col_cfg_display = {}
+    col_cfg_display: dict = {}
     for cfg in configs:
-        lbl = _fav_lbl(cfg)
-        col_cfg_display[f"Score {lbl}"] = st.column_config.NumberColumn(f"Score {lbl}", format="%.4f")
-        col_cfg_display[f"Rang {lbl}"]  = st.column_config.NumberColumn(f"Rang {lbl}",  format="%d")
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True,
-                 hide_index=True, column_config=col_cfg_display,
-                 height=38 + len(summary_rows) * 35)
+        short = config_shorts[cfg]
+        col_cfg_display[f"Score {short}"] = st.column_config.NumberColumn(f"Score {short}", format="%.4f")
+        col_cfg_display[f"Rang {short}"]  = st.column_config.NumberColumn(f"Rang {short}",  format="%d")
+
+    # Colonnes d'affichage (sans les clés internes de tri)
+    data_cols = [c for c in (next(iter(summary_rows), {}) or {}).keys() if not c.startswith("_")]
+
+    # Un tableau HTML par problème — autosize natif du browser
+    score_rang_cols = [c for c in data_cols if c != "Instance"]
+    th = "padding:8px 28px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
+    th_l = "padding:8px 28px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
+    td_l = "padding:7px 28px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;"
+    td_r = "padding:7px 28px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;text-align:right;"
+    td_sep = "padding:18px 10px 5px;font-weight:bold;font-size:19px;color:#333;border-top:2px solid #bbb;"
+
+    active_probs = [p for p in ["NK", "NK3", "QUBO"] if any(r["_prob"] == p for r in summary_rows)]
+    prob_cols = st.columns(len(active_probs)) if active_probs else []
+
+    for col_widget, prob in zip(prob_cols, active_probs):
+        prob_rows = [r for r in summary_rows if r["_prob"] == prob]
+        with col_widget:
+            st.markdown(f"##### {prob}")
+
+            ncols = 1 + len(score_rang_cols)
+            html = '<table style="border-collapse:collapse;">'
+            html += f'<thead><tr><th style="{th_l}">Instance</th>'
+            for col in score_rang_cols:
+                html += f'<th style="{th}">{col}</th>'
+            html += "</tr></thead><tbody>"
+
+            current_dim = None
+            for r in prob_rows:
+                if r["_dim"] != current_dim:
+                    current_dim = r["_dim"]
+                    html += f'<tr><td colspan="{ncols}" style="{td_sep}">DIM {current_dim}</td></tr>'
+                html += f'<tr><td style="{td_l}">{r["Instance"]}</td>'
+                for col in score_rang_cols:
+                    val = r.get(col)
+                    if val is None:
+                        cell = ""
+                    elif "Score" in col:
+                        cell = f"{val:.4f}"
+                    else:
+                        cell = str(int(val))
+                    html += f'<td style="{td_r}">{cell}</td>'
+                html += "</tr>"
+
+            html += "</tbody></table>"
+            st.markdown(html, unsafe_allow_html=True)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -1500,21 +1621,6 @@ if df.empty:
     st.warning("Aucune config avec `raw_scores.csv` trouvée.")
     st.stop()
 
-# All filterable parameters (label, column) — order determines sidebar display order
-_SIDEBAR_FILTER_PARAMS = [
-    ("ppo_epochs",        "ppo_epochs"),
-    ("clip_eps",          "clip_eps"),
-    ("epsilon_svgd",      "epsilon_svgd"),
-    ("gamma",             "gamma"),
-    ("M",                 "M"),
-    ("lambda",            "lambda"),
-    ("kernel",            "kernel"),
-    ("advantage",         "advantage"),
-    ("decay_start_ratio", "decay_start_ratio"),
-    ("decay_min_factor",  "decay_min_factor"),
-    ("bandwith_kernel",   "bandwith_kernel"),
-]
-
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Filtres")
@@ -1527,11 +1633,14 @@ with st.sidebar:
         if col not in df.columns:
             return None
         vals = sorted(df[col].dropna().unique().tolist())
-        if len(vals) <= 1:
-            return None
         return st.multiselect(label, vals, default=vals)
 
-    sidebar_sels = {col: multisel(label, col) for label, col in _SIDEBAR_FILTER_PARAMS}
+    pe_sel  = multisel("ppo_epochs",   "ppo_epochs")
+    ce_sel  = multisel("clip_eps",     "clip_eps")
+    eps_sel = multisel("epsilon_svgd", "epsilon_svgd")
+    k_sel   = multisel("Kernel",       "kernel")
+    m_sel   = multisel("M",            "M")
+    l_sel   = multisel("lambda",       "lambda")
 
     max_rank = float(df["mean_rank"].max())
     rank_lim = st.slider("Rank moyen ≤", 1.0, max_rank, max_rank, step=0.5)
@@ -1539,7 +1648,14 @@ with st.sidebar:
 
 # Apply filters
 mask = pd.Series(True, index=df.index)
-for col, sel in sidebar_sels.items():
+for sel, col in [
+    (pe_sel,  "ppo_epochs"),
+    (ce_sel,  "clip_eps"),
+    (eps_sel, "epsilon_svgd"),
+    (k_sel,   "kernel"),
+    (m_sel,   "M"),
+    (l_sel,   "lambda"),
+]:
     if sel is not None and col in df.columns:
         mask &= df[col].isin(sel) | df[col].isna()
 mask &= df["mean_rank"] <= rank_lim
