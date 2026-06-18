@@ -88,7 +88,6 @@ def main(cfg: DictConfig):
     verbose = bool(cfg.get("verbose", True))
     budget = int(cfg.get("budget", 10000))
     visualization_enabled = bool(cfg.get("visualization", True))
-    pairwise_visualization_enabled = bool(cfg.get("pairwise_visualization", True))
     advantage_cfg = agent_val("advantage") or cfg.get("advantage") or "baseline"
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)
@@ -275,7 +274,6 @@ def main(cfg: DictConfig):
             device,
             verbose,
             enable_visualization=visualization_enabled,
-            enable_pairwise_visualization=pairwise_visualization_enabled,
             return_history=False,
         )
         list_scores = result
@@ -295,7 +293,6 @@ def main(cfg: DictConfig):
             device,
             verbose,
             enable_visualization=visualization_enabled,
-            enable_pairwise_visualization=pairwise_visualization_enabled,
             return_history=False,
         )
         list_scores = result
@@ -331,7 +328,6 @@ def main(cfg: DictConfig):
             verbose=verbose,
             num_workers=num_workers,
             enable_visualization=visualization_enabled,
-            enable_pairwise_visualization=pairwise_visualization_enabled,
             name_file=None,
             return_history=False,
         )
@@ -348,7 +344,6 @@ def main(cfg: DictConfig):
             device,
             verbose,
             enable_visualization=visualization_enabled,
-            enable_pairwise_visualization=pairwise_visualization_enabled,
             dummy_blocks=dummy_blocks,
             return_history=False,
         )

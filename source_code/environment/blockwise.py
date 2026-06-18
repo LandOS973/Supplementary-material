@@ -17,7 +17,6 @@ def get_Score_trajectoriesBLOCK_cuda(
     device,
     verbose,
     enable_visualization=True,
-    enable_pairwise_visualization=True,
     return_history=False,
     dummy_blocks=0,
 ):
@@ -53,7 +52,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
     collect_dashboard = bool(enable_visualization) and hasattr(strategy, "agents") and len(strategy.agents) > 0
-    collect_pairwise_metrics = collect_dashboard and bool(enable_pairwise_visualization)
+    collect_pairwise_metrics = collect_dashboard
     collect_entropy_metrics = collect_dashboard
     agent_best_overall = None
     if track_leader:

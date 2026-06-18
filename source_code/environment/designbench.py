@@ -16,7 +16,6 @@ def get_Score_trajectories_designbench_cuda(
     oracle_batch_size=2048,
     alphabet_size=20,
     enable_visualization=False,
-    enable_pairwise_visualization=True,
     name_file=None,
     return_history=False,
     warm_start=False,
@@ -220,7 +219,7 @@ def get_Score_trajectories_designbench_cuda(
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
     collect_dashboard = bool(enable_visualization) and hasattr(strategy, "agents")
-    collect_pairwise_metrics = collect_dashboard and bool(enable_pairwise_visualization)
+    collect_pairwise_metrics = collect_dashboard
     metrics = MetricsCalculator() if collect_dashboard else None
 
     for epoch in pbar:

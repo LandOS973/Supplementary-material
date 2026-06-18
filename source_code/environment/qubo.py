@@ -20,7 +20,6 @@ def get_Score_trajectoriesQUBO_cuda(
     device,
     verbose,
     enable_visualization=True,
-    enable_pairwise_visualization=True,
     return_history=False,
 ):
 
@@ -36,7 +35,8 @@ def get_Score_trajectoriesQUBO_cuda(
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
     collect_dashboard = bool(enable_visualization) and hasattr(strategy, "agents") and len(strategy.agents) > 0
-    collect_pairwise_metrics = collect_dashboard and bool(enable_pairwise_visualization)
+    collect_summary_metrics = hasattr(strategy, "agents") and len(strategy.agents) >= 2
+    collect_pairwise_metrics = collect_dashboard
     collect_entropy_metrics = collect_dashboard
     agent_best_overall = None
     if track_leader:
@@ -216,14 +216,18 @@ def get_Score_trajectoriesQUBO_cuda(
 
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
             leader_idx = torch.argmax(agent_mean_scores).item()
-        if collect_pairwise_metrics:
+        if collect_summary_metrics:
             avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
             avg_l1, pairwise_l1 = metrics.compute_l1_distance(strategy.agents)
             avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
             avg_l1_history.append(avg_l1 if avg_l1 is not None else 0.0)
         else:
             avg_hamming = None
+            pairwise_matrix = None
             avg_l1 = None
+            pairwise_l1 = None
+            avg_hamming_history.append(0.0)
+            avg_l1_history.append(0.0)
 
         if collect_pairwise_metrics:
             avg_js, pairwise_js = metrics.compute_average_js(strategy.agents)

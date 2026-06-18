@@ -167,7 +167,6 @@ def get_Score_trajectories_viennarna_cuda(
     verbose,
     num_workers=None,
     enable_visualization=False,
-    enable_pairwise_visualization=True,
     name_file=None,
     return_history=False,
 ):
@@ -305,7 +304,7 @@ def get_Score_trajectories_viennarna_cuda(
     use_tqdm = bool(verbose)
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
     collect_dashboard = bool(enable_visualization) and hasattr(strategy, "agents")
-    collect_pairwise_metrics = collect_dashboard and bool(enable_pairwise_visualization)
+    collect_pairwise_metrics = collect_dashboard
     metrics = MetricsCalculator() if collect_dashboard else None
 
     try:
