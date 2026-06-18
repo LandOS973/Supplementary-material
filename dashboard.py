@@ -1,5 +1,5 @@
 """
-PPO-EDA Grid Search Dashboard
+SVGD-EDA Grid Search Dashboard
 Run: streamlit run dashboard.py
 """
 from __future__ import annotations
@@ -1480,8 +1480,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="PPO-EDA Dashboard", layout="wide", page_icon="📊")
-st.title("PPO-EDA — Grid Search Dashboard")
+st.set_page_config(page_title="SVGD-EDA Dashboard", layout="wide", page_icon="📊")
+st.title("SVGD-EDA — Grid Search Dashboard")
 
 df = load_summary()
 if df.empty:
@@ -1500,6 +1500,21 @@ if df.empty:
     st.warning("Aucune config avec `raw_scores.csv` trouvée.")
     st.stop()
 
+# All filterable parameters (label, column) — order determines sidebar display order
+_SIDEBAR_FILTER_PARAMS = [
+    ("ppo_epochs",        "ppo_epochs"),
+    ("clip_eps",          "clip_eps"),
+    ("epsilon_svgd",      "epsilon_svgd"),
+    ("gamma",             "gamma"),
+    ("M",                 "M"),
+    ("lambda",            "lambda"),
+    ("kernel",            "kernel"),
+    ("advantage",         "advantage"),
+    ("decay_start_ratio", "decay_start_ratio"),
+    ("decay_min_factor",  "decay_min_factor"),
+    ("bandwith_kernel",   "bandwith_kernel"),
+]
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Filtres")
@@ -1512,14 +1527,11 @@ with st.sidebar:
         if col not in df.columns:
             return None
         vals = sorted(df[col].dropna().unique().tolist())
+        if len(vals) <= 1:
+            return None
         return st.multiselect(label, vals, default=vals)
 
-    pe_sel  = multisel("ppo_epochs",   "ppo_epochs")
-    ce_sel  = multisel("clip_eps",     "clip_eps")
-    eps_sel = multisel("epsilon_svgd", "epsilon_svgd")
-    k_sel   = multisel("Kernel",       "kernel")
-    m_sel   = multisel("M",            "M")
-    l_sel   = multisel("lambda",       "lambda")
+    sidebar_sels = {col: multisel(label, col) for label, col in _SIDEBAR_FILTER_PARAMS}
 
     max_rank = float(df["mean_rank"].max())
     rank_lim = st.slider("Rank moyen ≤", 1.0, max_rank, max_rank, step=0.5)
@@ -1527,14 +1539,7 @@ with st.sidebar:
 
 # Apply filters
 mask = pd.Series(True, index=df.index)
-for sel, col in [
-    (pe_sel,  "ppo_epochs"),
-    (ce_sel,  "clip_eps"),
-    (eps_sel, "epsilon_svgd"),
-    (k_sel,   "kernel"),
-    (m_sel,   "M"),
-    (l_sel,   "lambda"),
-]:
+for col, sel in sidebar_sels.items():
     if sel is not None and col in df.columns:
         mask &= df[col].isin(sel) | df[col].isna()
 mask &= df["mean_rank"] <= rank_lim
