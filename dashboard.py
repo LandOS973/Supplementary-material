@@ -484,10 +484,13 @@ def tab_classement(filtered: pd.DataFrame) -> None:
         "n_instances", "config",
     ] if c in display.columns]
 
-    st.dataframe(
-        display[cols].reset_index(drop=True),
+    display_reset = display[cols].reset_index(drop=True)
+    event = st.dataframe(
+        display_reset,
         use_container_width=True,
         height=620,
+        on_select="rerun",
+        selection_mode="single-row",
         column_config={
             "config":         st.column_config.TextColumn("Config",     width="large"),
             "mean_rank":      st.column_config.NumberColumn("Rank moy", format="%.2f"),
@@ -501,6 +504,9 @@ def tab_classement(filtered: pd.DataFrame) -> None:
             "gamma":          st.column_config.NumberColumn("γ",        format="%.4f"),
         },
     )
+    sel_rows = event.selection.rows if event and hasattr(event, "selection") else []
+    if sel_rows and "config" in display_reset.columns:
+        st.code(display_reset["config"].iloc[sel_rows[0]], language=None)
 
 
 @st.fragment
@@ -1094,7 +1100,10 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 ]
             if hammings_a and hammings_b:
                 stat_rows.append(("Hamming moy", f"{sum(hammings_a)/len(hammings_a):.1f}", f"{sum(hammings_b)/len(hammings_b):.1f}"))
-            stat_rows.append(("Gap moyen", f"{mean_gap:+.2f}%", ""))
+            for prob in ["NK", "NK3", "QUBO"]:
+                prob_gaps = [r["Gap %"] for r in summary_rows if r["_prob"] == prob]
+                if prob_gaps:
+                    stat_rows.append((f"Gap {prob}", f"{sum(prob_gaps)/len(prob_gaps):+.2f}%", ""))
 
             html_stats = '<table style="border-collapse:collapse;margin-bottom:16px;">'
             html_stats += (f'<thead><tr>'
@@ -1402,12 +1411,16 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                         favs.pop(i)
                         save_favorites(favs)
                         st.rerun()
-                    n_cfg = len(fav.get("configs", []))
+                    cfgs_card = fav.get("configs", [])
+                    aliases_card = fav.get("aliases", {})
+                    n_cfg = len(cfgs_card)
                     if n_cfg:
                         st.caption(f"{n_cfg} config{'s' if n_cfg > 1 else ''}")
                     n_inst = len(fav.get("instances", []))
                     if n_inst:
                         st.caption(f"{n_inst} instance{'s' if n_inst > 1 else ''}")
+                    if cfgs_card:
+                        st.code(cfgs_card[0], language=None)
         return
 
     # ── Vue détail ────────────────────────────────────────────────────────────
@@ -1449,7 +1462,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
         row_df = all_df[all_df["config"] == cfg]
         default_lbl = _config_label(row_df.iloc[0]) if not row_df.empty else cfg[-40:]
         r1, r2, r3 = st.columns([3, 3, 1])
-        r1.code(cfg[-40:], language=None)
+        r1.code(cfg, language=None)
         alias = r2.text_input(
             "Alias", value=aliases.get(cfg, ""),
             key=f"fav_alias_{sel_idx}_{cfg}",
@@ -1644,7 +1657,7 @@ with st.sidebar:
 
     max_rank = float(df["mean_rank"].max())
     rank_lim = st.slider("Rank moyen ≤", 1.0, max_rank, max_rank, step=0.5)
-    show_n   = st.number_input("Configs max", 5, 500, 200)
+    show_n   = st.number_input("Configs max", 5, 2000, 200)
 
 # Apply filters
 mask = pd.Series(True, index=df.index)

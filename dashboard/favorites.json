@@ -17,6 +17,27 @@
       "NK3_dim64_t1",
       "NK3_dim64_t2",
       "NK3_dim64_t4",
+      "NK3_dim64_t8"
+    ]
+  },
+  {
+    "name": "Async 30/5",
+    "configs": [
+      "krbf__advglobalrankweighted__M30__L13__eps0p08__g0p015__ds0p03__dm0p01__la5"
+    ],
+    "aliases": {},
+    "instances": [
+      "NK3_dim128_t1",
+      "NK3_dim128_t2",
+      "NK3_dim128_t4",
+      "NK3_dim128_t8",
+      "NK3_dim256_t1",
+      "NK3_dim256_t2",
+      "NK3_dim256_t4",
+      "NK3_dim256_t8",
+      "NK3_dim64_t1",
+      "NK3_dim64_t2",
+      "NK3_dim64_t4",
       "NK3_dim64_t8",
       "NK_dim128_t1",
       "NK_dim128_t2",
@@ -51,7 +72,7 @@
     ]
   },
   {
-    "name": "Meilleur PerAgentRanking",
+    "name": "Best PerAgent config",
     "configs": [
       "krbf__advperagentrankweighted__M10__L13__eps0p1__g0p006__ds0p03__dm0p01"
     ],
