@@ -12,6 +12,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from ranking_boxplot_nk import generate as generate_ranking_boxplot
 from main_plot import (
     _normalize_score_sign,
     clip_series_to_budget,
@@ -765,6 +766,13 @@ def main():
                 print(f"[WARN] normal/no_repulsion failed for {inst_dir.name}: {exc}")
         else:
             print(f"[WARN] Missing {no_repulsion_metrics}. Skipping normal/no_repulsion plots.")
+
+
+    # Global ranking boxplot across all NK/NK3 instances
+    try:
+        generate_ranking_boxplot(config_dir)
+    except Exception as exc:
+        print(f"[WARN] ranking boxplot failed: {exc}")
 
 
 if __name__ == "__main__":
