@@ -48,9 +48,12 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         kernel_config=None,
         is_nk3=False,
         # PPO hyperparameters
-        ppo_active=False,   # True => PPO (K époques + clipping), False => REINFORCE pur
-        ppo_epochs=1,       # K : nombre d'époques internes (ignoré si ppo_active=False)
-        clip_eps=0.2,       # ε_clip : borne du clipping PPO (ignoré si ppo_active=False)
+        ppo_active=False,      # True => PPO (K époques), False => REINFORCE pur
+        ppo_epochs=1,          # K : nombre d'époques internes (ignoré si ppo_active=False)
+        ppo_mode='clip',       # 'clip' | 'kl'
+        clip_eps=0.2,          # ε_clip  (mode clip uniquement)
+        kl_beta=1.0,           # β : pénalité KL  (mode kl uniquement)
+        kl_target_kl=None,     # KL cible (float) => β adaptatif ; None => β fixe
     ):
         self.M = M
         self.N = N
@@ -97,7 +100,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # PPO
         self.ppo_active = bool(ppo_active)
         self.ppo_epochs = int(ppo_epochs)
+        self.ppo_mode = str(ppo_mode)
         self.clip_eps = float(clip_eps)
+        self.kl_beta_init = float(kl_beta)
+        self.kl_target_kl = float(kl_target_kl) if kl_target_kl is not None else None
+        self.kl_beta = self.kl_beta_init  # mutable, adapté si kl_target_kl est défini
 
         kernel_config_local = kernel_config or {}
         advantage_cfg_local = advantage_cfg
@@ -190,6 +197,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         self.baseline.resize_(nb_instances, self.M).zero_()
 
+        self.kl_beta = self.kl_beta_init  # reset β adaptatif à chaque nouvelle instance
         self.theta_history = []
         self.kernel_metric_history = []
         self.last_theta_grad = None
@@ -254,6 +262,26 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if self._should_debug():
             self._print_debug()
         return total_loss
+
+    def _compute_kl(self, pi_old_full, pi_new_full):
+        """
+        KL(π_old || π_new) moyenné sur toutes les dimensions (même convention que PPO_EDA).
+        binary:       pi (BM, N)      — probabilité de x=1
+        categorical:  pi (BM, N, D)   — distribution sur les D catégories
+        """
+        if self.use_categorical:
+            from torch.distributions import Categorical, kl_divergence
+            kl = kl_divergence(
+                Categorical(probs=pi_old_full),
+                Categorical(probs=pi_new_full),
+            ).mean()
+        else:
+            from torch.distributions import Bernoulli, kl_divergence
+            kl = kl_divergence(
+                Bernoulli(probs=pi_old_full),
+                Bernoulli(probs=pi_new_full),
+            ).mean()
+        return kl
 
     def _updateDistribution_REINFORCE(self, solutionList, scoreList):
         """
@@ -405,9 +433,12 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             num_agents=M,
         ).detach()  # coefficient fixe, pas de gradient nécessaire
 
-        # --- π_θ_old par position : probabilités brutes figées pour les K époques ---
+        # --- π_θ_old figées pour les K époques (ratio + KL) ---
         with torch.no_grad():
             pi_old_per_pos = self._compute_pi_per_pos(indivduals).detach()  # (BM, λa, N)
+            if self.ppo_mode == 'kl':
+                pi_old_full = self.probs.view(BM, N, -1).detach() if self.use_categorical \
+                    else self.probs.view(BM, N).detach()
 
         # --- Mise à jour de la baseline et stockage des avantages ---
         with torch.no_grad():
@@ -423,15 +454,35 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self.probs = self.forward()
 
             # Ratio par position : r_n = π_θ_new(x_n) / π_θ_old(x_n)
-            pi_new_per_pos = self._compute_pi_per_pos(indivduals)          # (BM, λa, N)
-            ratio = pi_new_per_pos / pi_old_per_pos                        # (BM, λa, N)
+            pi_new_per_pos = self._compute_pi_per_pos(indivduals)  # (BM, λa, N)
+            ratio = pi_new_per_pos / pi_old_per_pos                # (BM, λa, N)
+            surr1 = ratio * adv_exp                                # (BM, λa, N)
 
-            # Surrogate PPO clippé par position, pondéré par avantages, sommé sur N
-            surr1 = ratio * adv_exp                                                          # (BM, λa, N)
-            surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * adv_exp # (BM, λa, N)
-            surrogate = torch.min(surr1, surr2).sum(dim=-1)               # (BM, λa)
+            if self.ppo_mode == 'clip':
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * adv_exp
+                surrogate = torch.min(surr1, surr2).sum(dim=-1)   # (BM, λa)
+                objective = surrogate.mean(dim=1).sum()
 
-            objective = surrogate.mean(dim=1).sum()
+            else:  # 'kl'
+                surrogate = surr1.sum(dim=-1)                      # (BM, λa) — pas de clipping
+                pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \
+                    else self.probs.view(BM, N)
+                kl = self._compute_kl(pi_old_full, pi_new_full)
+                objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl
+
+                with torch.no_grad():
+                    surr_val = float(surrogate.mean(dim=1).sum())
+                    pen_val = self.kl_beta * float(kl)
+                    print(f"  [kl epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  beta*KL={pen_val:.6f}  ratio={pen_val/abs(surr_val):.4f}")
+
+                # Adaptation de β à la dernière epoch seulement (KL totale après K steps)
+                if self.kl_target_kl is not None and k == self.ppo_epochs - 1:
+                    with torch.no_grad():
+                        kl_val = float(kl.detach().item())
+                        if kl_val > 1.5 * self.kl_target_kl:
+                            self.kl_beta = min(self.kl_beta * 1.5, 100.0)
+                        elif kl_val < self.kl_target_kl / 1.5:
+                            self.kl_beta = max(self.kl_beta / 1.5, 1e-4)
 
             # retain_graph=False : le graph est reconstruit à chaque epoch via forward()
             (grad_theta,) = torch.autograd.grad(

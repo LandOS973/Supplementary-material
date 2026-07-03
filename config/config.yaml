@@ -1,5 +1,5 @@
 defaults:
-  - problem: nk3
+  - problem: nk
   - agent: reinforce
   - _self_
 
@@ -21,3 +21,9 @@ strategy_variants:
     advantage: peragentrankweighted
   - label: Normalized fitness
     advantage: normalizedfitness
+
+ppo_variants:
+  - label: PPO Clip
+    mode: clip
+  - label: PPO KL
+    mode: kl

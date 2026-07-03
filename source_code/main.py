@@ -158,16 +158,37 @@ def main(cfg: DictConfig):
         ppo_active_val = cfg.get("ppo_active")
     ppo_active = bool(ppo_active_val) if ppo_active_val is not None else False
 
+    ppo_mode = 'clip'
+    clip_eps = 0.2
+    kl_beta = 1.0
+    kl_target_kl = None
+
     if ppo_active:
         ppo_name = str(agent_val("ppo") or cfg.get("ppo") or "ppo")
         ppo_cfg = _load_ppo_config(ppo_name, repo_root)
         ppo_epochs = int(ppo_cfg.get("ppo_epochs", 4))
-        clip_eps = float(ppo_cfg.get("clip_eps", 0.2))
+        ppo_mode = str(ppo_cfg.get("mode", "clip"))
+
+        if ppo_mode == "clip":
+            clip_cfg = ppo_cfg.get("clip") or {}
+            clip_eps = float(clip_cfg.get("clip_eps", 0.2))
+        elif ppo_mode == "kl":
+            kl_cfg = ppo_cfg.get("kl") or {}
+            kl_beta = float(kl_cfg.get("beta", 1.0))
+            kl_target_kl_val = kl_cfg.get("target_kl")
+            kl_target_kl = float(kl_target_kl_val) if kl_target_kl_val is not None else None
+        else:
+            raise ValueError(f"Mode PPO inconnu : '{ppo_mode}'. Valeurs valides : clip, kl")
     else:
         ppo_epochs = 1
-        clip_eps = 0.2
 
-    ppo_info = f"ppo_active={ppo_active} ppo_epochs={ppo_epochs} clip_eps={clip_eps}" if ppo_active else "ppo_active=False"
+    if not ppo_active:
+        ppo_info = "ppo_active=False"
+    elif ppo_mode == "clip":
+        ppo_info = f"ppo_active=True mode=clip ppo_epochs={ppo_epochs} clip_eps={clip_eps}"
+    else:
+        kl_adapt_str = f" target_kl={kl_target_kl}" if kl_target_kl is not None else " beta=fixed"
+        ppo_info = f"ppo_active=True mode=kl ppo_epochs={ppo_epochs} beta={kl_beta}{kl_adapt_str}"
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
         f"M={M} lambda={lambda_} eps={epsilon_svgd} gamma={svgd_gamma} | "
@@ -279,7 +300,10 @@ def main(cfg: DictConfig):
         is_nk3=(type_problem_upper == "NK3"),
         ppo_active=ppo_active,
         ppo_epochs=ppo_epochs,
+        ppo_mode=ppo_mode,
         clip_eps=clip_eps,
+        kl_beta=kl_beta,
+        kl_target_kl=kl_target_kl,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None

@@ -1,2 +1,9 @@
 ppo_epochs: 4
-clip_eps: 0.2
+mode: kl  # clip | kl
+
+clip:
+  clip_eps: 0.2
+
+kl:
+  beta: 10
+  target_kl: 0.0001  # KL moyen par position ; optionnel : si présent, beta s'adapte ; si absent, beta est fixe
