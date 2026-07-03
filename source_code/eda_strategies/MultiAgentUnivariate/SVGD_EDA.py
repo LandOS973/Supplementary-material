@@ -48,8 +48,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         kernel_config=None,
         is_nk3=False,
         # PPO hyperparameters
-        ppo_epochs=1,       # K : nombre d'époques internes
-        clip_eps=0.2,       # ε_clip : borne du clipping PPO
+        ppo_active=False,   # True => PPO (K époques + clipping), False => REINFORCE pur
+        ppo_epochs=1,       # K : nombre d'époques internes (ignoré si ppo_active=False)
+        clip_eps=0.2,       # ε_clip : borne du clipping PPO (ignoré si ppo_active=False)
     ):
         self.M = M
         self.N = N
@@ -94,6 +95,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.decay_enabled = bool(decay_enabled)
 
         # PPO
+        self.ppo_active = bool(ppo_active)
         self.ppo_epochs = int(ppo_epochs)
         self.clip_eps = float(clip_eps)
 
@@ -240,14 +242,92 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         return greedy.unsqueeze(-1)
 
     def updateDistribution(self, solutionList, scoreList):
-        """Applique la mise à jour PPO suivie de SVGD entre agents (si activé)."""
+        """Applique la mise à jour (REINFORCE ou PPO) suivie de SVGD entre agents."""
         self._debug_step += 1
-        total_loss = self._updateDistribution_PPO(solutionList, scoreList)
+        if self.ppo_active:
+            total_loss = self._updateDistribution_PPO(solutionList, scoreList)
+        else:
+            total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
+            self._apply_svgd()
         if self.enable_visualization:
             self._record_theta()
         if self._should_debug():
             self._print_debug()
         return total_loss
+
+    def _updateDistribution_REINFORCE(self, solutionList, scoreList):
+        """
+        Mise à jour REINFORCE pure : ∇_θ E[A · log π_θ(x)].
+        Identique au comportement de la branche main (ppo_active=False).
+        _apply_svgd() est appelé par updateDistribution après ce retour.
+        """
+        B, M, N = self.nb_instances, self.M, self.N
+        λa = self.lambda_per_agent
+        BM = B * M
+
+        indivduals = solutionList.view(BM, λa, N)
+        fitness = scoreList.view(BM, λa)
+        baseline = self.baseline.view(BM) if self.baseline.numel() > 0 else torch.zeros(BM, device=self.device)
+
+        if self.use_categorical:
+            D = self.probs.size(-1)
+            theta_flat = self.theta.view(BM, N, D)
+            all_Pi_Theta = self.probs.view(BM, N, D)
+            all_Pi_Theta_exp = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)
+            log_probs = torch.log(all_Pi_Theta_exp + 1e-10)
+            indices = indivduals.long().unsqueeze(-1)
+            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)  # (BM, λa)
+        else:
+            theta_flat = self.theta.view(BM, N)
+            all_Pi_Theta = self.probs.view(BM, N)
+            all_Pi_Theta_exp = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)
+            Pi_selected = torch.where(indivduals == 1.0, all_Pi_Theta_exp, 1.0 - all_Pi_Theta_exp)
+            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
+
+        advantages = self.advantage_strategy.compute(
+            fitness=fitness,
+            baseline=baseline,
+            theta=theta_flat,
+            indivduals=indivduals,
+            probs=all_Pi_Theta_exp,
+            nb_instances=B,
+            num_agents=M,
+        ).detach()
+
+        loss = torch.mean(advantages * log_Pi, dim=1).sum()
+
+        with torch.no_grad():
+            self.baseline = fitness.mean(dim=1).view(B, M)
+            self.latest_advantages = advantages.view(B, M, λa).reshape(B, self.lambda_).cpu()
+
+        (grad_theta,) = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
+        self.last_theta_grad = grad_theta.detach().clone()
+
+        if self.debug_svgd:
+            with torch.no_grad():
+                self._last_debug_stats = {
+                    "loss_mean": float(loss.item()),
+                    "adv_mean": float(advantages.mean().item()),
+                    "adv_std": float(advantages.std().item()),
+                    "adv_min": float(advantages.min().item()),
+                    "adv_max": float(advantages.max().item()),
+                    "fit_mean": float(fitness.mean().item()),
+                    "fit_std": float(fitness.std().item()),
+                    "fit_min": float(fitness.min().item()),
+                    "fit_max": float(fitness.max().item()),
+                    "baseline_mean": float(baseline.mean().item()) if baseline.numel() else float("nan"),
+                    "baseline_std": float(baseline.std().item()) if baseline.numel() > 1 else 0.0,
+                    "logpi_mean": float(log_Pi.mean().item()),
+                    "logpi_min": float(log_Pi.min().item()),
+                    "logpi_max": float(log_Pi.max().item()),
+                    "prob_mean": float(all_Pi_Theta.mean().item()),
+                    "prob_min": float(all_Pi_Theta.min().item()),
+                    "prob_max": float(all_Pi_Theta.max().item()),
+                    "adv_nan": bool(torch.isnan(advantages).any().item()),
+                    "prob_nan": bool(torch.isnan(all_Pi_Theta).any().item()),
+                }
+
+        return loss
 
     def _compute_pi_per_pos(self, indivduals):
         """

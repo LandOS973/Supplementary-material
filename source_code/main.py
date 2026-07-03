@@ -52,6 +52,18 @@ def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
     return cfg_dict
 
 
+def _load_ppo_config(ppo_name: str, repo_root: str) -> dict:
+    ppo_dir = Path(repo_root) / "config" / "ppo"
+    ppo_path = ppo_dir / f"{ppo_name}.yaml"
+    if not ppo_path.exists():
+        available = ", ".join(sorted(p.stem for p in ppo_dir.glob("*.yaml"))) if ppo_dir.exists() else "none"
+        raise FileNotFoundError(
+            f"PPO config '{ppo_name}' introuvable dans {ppo_dir}. Configs disponibles: {available}"
+        )
+    cfg = OmegaConf.load(str(ppo_path))
+    return OmegaConf.to_container(cfg, resolve=True) or {}
+
+
 @hydra.main(config_path="../config", config_name="config", version_base=None)
 def main(cfg: DictConfig):
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -141,18 +153,27 @@ def main(cfg: DictConfig):
         or cfg.get("decay_min_factor")
         or decay_default_min_factor
     )
-    ppo_epochs = int(agent_val("ppo_epochs") or cfg.get("ppo_epochs") or 4)
-    _clip_eps = agent_val("clip_eps")
-    if _clip_eps is None:
-        _clip_eps = cfg.get("clip_eps")
-    clip_eps = float(_clip_eps if _clip_eps is not None else 0.2)
+    ppo_active_val = agent_val("ppo_active")
+    if ppo_active_val is None:
+        ppo_active_val = cfg.get("ppo_active")
+    ppo_active = bool(ppo_active_val) if ppo_active_val is not None else False
 
+    if ppo_active:
+        ppo_name = str(agent_val("ppo") or cfg.get("ppo") or "ppo")
+        ppo_cfg = _load_ppo_config(ppo_name, repo_root)
+        ppo_epochs = int(ppo_cfg.get("ppo_epochs", 4))
+        clip_eps = float(ppo_cfg.get("clip_eps", 0.2))
+    else:
+        ppo_epochs = 1
+        clip_eps = 0.2
+
+    ppo_info = f"ppo_active={ppo_active} ppo_epochs={ppo_epochs} clip_eps={clip_eps}" if ppo_active else "ppo_active=False"
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
         f"M={M} lambda={lambda_} eps={epsilon_svgd} gamma={svgd_gamma} | "
         f"kernel={kernel_name} advantage={advantage_cfg} decay={decay_enabled} "
         f"greedy_final={enable_greedy_final} | "
-        f"ppo_epochs={ppo_epochs} clip_eps={clip_eps}"
+        f"{ppo_info}"
     )
     if decay_enabled:
         print(f"Decay params: start_ratio={decay_start_ratio} min_factor={decay_min_factor}")
@@ -256,6 +277,7 @@ def main(cfg: DictConfig):
         no_interact=no_interact,
         no_repulsion=no_repulsion,
         is_nk3=(type_problem_upper == "NK3"),
+        ppo_active=ppo_active,
         ppo_epochs=ppo_epochs,
         clip_eps=clip_eps,
     ).to(device)

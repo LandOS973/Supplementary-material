@@ -30,6 +30,7 @@ class FactoryStrategyEA:
         no_interact=False,
         no_repulsion=False,
         is_nk3=False,
+        ppo_active=False,
         ppo_epochs=4,
         clip_eps=0.2,
     ):
@@ -57,6 +58,7 @@ class FactoryStrategyEA:
                     no_interact=no_interact,
                     no_repulsion=no_repulsion,
                     is_nk3=is_nk3,
+                    ppo_active=ppo_active,
                     ppo_epochs=ppo_epochs,
                     clip_eps=clip_eps,
                 )
