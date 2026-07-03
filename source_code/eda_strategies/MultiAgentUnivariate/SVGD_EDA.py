@@ -249,6 +249,24 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self._print_debug()
         return total_loss
 
+    def _compute_pi_per_pos(self, indivduals):
+        """
+        Retourne π_θ(x_n) (probabilité brute) pour chaque position n.
+        indivduals : (BM, λa, N)
+        Retourne   : (BM, λa, N)
+        """
+        BM, λa, N = indivduals.shape
+        if self.use_categorical:
+            D = self.probs.size(-1)
+            probs = self.probs.view(BM, N, D)
+            probs_exp = probs.unsqueeze(1).expand(-1, λa, -1, -1)       # (BM, λa, N, D)
+            indices = indivduals.long().unsqueeze(-1)                    # (BM, λa, N, 1)
+            return probs_exp.gather(-1, indices).squeeze(-1)             # (BM, λa, N)
+        else:
+            probs = self.probs.view(BM, N)
+            probs_exp = probs.unsqueeze(1).expand(-1, λa, -1)           # (BM, λa, N)
+            return torch.where(indivduals == 1.0, probs_exp, 1.0 - probs_exp)  # (BM, λa, N)
+
     def _compute_log_pi(self, indivduals):
         """
         Calcule log π_θ(x) pour chaque échantillon sous self.probs (politique courante).
@@ -307,9 +325,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             num_agents=M,
         ).detach()  # coefficient fixe, pas de gradient nécessaire
 
-        # --- log π_θ_old : calculé à partir de θ initial, figé pour K époques ---
+        # --- π_θ_old par position : probabilités brutes figées pour les K époques ---
         with torch.no_grad():
-            log_Pi_old = self._compute_log_pi(indivduals).detach()
+            pi_old_per_pos = self._compute_pi_per_pos(indivduals).detach()  # (BM, λa, N)
 
         # --- Mise à jour de la baseline et stockage des avantages ---
         with torch.no_grad():
@@ -323,21 +341,31 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         for k in range(self.ppo_epochs):
             # Recalcul de π_θ depuis le theta courant (potentiellement mis à jour par SVGD)
             self.probs = self.forward()
-            log_Pi = self._compute_log_pi(indivduals)  # (BM, λa), dans le graphe de calcul
+            log_Pi = self._compute_log_pi(indivduals)                  # (BM, λa) pour debug
 
-            # Ratio d'importance sampling : r = exp(log π_θ - log π_θ_old)
-            ratio = torch.exp((log_Pi - log_Pi_old) / N) # (BM, λa) normalisé par N
-            # with torch.no_grad():
-            #     ratio_inst0 = ratio.view(B, M, λa)[0]  # (M, λa) — instance 0
-            #     print(f"[PPO ratio | epoch {k+1}/{self.ppo_epochs}]")
-            #     for agent_idx in range(M):
-            #         vals = ratio_inst0[agent_idx].cpu().tolist()
-            #         vals_str = " ".join(f"{v:.3f}" for v in vals)
-            #         print(f"  agent {agent_idx}: {vals_str}")
-            # Objectif surrogate PPO (POSITIF : ascension, pas descente)
-            surr1 = ratio * advantages
-            surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * advantages
-            surrogate = torch.min(surr1, surr2) * N         # (BM, λa)
+            # Ratio par position : r_n = π_θ_new(x_n) / π_θ_old(x_n)  — comme PPO_EDA
+            pi_new_per_pos = self._compute_pi_per_pos(indivduals)          # (BM, λa, N)
+            ratio = pi_new_per_pos / pi_old_per_pos                        # (BM, λa, N)
+
+            with torch.no_grad():
+                ratio_view = ratio.view(B, M, λa, N)
+                # Instance 0, agent 0 : ratios sur les N positions (tronqué à 20 pour lisibilité)
+                print(f"[ratio | epoch {k+1}/{self.ppo_epochs}] instance 0 :")
+                for agent_idx in range(M):
+                    vals = ratio_view[0, agent_idx, 0].cpu().tolist()  # 1er individu de l'agent
+                    vals_str = " ".join(f"{v:.3f}" for v in vals[:20])
+                    print(f"  agent {agent_idx} (indiv 0, pos[:20]): {vals_str}")
+                # Résumé sur toutes les instances, agents, individus, positions
+                r_min = float(ratio.min().item())
+                r_max = float(ratio.max().item())
+                r_mean = float(ratio.mean().item())
+                print(f"  [all] min={r_min:.4f}  max={r_max:.4f}  mean={r_mean:.4f}")
+
+            # Surrogate PPO clippé par position, pondéré par avantages, puis moyenné sur N
+            adv_exp = advantages.unsqueeze(-1)                                               # (BM, λa, 1)
+            surr1 = ratio * adv_exp                                                          # (BM, λa, N)
+            surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * adv_exp # (BM, λa, N)
+            surrogate = torch.min(surr1, surr2).mean(dim=-1)              # (BM, λa)
 
             # Objectif : (1/λ) · Σ_l min(...)  — γ géré en interne par SVGD
             objective = surrogate.mean(dim=1).sum()
