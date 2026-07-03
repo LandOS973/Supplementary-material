@@ -347,19 +347,19 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             pi_new_per_pos = self._compute_pi_per_pos(indivduals)          # (BM, λa, N)
             ratio = pi_new_per_pos / pi_old_per_pos                        # (BM, λa, N)
 
-            # with torch.no_grad():
-            #     ratio_view = ratio.view(B, M, λa, N)
-            #     # Instance 0, agent 0 : ratios sur les N positions (tronqué à 20 pour lisibilité)
-            #     print(f"[ratio | epoch {k+1}/{self.ppo_epochs}] instance 0 :")
-            #     for agent_idx in range(M):
-            #         vals = ratio_view[0, agent_idx, 0].cpu().tolist()  # 1er individu de l'agent
-            #         vals_str = " ".join(f"{v:.3f}" for v in vals[:20])
-            #         print(f"  agent {agent_idx} (indiv 0, pos[:20]): {vals_str}")
-            #     # Résumé sur toutes les instances, agents, individus, positions
-            #     r_min = float(ratio.min().item())
-            #     r_max = float(ratio.max().item())
-            #     r_mean = float(ratio.mean().item())
-            #     print(f"  [all] min={r_min:.4f}  max={r_max:.4f}  mean={r_mean:.4f}")
+            with torch.no_grad():
+                ratio_view = ratio.view(B, M, λa, N)
+                # Instance 0, agent 0 : ratios sur les N positions (tronqué à 20 pour lisibilité)
+                print(f"[ratio | epoch {k+1}/{self.ppo_epochs}] instance 0 :")
+                for agent_idx in range(M):
+                    vals = ratio_view[0, agent_idx, 0].cpu().tolist()  # 1er individu de l'agent
+                    vals_str = " ".join(f"{v:.3f}" for v in vals[:20])
+                    print(f"  agent {agent_idx} (indiv 0, pos[:20]): {vals_str}")
+                # Résumé sur toutes les instances, agents, individus, positions
+                r_min = float(ratio.min().item())
+                r_max = float(ratio.max().item())
+                r_mean = float(ratio.mean().item())
+                print(f"  [all] min={r_min:.4f}  max={r_max:.4f}  mean={r_mean:.4f}")
 
             # Surrogate PPO clippé par position, pondéré par avantages, puis moyenné sur N
             adv_exp = advantages.unsqueeze(-1)                                               # (BM, λa, 1)
