@@ -416,43 +416,26 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         # --- Boucle K époques PPO avec SVGD intra-boucle ---
         last_surrogate_mean = None
-        log_Pi = None
+        adv_exp = advantages.unsqueeze(-1)  # (BM, λa, 1) — précalculé hors boucle
 
         for k in range(self.ppo_epochs):
             # Recalcul de π_θ depuis le theta courant (potentiellement mis à jour par SVGD)
             self.probs = self.forward()
-            log_Pi = self._compute_log_pi(indivduals)                  # (BM, λa) pour debug
 
-            # Ratio par position : r_n = π_θ_new(x_n) / π_θ_old(x_n)  — comme PPO_EDA
+            # Ratio par position : r_n = π_θ_new(x_n) / π_θ_old(x_n)
             pi_new_per_pos = self._compute_pi_per_pos(indivduals)          # (BM, λa, N)
             ratio = pi_new_per_pos / pi_old_per_pos                        # (BM, λa, N)
 
-            # with torch.no_grad():
-            #     ratio_view = ratio.view(B, M, λa, N)
-            #     # Instance 0, agent 0 : ratios sur les N positions (tronqué à 20 pour lisibilité)
-            #     print(f"[ratio | epoch {k+1}/{self.ppo_epochs}] instance 0 :")
-            #     for agent_idx in range(M):
-            #         vals = ratio_view[0, agent_idx, 0].cpu().tolist()  # 1er individu de l'agent
-            #         vals_str = " ".join(f"{v:.3f}" for v in vals[:20])
-            #         print(f"  agent {agent_idx} (indiv 0, pos[:20]): {vals_str}")
-            #     # Résumé sur toutes les instances, agents, individus, positions
-            #     r_min = float(ratio.min().item())
-            #     r_max = float(ratio.max().item())
-            #     r_mean = float(ratio.mean().item())
-            #     print(f"  [all] min={r_min:.4f}  max={r_max:.4f}  mean={r_mean:.4f}")
-
-            # Surrogate PPO clippé par position, pondéré par avantages, puis moyenné sur N
-            adv_exp = advantages.unsqueeze(-1)                                               # (BM, λa, 1)
+            # Surrogate PPO clippé par position, pondéré par avantages, sommé sur N
             surr1 = ratio * adv_exp                                                          # (BM, λa, N)
             surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * adv_exp # (BM, λa, N)
-            surrogate = torch.min(surr1, surr2).sum(dim=-1)               # (BM, λa) — sum sur N comme REINFORCE
+            surrogate = torch.min(surr1, surr2).sum(dim=-1)               # (BM, λa)
 
-            # Objectif : (1/λ) · Σ_l min(...)  — γ géré en interne par SVGD
             objective = surrogate.mean(dim=1).sum()
 
-            # Gradient ∇_θ objectif → direction d'ascension pour SVGD
+            # retain_graph=False : le graph est reconstruit à chaque epoch via forward()
             (grad_theta,) = torch.autograd.grad(
-                objective, self.theta, create_graph=False, retain_graph=True
+                objective, self.theta, create_graph=False, retain_graph=False
             )
             self.last_theta_grad = grad_theta.detach().clone()
 
@@ -466,8 +449,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             last_surrogate_mean = float(surrogate.detach().mean(dim=1).mean().item())
 
         # --- Stats de debug (dernière époque) ---
-        if self.debug_svgd and log_Pi is not None:
+        if self.debug_svgd:
             with torch.no_grad():
+                self.probs = self.forward()
+                log_Pi = self._compute_log_pi(indivduals)
                 self._last_debug_stats = {
                     "loss_mean": float(last_surrogate_mean) if last_surrogate_mean is not None else float("nan"),
                     "adv_mean": float(advantages.mean().item()),
@@ -513,7 +498,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         score = self.last_theta_grad.detach()
 
         with torch.enable_grad():
-            phi = self.svgd.phi(theta, score, probs=self.probs)
+            # Recompute fresh probs so the kernel always has a valid graph
+            # (the PPO/REINFORCE backward may have freed the previous one)
+            probs = self.forward()
+            phi = self.svgd.phi(theta, score, probs=probs)
             kernel_stats = self.svgd.get_last_kernel_stats()
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
