@@ -141,7 +141,7 @@ def plot(ranks: dict[str, list[int]], output_path: Path) -> None:
     colors = [PALETTE.get(display(a), "#aaaaaa") for a in algo_order]
     n = len(algo_order)
 
-    fig, ax = plt.subplots(figsize=(8, 3.5), dpi=300)
+    fig, ax = plt.subplots(figsize=(11, 5), dpi=300)
 
     bp = ax.boxplot(
         data,
@@ -150,19 +150,20 @@ def plot(ranks: dict[str, list[int]], output_path: Path) -> None:
         positions=list(range(n)),
         widths=0.52,
         whis=(5, 95),
-        medianprops=dict(color="red", linewidth=1.0),
-        whiskerprops=dict(linewidth=1.4, color="#333333"),
-        capprops=dict(linewidth=1.4, color="#333333"),
+        medianprops=dict(color="red", linewidth=2.6),
+        whiskerprops=dict(linewidth=2.4, color="#333333"),
+        capprops=dict(linewidth=2.4, color="#333333"),
+        boxprops=dict(linewidth=2.0, edgecolor="#222222"),
         flierprops=dict(visible=False),
         showfliers=False,
     )
 
     for patch, color in zip(bp["boxes"], colors):
         patch.set_facecolor(color)
-        patch.set_alpha(0.72)
+        patch.set_alpha(0.78)
 
     for i, d in enumerate(data):
-        ax.plot(sum(d) / len(d), i, "ko", markersize=5, zorder=5, clip_on=False)
+        ax.plot(sum(d) / len(d), i, "ko", markersize=10, zorder=5, clip_on=False)
 
     # Truncate whiskers/caps that extend past AXIS_CUTOFF and annotate the
     # true extreme value instead, so one long-tailed algorithm doesn't
@@ -181,44 +182,46 @@ def plot(ranks: dict[str, list[int]], output_path: Path) -> None:
             xytext=(4, 0),
             textcoords="offset points",
             ha="left", va="center",
-            fontsize=11, color="#333333",
+            fontsize=17, color="#333333", fontweight="bold",
         )
 
     svgd_mean = sum(ranks[MY_LABEL]) / len(ranks[MY_LABEL])
-    ax.axvline(svgd_mean, color=PALETTE[MY_LABEL], linestyle="--", linewidth=1.5, alpha=0.85, zorder=3)
+    ax.axvline(svgd_mean, color=PALETTE[MY_LABEL], linestyle="--", linewidth=2.4, alpha=0.85, zorder=3)
     ax.text(
         svgd_mean, 0 - 0.42,
         f"{svgd_mean:.1f}",
         ha="center", va="bottom",
-        fontsize=11, color=PALETTE[MY_LABEL],
+        fontsize=17, color=PALETTE[MY_LABEL], fontweight="bold",
         clip_on=False,
     )
 
     ax.set_yticks(list(range(n)))
-    ax.set_yticklabels([display(a) for a in algo_order], fontsize=13)
+    ax.set_yticklabels([display(a) for a in algo_order], fontsize=20)
     for tick, algo in zip(ax.get_yticklabels(), algo_order):
         if algo == MY_LABEL:
             tick.set_color(PALETTE[MY_LABEL])
             tick.set_fontweight("bold")
     ax.invert_yaxis()
 
-    ax.set_xlabel("Rank over 24 NK/NK3 benchmark settings (↓ better)", fontsize=14)
+    ax.set_xlabel("Rank over 24 NK/NK3 benchmark settings (↓ better)", fontsize=20, fontweight="bold")
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=8))
-    ax.tick_params(axis="x", labelsize=12)
+    ax.tick_params(axis="x", labelsize=18, width=1.6, length=6)
     ax.set_xlim(left=0.5, right=AXIS_CUTOFF + 2.5)
-    ax.grid(True, axis="x", linestyle=":", linewidth=0.6, alpha=0.55, zorder=0)
+    ax.grid(True, axis="x", linestyle=":", linewidth=0.9, alpha=0.55, zorder=0)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_linewidth(1.6)
+    ax.spines["bottom"].set_linewidth(1.6)
 
     ax.legend(
         handles=[
-            Line2D([0], [0], color="red", linewidth=2, label="Median"),
-            Line2D([0], [0], marker="o", color="black", linestyle="None", markersize=5, label="Mean"),
+            Line2D([0], [0], color="red", linewidth=3.5, label="Median"),
+            Line2D([0], [0], marker="o", color="black", linestyle="None", markersize=10, label="Mean"),
         ],
         loc="upper right",
-        fontsize=12,
+        fontsize=17,
         frameon=True,
-        framealpha=0.85,
+        framealpha=0.9,
         edgecolor="#cccccc",
     )
 
