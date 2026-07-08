@@ -36,6 +36,8 @@ class FactoryStrategyEA:
         clip_eps=0.2,
         kl_beta=1.0,
         kl_target_kl=None,
+        kl_beta_max=100.0,
+        kl_beta_min=1e-4,
     ):
         match typeStrategy:
             case "UMDA":
@@ -67,6 +69,8 @@ class FactoryStrategyEA:
                     clip_eps=clip_eps,
                     kl_beta=kl_beta,
                     kl_target_kl=kl_target_kl,
+                    kl_beta_max=kl_beta_max,
+                    kl_beta_min=kl_beta_min,
                 )
             case _:
                 raise ValueError(f"Unknown strategy type: {typeStrategy}")

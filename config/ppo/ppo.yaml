@@ -2,8 +2,10 @@ ppo_epochs: 4
 mode: kl  # clip | kl
 
 clip:
-  clip_eps: 0.2
+  clip_eps: 0.4
 
 kl:
   beta: 10
-  target_kl: 0.0001  # KL moyen par position ; optionnel : si présent, beta s'adapte ; si absent, beta est fixe
+  target_kl: 0.001  # KL moyen par position ; optionnel : si présent, beta s'adapte ; si absent, beta est fixe
+  beta_max: 10000    # plafond de beta (l'ancien plafond à 100 saturait avant d'atteindre target_kl)
+  beta_min: 0.0001

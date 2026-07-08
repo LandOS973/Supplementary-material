@@ -54,6 +54,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         clip_eps=0.2,          # ε_clip  (mode clip uniquement)
         kl_beta=1.0,           # β : pénalité KL  (mode kl uniquement)
         kl_target_kl=None,     # KL cible (float) => β adaptatif ; None => β fixe
+        kl_beta_max=100.0,     # plafond de β (mode kl adaptatif uniquement)
+        kl_beta_min=1e-4,      # plancher de β (mode kl adaptatif uniquement)
     ):
         self.M = M
         self.N = N
@@ -104,6 +106,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.clip_eps = float(clip_eps)
         self.kl_beta_init = float(kl_beta)
         self.kl_target_kl = float(kl_target_kl) if kl_target_kl is not None else None
+        self.kl_beta_max = float(kl_beta_max)
+        self.kl_beta_min = float(kl_beta_min)
         self.kl_beta = self.kl_beta_init  # mutable, adapté si kl_target_kl est défini
 
         kernel_config_local = kernel_config or {}
@@ -480,9 +484,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                     with torch.no_grad():
                         kl_val = float(kl.detach().item())
                         if kl_val > 1.5 * self.kl_target_kl:
-                            self.kl_beta = min(self.kl_beta * 1.5, 100.0)
+                            self.kl_beta = min(self.kl_beta * 1.5, self.kl_beta_max)
                         elif kl_val < self.kl_target_kl / 1.5:
-                            self.kl_beta = max(self.kl_beta / 1.5, 1e-4)
+                            self.kl_beta = max(self.kl_beta / 1.5, self.kl_beta_min)
 
             # retain_graph=False : le graph est reconstruit à chaque epoch via forward()
             (grad_theta,) = torch.autograd.grad(

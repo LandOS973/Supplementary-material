@@ -162,6 +162,8 @@ def main(cfg: DictConfig):
     clip_eps = 0.2
     kl_beta = 1.0
     kl_target_kl = None
+    kl_beta_max = 100.0
+    kl_beta_min = 1e-4
 
     if ppo_active:
         ppo_name = str(agent_val("ppo") or cfg.get("ppo") or "ppo")
@@ -177,6 +179,8 @@ def main(cfg: DictConfig):
             kl_beta = float(kl_cfg.get("beta", 1.0))
             kl_target_kl_val = kl_cfg.get("target_kl")
             kl_target_kl = float(kl_target_kl_val) if kl_target_kl_val is not None else None
+            kl_beta_max = float(kl_cfg.get("beta_max", 100.0))
+            kl_beta_min = float(kl_cfg.get("beta_min", 1e-4))
         else:
             raise ValueError(f"Mode PPO inconnu : '{ppo_mode}'. Valeurs valides : clip, kl")
     else:
@@ -187,7 +191,7 @@ def main(cfg: DictConfig):
     elif ppo_mode == "clip":
         ppo_info = f"ppo_active=True mode=clip ppo_epochs={ppo_epochs} clip_eps={clip_eps}"
     else:
-        kl_adapt_str = f" target_kl={kl_target_kl}" if kl_target_kl is not None else " beta=fixed"
+        kl_adapt_str = f" target_kl={kl_target_kl} beta_range=[{kl_beta_min},{kl_beta_max}]" if kl_target_kl is not None else " beta=fixed"
         ppo_info = f"ppo_active=True mode=kl ppo_epochs={ppo_epochs} beta={kl_beta}{kl_adapt_str}"
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
@@ -304,6 +308,8 @@ def main(cfg: DictConfig):
         clip_eps=clip_eps,
         kl_beta=kl_beta,
         kl_target_kl=kl_target_kl,
+        kl_beta_max=kl_beta_max,
+        kl_beta_min=kl_beta_min,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None
