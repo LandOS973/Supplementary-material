@@ -479,6 +479,17 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 surrogate = torch.min(surr1, surr2).sum(dim=-1)   # (BM, λa)
                 objective = surrogate.mean(dim=1).sum()
 
+                with torch.no_grad():
+                    surr_val = float(surrogate.mean(dim=1).sum())
+                    ratio_mean = float(ratio.mean())
+                    ratio_min = float(ratio.min())
+                    ratio_max = float(ratio.max())
+                    clipped_frac = float(((ratio < 1.0 - self.clip_eps) | (ratio > 1.0 + self.clip_eps)).float().mean())
+                    print(
+                        f"  [clip epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  clip_eps={self.clip_eps}  "
+                        f"ratio(mean/min/max)={ratio_mean:.4f}/{ratio_min:.4f}/{ratio_max:.4f}  clipped_frac={clipped_frac:.4f}"
+                    )
+
             else:  # 'kl' | 'trpo'
                 surrogate = surr1.sum(dim=-1)                      # (BM, λa) — pas de clipping
                 pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \

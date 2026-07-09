@@ -1,12 +1,12 @@
 ppo_epochs: 4
-mode: kl  # clip | kl | trpo
+mode: clip  # clip | kl | trpo
 
 clip:
-  clip_eps: 0.4
+  clip_eps: 0.8
 
 kl:
   beta: 1.0
 
 trpo:
   kl_threshold: 0.002      # KL_mean max tolérée après le pas SVGD (contrainte dure, pas de -beta*KL)
-  backoff_max_tries: 4     # nb de tentatives de réduction du pas (x0.5) avant d'accepter tel quel
+  backoff_max_tries: 6    # nb de tentatives de réduction du pas (x0.5) avant d'accepter tel quel
