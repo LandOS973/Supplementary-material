@@ -32,10 +32,6 @@ def render_agent_dashboard(
     solutions_history=None,
     hamming_pairwise_history=None,
     js_pairwise_history=None,
-    l2_history=None,
-    l2_pairwise_history=None,
-    l1_history=None,
-    l1_pairwise_history=None,
     entropy_history=None,
     entropy_agent_history=None,
     kernel_value_history=None,
@@ -44,6 +40,8 @@ def render_agent_dashboard(
     sample_entropy_agent_history=None,
     sample_hamming_history=None,
     sample_hamming_pairwise_history=None,
+    score_history=None,
+    ranking_lines=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -77,8 +75,6 @@ def render_agent_dashboard(
 
     pairwise_hamming = _prepare_pairwise(hamming_pairwise_history)
     pairwise_js = _prepare_pairwise(js_pairwise_history)
-    pairwise_l2 = _prepare_pairwise(l2_pairwise_history)
-    pairwise_l1 = _prepare_pairwise(l1_pairwise_history)
     entropy_agent_series = _prepare_agent_series(entropy_agent_history)
     sample_entropy_agent_series = _prepare_agent_series(sample_entropy_agent_history)
     sample_hamming_pairwise = _prepare_pairwise(sample_hamming_pairwise_history)
@@ -102,23 +98,14 @@ def render_agent_dashboard(
             overlay_type="pairwise",
             overlay_data=pairwise_js,
         )
-    if iterations and l2_history:
-        metrics_data["L2"] = dict(
-            average=l2_history,
-            ylabel="L2",
-            title="Average L2 Distance",
+    if iterations and score_history:
+        metrics_data["Score"] = dict(
+            average=score_history,
+            ylabel="Score",
+            title="Population Best Score",
             color="tab:red",
-            overlay_type="pairwise",
-            overlay_data=pairwise_l2,
-        )
-    if iterations and l1_history:
-        metrics_data["L1"] = dict(
-            average=l1_history,
-            ylabel="L1",
-            title="Average L1 Distance",
-            color="tab:pink",
-            overlay_type="pairwise",
-            overlay_data=pairwise_l1,
+            overlay_type=None,
+            overlay_data=None,
         )
     if entropy_history and entropy_agent_series is not None:
         metrics_data["Entropy"] = dict(
@@ -185,8 +172,23 @@ def render_agent_dashboard(
         metrics_frame = tk.Frame(pane)
         pane.add(metrics_frame, stretch="always")
 
-        fitness_available = bool(agent_fitness_history and num_agents > 0)
-        show_fitness_var = tk.IntVar(value=1 if fitness_available else 0)
+        if ranking_lines:
+            ranking_frame = tk.LabelFrame(metrics_frame, text="Classement global")
+            ranking_frame.pack(fill="x", anchor="n", padx=4, pady=(4, 0))
+            tk.Label(
+                ranking_frame,
+                text="\n".join(ranking_lines),
+                justify="left",
+                font=("Courier", 9),
+                anchor="w",
+            ).pack(fill="x", padx=6, pady=4)
+
+        extra_series_config = OrderedDict()
+        if agent_fitness_history and num_agents > 0:
+            extra_series_config["Fitness"] = dict(
+                history=agent_fitness_history, ylabel="Fitness", title="Agent Fitness Evolution"
+            )
+        extra_series_vars = {name: tk.IntVar(value=1) for name in extra_series_config}
 
         theta_available = bool(solutions_history and solutions_history.get("values"))
         theta_var = tk.IntVar(value=1 if theta_available else 0)
@@ -229,39 +231,36 @@ def render_agent_dashboard(
         overlay_lines = {}
         color_map = plt.cm.get_cmap("tab10", max(num_agents, 1))
 
-        def is_fitness_enabled():
-            return fitness_available and show_fitness_var.get() == 1
+        def enabled_extra_series():
+            return [name for name in extra_series_config if extra_series_vars[name].get() == 1]
 
-        fitness_lines = []
+        extra_axes = {}
+        extra_lines = {}
 
-        fitness_ax = None
-        fitness_lines = []
-
-        def draw_fitness_axis(total_rows):
-            if not is_fitness_enabled():
-                return None, []
-            ax = fig.add_subplot(total_rows, 1, total_rows)
-            ax.set_title("Agent Fitness Evolution")
-            ax.set_ylabel("Fitness")
+        def draw_extra_axis(name, total_rows, row):
+            cfg = extra_series_config[name]
+            ax = fig.add_subplot(total_rows, 1, row)
+            ax.set_title(cfg["title"])
+            ax.set_ylabel(cfg["ylabel"])
+            lines = []
             if iterations:
-                lines = []
                 for agent_idx in range(num_agents):
-                    series = [epoch[agent_idx] for epoch in agent_fitness_history]
+                    series = [epoch[agent_idx] for epoch in cfg["history"]]
                     (line,) = ax.plot(iterations, series, label=f"Agent {agent_idx}")
                     lines.append((agent_idx, line))
-            else:
-                lines = []
             ax.grid(True, linestyle="--", alpha=0.4)
             ax.legend()
             return ax, lines
 
         def draw_metrics():
-            nonlocal fitness_ax, fitness_lines
             fig.clear()
             plot_handles.clear()
             overlay_lines.clear()
+            extra_axes.clear()
+            extra_lines.clear()
+            active_extra = enabled_extra_series()
             total_metric_rows = len(selected_metrics)
-            total_rows = total_metric_rows + (1 if is_fitness_enabled() else 0)
+            total_rows = total_metric_rows + len(active_extra)
             if total_rows == 0:
                 fig.text(0.5, 0.5, "No metrics to display", ha="center", va="center")
                 canvas.draw_idle()
@@ -281,11 +280,15 @@ def render_agent_dashboard(
                 plot_handles[metric_name] = dict(axis=ax, avg_line=avg_line)
                 overlay_lines[metric_name] = []
 
-            nonlocal fitness_ax, fitness_lines
-            fitness_ax, fitness_lines = draw_fitness_axis(total_rows)
-            last_axis = fitness_ax if fitness_ax is not None else (
-                plot_handles[selected_metrics[-1]]["axis"] if selected_metrics else None
-            )
+            last_axis = None
+            for name in active_extra:
+                ax, lines = draw_extra_axis(name, total_rows, row)
+                row += 1
+                extra_axes[name] = ax
+                extra_lines[name] = lines
+                last_axis = ax
+            if last_axis is None and selected_metrics:
+                last_axis = plot_handles[selected_metrics[-1]]["axis"]
             if last_axis is not None:
                 last_axis.set_xlabel("Evaluations")
             fig.tight_layout()
@@ -382,19 +385,22 @@ def render_agent_dashboard(
                     leg = axis.get_legend()
                     if leg:
                         leg.remove()
-            if fitness_lines and fitness_ax:
-                if show_average or anchor_idx is None or not is_fitness_enabled():
-                    for _, line in fitness_lines:
+            for name, lines in extra_lines.items():
+                ax = extra_axes.get(name)
+                if not lines or ax is None:
+                    continue
+                if show_average or anchor_idx is None:
+                    for _, line in lines:
                         line.set_visible(True)
                 else:
-                    for idx, line in fitness_lines:
+                    for idx, line in lines:
                         line.set_visible(idx == anchor_idx)
-                visible = [(line, line.get_label()) for _, line in fitness_lines if line.get_visible()]
+                visible = [(line, line.get_label()) for _, line in lines if line.get_visible()]
                 if visible:
                     handles_vis, labels_vis = zip(*visible)
-                    fitness_ax.legend(handles_vis, labels_vis, loc="upper right")
+                    ax.legend(handles_vis, labels_vis, loc="upper right")
                 else:
-                    leg = fitness_ax.get_legend()
+                    leg = ax.get_legend()
                     if leg:
                         leg.remove()
 
@@ -423,7 +429,7 @@ def render_agent_dashboard(
         agent_menu = tk.OptionMenu(agent_frame, selected_agent, *agent_options, command=lambda *_: update_overlays())
         agent_menu.pack(side="left")
 
-        hidden_defaults = {"Entropy", "L2", "JS", "L1"}
+        hidden_defaults = {"Entropy", "JS"}
         if metrics_order:
             default_selection = [name for name in metrics_order if name not in hidden_defaults]
             if not default_selection:
@@ -446,11 +452,11 @@ def render_agent_dashboard(
 
         options_frame = tk.Frame(button_container)
         options_frame.pack(side="left", padx=4, pady=4)
-        if fitness_available:
+        for name in extra_series_config:
             tk.Checkbutton(
                 options_frame,
-                text="Show Fitness",
-                variable=show_fitness_var,
+                text=f"Show {name}",
+                variable=extra_series_vars[name],
                 command=draw_metrics,
             ).pack(side="left", padx=4)
         if theta_panel is not None:

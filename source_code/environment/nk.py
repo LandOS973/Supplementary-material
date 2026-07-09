@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import torch
 import numpy as np
 from tqdm import tqdm
 
 from environment.visualization import render_agent_dashboard, render_svgd_field_plot
 from environment.metrics import MetricsCalculator
+from utils.main_utils import build_global_ranking_lines
 
 
 
@@ -156,8 +159,6 @@ def get_Score_trajectoriesNK_cuda(
 
     avg_hamming_history = []
     avg_js_history = []
-    avg_l2_history = []
-    avg_l1_history = []
     avg_entropy_history = []
     best_fitness_history = []
     runtime_steps = []
@@ -176,8 +177,6 @@ def get_Score_trajectoriesNK_cuda(
     agent_fitness_history = []
     hamming_pairwise_history = []
     js_pairwise_history = []
-    l2_pairwise_history = []
-    l1_pairwise_history = []
     entropy_agent_history = []
     kl_pairwise_history = []
     avg_kernel_value_history = []
@@ -328,38 +327,27 @@ def get_Score_trajectoriesNK_cuda(
 
             if collect_summary_metrics:
                 avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
-                avg_l1, pairwise_l1 = metrics.compute_l1_distance(strategy.agents)
                 avg_entropy, per_agent_entropy = metrics.compute_entropy(strategy.agents)
                 avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
-                avg_l1_history.append(avg_l1 if avg_l1 is not None else 0.0)
                 avg_entropy_history.append(avg_entropy if avg_entropy is not None else 0.0)
             else:
                 pairwise_matrix = None
-                pairwise_l1 = None
                 per_agent_entropy = None
                 avg_hamming_history.append(0.0)
-                avg_l1_history.append(0.0)
                 avg_entropy_history.append(0.0)
 
             if collect_pairwise_metrics:
                 avg_js, pairwise_js = metrics.compute_average_js(strategy.agents)
-                avg_l2, pairwise_l2 = metrics.compute_l2_distance(strategy.agents)
                 avg_js_history.append(avg_js if avg_js is not None else 0.0)
-                avg_l2_history.append(avg_l2 if avg_l2 is not None else 0.0)
                 hamming_pairwise_history.append(pairwise_matrix.tolist() if pairwise_matrix is not None else None)
                 js_pairwise_history.append(pairwise_js.tolist() if pairwise_js is not None else None)
-                l2_pairwise_history.append(pairwise_l2.tolist() if pairwise_l2 is not None else None)
-                l1_pairwise_history.append(pairwise_l1.tolist() if pairwise_l1 is not None else None)
                 entropy_agent_history.append(per_agent_entropy if per_agent_entropy is not None else None)
             else:
                 avg_js_history.append(0.0)
-                avg_l2_history.append(0.0)
                 hamming_pairwise_history.append(None)
                 js_pairwise_history.append(None)
-                l2_pairwise_history.append(None)
-                l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
-            agent_fitness_history.append([score.item() for score in agent_mean_scores])
+            agent_fitness_history.append([score.item() / N for score in agent_mean_scores])
             kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
             kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
             if kernel_stats:
@@ -460,6 +448,15 @@ def get_Score_trajectoriesNK_cuda(
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
 
     bestScore_np = -bestScore.detach().cpu().numpy()/N
+    ranking_lines = None
+    if enable_visualization:
+        repo_root = Path(__file__).resolve().parents[2]
+        type_problem_for_ranking = "NK3" if D == 3 else "NK"
+        avg_score_for_ranking = float(np.mean(-bestScore_np))
+        ranking_lines = build_global_ranking_lines(
+            repo_root, type_problem_for_ranking, N, K, avg_score_for_ranking
+        )
+        print("\n".join(ranking_lines))
     if track_leader and enable_visualization and agent_best_overall is not None and hasattr(strategy, "agents"):
         print("Per-agent summary:")
         for idx, agent in enumerate(strategy.agents):
@@ -481,19 +478,17 @@ def get_Score_trajectoriesNK_cuda(
             agent_fitness_history,
             num_agents,
             theta_history,
-            {"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
+            solutions_history={"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
             if solutions_history is not None and num_agents > 0
             else None,
-            hamming_pairwise_history,
-            js_pairwise_history,
-            avg_l2_history,
-            l2_pairwise_history,
-            avg_l1_history,
-            l1_pairwise_history,
-            avg_entropy_history,
-            entropy_agent_history,
-            avg_kernel_value_history,
-            avg_kernel_grad_history,
+            hamming_pairwise_history=hamming_pairwise_history,
+            js_pairwise_history=js_pairwise_history,
+            entropy_history=avg_entropy_history,
+            entropy_agent_history=entropy_agent_history,
+            kernel_value_history=avg_kernel_value_history,
+            kernel_grad_history=avg_kernel_grad_history,
+            score_history=score_mean_history,
+            ranking_lines=ranking_lines,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)
@@ -508,8 +503,6 @@ def get_Score_trajectoriesNK_cuda(
             best_fitness=best_fitness_history,
             avg_hamming=avg_hamming_history,
             avg_js=avg_js_history,
-            avg_l2=avg_l2_history,
-            avg_l1=avg_l1_history,
             avg_entropy=avg_entropy_history,
             score_mean=score_mean_history,
             score_median=score_median_history,

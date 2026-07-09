@@ -571,3 +571,60 @@ def _write_group_history(agg_outdir: str, problem: str, dim: int, type_instance:
             f"{_safe(runtimes, i)},{_safe(best_fitness, i)},{_safe(avg_hamming, i)},{_safe(avg_js, i)},{_safe(avg_l2, i)}"
         )
     out_file.write_text("\n".join(lines), encoding="utf-8")
+
+
+def global_ranking_filename(type_problem: str, dim: int, type_instance: int) -> str:
+    problem_upper = str(type_problem).upper()
+    if problem_upper == "QUBO":
+        return f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
+    if problem_upper == "NK3":
+        return f"NK3_N_{dim}_K_{type_instance}_ranks.csv"
+    return f"NK_N_{dim}_K_{type_instance}_ranks.csv"
+
+
+def build_global_ranking_lines(repo_root, type_problem: str, dim: int, type_instance: int, avg_score: float):
+    """Situe avg_score parmi additional_results/global_ranking (top 1, +-2 autour de nous).
+
+    Retourne une liste de lignes texte prete a afficher (print ou widget Tk).
+    """
+    ranking_path = Path(repo_root) / "additional_results" / "global_ranking" / global_ranking_filename(
+        type_problem, dim, type_instance
+    )
+    if not ranking_path.exists():
+        return [f"Classement introuvable : {ranking_path.name}"]
+
+    entries = []
+    with ranking_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            try:
+                entries.append((row["name_algo"], float(row["score"])))
+            except (KeyError, ValueError, TypeError):
+                continue
+
+    entries.append(("Ours", avg_score))
+    entries.sort(key=lambda item: item[1], reverse=True)
+
+    our_idx = next(i for i, (name, _) in enumerate(entries) if name == "Ours")
+    total = len(entries)
+
+    lines = [f"Classement global ({ranking_path.name})"]
+    lines.append(f"Notre score : {avg_score:.4f}  =>  rang {our_idx + 1}/{total}")
+
+    top_name, top_score = entries[0]
+    lines.append(f"Top 1        : {top_name} = {top_score:.4f}")
+
+    start_above = max(0, our_idx - 2)
+    for i in range(start_above, our_idx):
+        name, score = entries[i]
+        lines.append(f"  #{i + 1:<3} {name:<50} {score:.4f}")
+
+    name, score = entries[our_idx]
+    lines.append(f"> #{our_idx + 1:<3} {name:<50} {score:.4f}")
+
+    end_below = min(total, our_idx + 1 + 2)
+    for i in range(our_idx + 1, end_below):
+        name, score = entries[i]
+        lines.append(f"  #{i + 1:<3} {name:<50} {score:.4f}")
+
+    return lines

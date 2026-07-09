@@ -50,12 +50,14 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # PPO hyperparameters
         ppo_active=False,      # True => PPO (K époques), False => REINFORCE pur
         ppo_epochs=1,          # K : nombre d'époques internes (ignoré si ppo_active=False)
-        ppo_mode='clip',       # 'clip' | 'kl'
+        ppo_mode='clip',       # 'clip' | 'kl' | 'trpo'
         clip_eps=0.2,          # ε_clip  (mode clip uniquement)
         kl_beta=1.0,           # β : pénalité KL  (mode kl uniquement)
         kl_target_kl=None,     # KL cible (float) => β adaptatif ; None => β fixe
         kl_beta_max=100.0,     # plafond de β (mode kl adaptatif uniquement)
         kl_beta_min=1e-4,      # plancher de β (mode kl adaptatif uniquement)
+        trpo_kl_threshold=0.01,      # seuil max de KL_mean toléré par époque (mode trpo uniquement)
+        trpo_backoff_max_tries=4,    # nb de tentatives de réduction du pas avant d'accepter tel quel (mode trpo)
     ):
         self.M = M
         self.N = N
@@ -109,6 +111,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.kl_beta_max = float(kl_beta_max)
         self.kl_beta_min = float(kl_beta_min)
         self.kl_beta = self.kl_beta_init  # mutable, adapté si kl_target_kl est défini
+        self.trpo_kl_threshold = float(trpo_kl_threshold)
+        self.trpo_backoff_max_tries = int(trpo_backoff_max_tries)
 
         kernel_config_local = kernel_config or {}
         advantage_cfg_local = advantage_cfg
@@ -269,23 +273,31 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
     def _compute_kl(self, pi_old_full, pi_new_full):
         """
-        KL(π_old || π_new) moyenné sur toutes les dimensions (même convention que PPO_EDA).
+        KL(π_old || π_new) par (instance×agent, variable).
         binary:       pi (BM, N)      — probabilité de x=1
         categorical:  pi (BM, N, D)   — distribution sur les D catégories
+
+        Retourne (kl_sum, kl_mean) :
+        - kl_sum  : KL jointe (somme sur N, comme `surrogate`) — utilisée dans l'objectif,
+          pour rester à la même échelle que le terme de récompense.
+        - kl_mean : KL moyenne par position (BM×N) — utilisée uniquement pour comparer à
+          `kl_target_kl`, qui garde une sémantique "KL moyenne par variable".
         """
         if self.use_categorical:
             from torch.distributions import Categorical, kl_divergence
             kl = kl_divergence(
                 Categorical(probs=pi_old_full),
                 Categorical(probs=pi_new_full),
-            ).mean()
+            )  # (BM, N)
         else:
             from torch.distributions import Bernoulli, kl_divergence
             kl = kl_divergence(
                 Bernoulli(probs=pi_old_full),
                 Bernoulli(probs=pi_new_full),
-            ).mean()
-        return kl
+            )  # (BM, N)
+        kl_sum = kl.sum(dim=-1).sum()
+        kl_mean = kl.mean()
+        return kl_sum, kl_mean
 
     def _updateDistribution_REINFORCE(self, solutionList, scoreList):
         """
@@ -440,7 +452,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # --- π_θ_old figées pour les K époques (ratio + KL) ---
         with torch.no_grad():
             pi_old_per_pos = self._compute_pi_per_pos(indivduals).detach()  # (BM, λa, N)
-            if self.ppo_mode == 'kl':
+            if self.ppo_mode in ('kl', 'trpo'):
                 pi_old_full = self.probs.view(BM, N, -1).detach() if self.use_categorical \
                     else self.probs.view(BM, N).detach()
 
@@ -467,26 +479,37 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 surrogate = torch.min(surr1, surr2).sum(dim=-1)   # (BM, λa)
                 objective = surrogate.mean(dim=1).sum()
 
-            else:  # 'kl'
+            else:  # 'kl' | 'trpo'
                 surrogate = surr1.sum(dim=-1)                      # (BM, λa) — pas de clipping
                 pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \
                     else self.probs.view(BM, N)
-                kl = self._compute_kl(pi_old_full, pi_new_full)
-                objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl
+                kl_sum, kl_mean = self._compute_kl(pi_old_full, pi_new_full)
 
-                with torch.no_grad():
-                    surr_val = float(surrogate.mean(dim=1).sum())
-                    pen_val = self.kl_beta * float(kl)
-                    print(f"  [kl epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  beta*KL={pen_val:.6f}  ratio={pen_val/abs(surr_val):.4f}")
-
-                # Adaptation de β à la dernière epoch seulement (KL totale après K steps)
-                if self.kl_target_kl is not None and k == self.ppo_epochs - 1:
+                if self.ppo_mode == 'trpo':
+                    # Pas de pénalité -beta*KL : la contrainte est appliquée sur le PAS SVGD lui-même
+                    # (backoff façon line-search TRPO), cf. _apply_svgd_with_kl_constraint.
+                    objective = surrogate.mean(dim=1).sum()
                     with torch.no_grad():
-                        kl_val = float(kl.detach().item())
-                        if kl_val > 1.5 * self.kl_target_kl:
-                            self.kl_beta = min(self.kl_beta * 1.5, self.kl_beta_max)
-                        elif kl_val < self.kl_target_kl / 1.5:
-                            self.kl_beta = max(self.kl_beta / 1.5, self.kl_beta_min)
+                        surr_val = float(surrogate.mean(dim=1).sum())
+                        kl_mean_val = float(kl_mean)
+                        print(f"  [trpo epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  KL_mean(pre-step)={kl_mean_val:.6f}  threshold={self.trpo_kl_threshold}  ratio={kl_mean_val/self.trpo_kl_threshold:.4f}")
+                else:  # 'kl'
+                    objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl_sum
+                    with torch.no_grad():
+                        surr_val = float(surrogate.mean(dim=1).sum())
+                        kl_mean_val = float(kl_mean)
+                        kl_sum_val = float(kl_sum)
+                        pen_val = self.kl_beta * kl_sum_val
+                        print(f"  [kl epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  beta={self.kl_beta:.4f}  KL_mean={kl_mean_val:.6f}  KL_sum={kl_sum_val:.4f}  beta*KL_sum={pen_val:.4f}  ratio={pen_val/abs(surr_val):.4f}")
+
+                    # Adaptation de β à la dernière epoch seulement (KL moyenne par position après K steps)
+                    if self.kl_target_kl is not None and k == self.ppo_epochs - 1:
+                        with torch.no_grad():
+                            kl_val = float(kl_mean.detach().item())
+                            if kl_val > 1.5 * self.kl_target_kl:
+                                self.kl_beta = min(self.kl_beta * 1.5, self.kl_beta_max)
+                            elif kl_val < self.kl_target_kl / 1.5:
+                                self.kl_beta = max(self.kl_beta / 1.5, self.kl_beta_min)
 
             # retain_graph=False : le graph est reconstruit à chaque epoch via forward()
             (grad_theta,) = torch.autograd.grad(
@@ -499,7 +522,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                     self._last_debug_stats["theta_grad_norm"] = float(grad_theta.norm().item())
 
             # Pas SVGD : θ_i += ε · φ(θ)  — à l'intérieur de la boucle K
-            self._apply_svgd()
+            if self.ppo_mode == 'trpo':
+                self._apply_svgd_with_kl_constraint(pi_old_full, BM, N, k=k, surr_val=surr_val)
+            else:
+                self._apply_svgd()
 
             last_surrogate_mean = float(surrogate.detach().mean(dim=1).mean().item())
 
@@ -541,10 +567,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
     def toString(self):
         return f"MultiAgent_Collaborative_M{self.M}_lambdaPerAgent{self.lambda_per_agent}"
 
-    def _apply_svgd(self):
+    def _apply_svgd(self, step_scale=1.0):
         """
         Applique un pas SVGD instance par instance en se basant sur les directions RL observées.
         Utilise self.last_theta_grad comme direction RL : (B, M, N)
+        `step_scale` permet de réduire le pas (backoff façon line-search, cf. contrainte KL dure).
         """
         if self.last_theta_grad is None:
             return
@@ -571,8 +598,62 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                     }
 
         with torch.no_grad():
-            self.theta += self.epsilon_svgd * phi
+            self.theta += step_scale * self.epsilon_svgd * phi
             self.probs = None
+
+    def _apply_svgd_with_kl_constraint(self, pi_old_full, BM, N, k=None, surr_val=None):
+        """
+        Mode 'trpo' : applique le pas SVGD sous contrainte dure de KL, façon line-search TRPO,
+        au lieu d'une pénalité -beta*KL dans l'objectif.
+
+        Le nombre d'époques K (`ppo_epochs`) n'est pas affecté : cette méthode gère uniquement
+        CE QUI SE PASSE À L'INTÉRIEUR d'une époque donnée (le pas SVGD de cette époque), la boucle
+        `for k in range(self.ppo_epochs)` dans `_updateDistribution_PPO` reste inchangée — on fait
+        toujours K époques, chacune avec son propre essai (et éventuel backoff) de pas SVGD.
+
+        Si la KL_mean mesurée APRES le pas dépasse trpo_kl_threshold, on annule le pas et on
+        retente avec un pas réduit de moitié (jusqu'à trpo_backoff_max_tries tentatives). Si même
+        la plus petite tentative dépasse encore le seuil, on la garde quand même (on n'annule pas
+        totalement le pas de cette époque) : sinon, si epsilon_svgd est mal calibré, l'entraînement
+        pourrait ne plus jamais bouger pour cette époque (0 mise à jour), ce qui bloquerait tout.
+        """
+        if self.last_theta_grad is None:
+            return
+
+        epoch_str = f"epoch {k + 1}/{self.ppo_epochs}" if k is not None else "epoch ?"
+        surr_str = f"{surr_val:.4f}" if surr_val is not None else "n/a"
+        theta_before = self.theta.detach().clone()
+        step_scale = 1.0
+        kl_mean_after = None
+        for attempt in range(self.trpo_backoff_max_tries):
+            self._apply_svgd(step_scale=step_scale)
+            with torch.no_grad():
+                probs_after = self.forward()
+                pi_after_full = probs_after.view(BM, N, -1) if self.use_categorical \
+                    else probs_after.view(BM, N)
+                _, kl_mean_after = self._compute_kl(pi_old_full, pi_after_full)
+            kl_val = float(kl_mean_after)
+            ratio_val = kl_val / self.trpo_kl_threshold
+            ok = kl_val <= self.trpo_kl_threshold
+            if attempt > 0 or not ok:
+                status = "OK" if ok else "> seuil"
+                print(
+                    f"    [trpo backoff] {epoch_str}  essai {attempt + 1}/{self.trpo_backoff_max_tries}  "
+                    f"surrogate={surr_str}  step_scale={step_scale:.4f}  KL_mean={kl_val:.6f}  "
+                    f"threshold={self.trpo_kl_threshold}  ratio={ratio_val:.4f}  {status}"
+                )
+            if ok:
+                break
+            if attempt < self.trpo_backoff_max_tries - 1:
+                self.theta.data.copy_(theta_before)
+                self.probs = None
+                step_scale *= 0.5
+            else:
+                print(
+                    f"    [trpo backoff] {epoch_str}  seuil toujours dépassé après {self.trpo_backoff_max_tries} "
+                    f"essais (surrogate={surr_str}  KL_mean={kl_val:.6f} > {self.trpo_kl_threshold}  ratio={ratio_val:.4f}) "
+                    f"-> pas accepté tel quel"
+                )
 
     def _should_debug(self) -> bool:
         if not self.debug_svgd:

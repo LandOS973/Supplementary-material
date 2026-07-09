@@ -16,52 +16,68 @@ class MetricsCalculator:
             return 0.0, None
 
         eps = 1e-6
-        with torch.no_grad():
-            probs = torch.stack(
-                [torch.sigmoid(self.agent_theta_tensor(agent)).detach() for agent in agents],
-                dim=0
-            )
-            probs = torch.clamp(probs, eps, 1 - eps)
 
         def _clamp(x):
             return torch.clamp(x, eps, 1 - eps)
 
-        p = _clamp(probs.unsqueeze(1))             
-        q = _clamp(probs.unsqueeze(0))             
-        m = _clamp(0.5 * (p + q))
+        with torch.no_grad():
+            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)
+            theta_i = theta.unsqueeze(1)
+            theta_j = theta.unsqueeze(0)
 
-        def _kl(a, b):
-            a = _clamp(a)
-            b = _clamp(b)
-            val = (a * (torch.log(a) - torch.log(b)) + (1 - a) * (torch.log1p(-a) - torch.log1p(-b))).sum(dim=-1)
-            if torch.isnan(val).any() or torch.isinf(val).any():
-                val = torch.nan_to_num(val, nan=0.0, posinf=0.0, neginf=0.0)
-            return val
+            if theta.dim() == 4:  # catégoriel : (M, B, N, D)
+                p = _clamp(torch.softmax(theta_i, dim=-1))
+                q = _clamp(torch.softmax(theta_j, dim=-1))
+                m = _clamp(0.5 * (p + q))
 
-        js = 0.5 * (_kl(p, m) + _kl(q, m))           
-        if torch.isnan(js).any() or torch.isinf(js).any():
-            js = torch.nan_to_num(js, nan=0.0, posinf=0.0, neginf=0.0)
-        pairwise_mean = js.mean(dim=-1)         
+                def _kl(a, b):
+                    a = _clamp(a)
+                    b = _clamp(b)
+                    val = (a * (torch.log(a) - torch.log(b))).sum(dim=-1)          # somme sur D -> (M, M, B, N)
+                    return torch.nan_to_num(val, nan=0.0, posinf=0.0, neginf=0.0)
 
-        num_agents = probs.shape[0]
+                js_per_var = 0.5 * (_kl(p, m) + _kl(q, m))                          # (M, M, B, N)
+                js_total = js_per_var.sum(dim=-1)                                    # somme sur N -> (M, M, B)
+            else:  # binaire : (M, B, N)
+                p = _clamp(torch.sigmoid(theta_i))
+                q = _clamp(torch.sigmoid(theta_j))
+                m = _clamp(0.5 * (p + q))
+
+                def _kl(a, b):
+                    a = _clamp(a)
+                    b = _clamp(b)
+                    val = (a * (torch.log(a) - torch.log(b)) + (1 - a) * (torch.log1p(-a) - torch.log1p(-b))).sum(dim=-1)
+                    return torch.nan_to_num(val, nan=0.0, posinf=0.0, neginf=0.0)
+
+                js_total = 0.5 * (_kl(p, m) + _kl(q, m))                            # déjà sommé sur N -> (M, M, B)
+
+            pairwise_mean = js_total.mean(dim=-1)                                    # moyenne sur B -> (M, M)
+
+        num_agents = theta.shape[0]
         total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum()
         num_pairs = num_agents * (num_agents - 1)
         avg = (total / num_pairs).item() if num_pairs > 0 else 0.0
         return avg, pairwise_mean.cpu().numpy()
 
     def compute_average_hamming(self, agents):
-        """Compute pairwise theoretical Hamming diversity from Bernoulli policies."""
+        """Compute pairwise theoretical Hamming diversity from Bernoulli/Categorical policies."""
         if agents is None or len(agents) < 2:
             return 0.0, None
 
         M = len(agents)
         with torch.no_grad():
-            probs = torch.stack([torch.sigmoid(self.agent_theta_tensor(agent)).detach() for agent in agents], dim=0)
-
-        theta_i = probs.unsqueeze(1)                
-        theta_j = probs.unsqueeze(0)                
-        pairwise = theta_i + theta_j - 2 * theta_i * theta_j                
-        distances = pairwise.sum(dim=-1).mean(dim=-1)          
+            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)
+            theta_i = theta.unsqueeze(1)
+            theta_j = theta.unsqueeze(0)
+            if theta.dim() == 4:  # catégoriel : (M, B, N, D)
+                probs_i = torch.softmax(theta_i, dim=-1)
+                probs_j = torch.softmax(theta_j, dim=-1)
+                pairwise = 1.0 - (probs_i * probs_j).sum(dim=-1)          # (M, M, B, N) — P(différent) par variable
+            else:  # binaire : (M, B, N)
+                probs_i = torch.sigmoid(theta_i)
+                probs_j = torch.sigmoid(theta_j)
+                pairwise = probs_i + probs_j - 2 * probs_i * probs_j       # (M, M, B, N)
+            distances = pairwise.sum(dim=-1).mean(dim=-1)                  # somme sur N, moyenne sur B -> (M, M)
 
         off_diag_sum = distances.sum() - torch.diagonal(distances).sum()
         num_pairs = M * (M - 1)
@@ -103,13 +119,18 @@ class MetricsCalculator:
             return 0.0, None
 
         with torch.no_grad():
-            theta = torch.stack([torch.sigmoid(self.agent_theta_tensor(agent).detach()) for agent in agents], dim=0)             
+            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)
+            probs = torch.softmax(theta, dim=-1) if theta.dim() == 4 else torch.sigmoid(theta)
 
-        theta_i = theta.unsqueeze(1)             
-        theta_j = theta.unsqueeze(0)             
-        diff = theta_i - theta_j             
-        pairwise = torch.sqrt(torch.sum(diff * diff, dim=-1))           
-        pairwise_mean = pairwise.mean(dim=-1)         
+            theta_i = probs.unsqueeze(1)
+            theta_j = probs.unsqueeze(0)
+            diff = theta_i - theta_j
+            per_elem = torch.sqrt(torch.sum(diff * diff, dim=-1))           # somme sur D (catégoriel) ou N (binaire)
+            if theta.dim() == 4:  # catégoriel : per_elem est (M, M, B, N) -> il reste N à agréger
+                pairwise = per_elem.sum(dim=-1)                              # somme sur N -> (M, M, B)
+            else:
+                pairwise = per_elem                                          # déjà (M, M, B)
+            pairwise_mean = pairwise.mean(dim=-1)                            # moyenne sur B -> (M, M)
 
         num_agents = theta.shape[0]
         total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum()
@@ -122,16 +143,21 @@ class MetricsCalculator:
             return 0.0, None
 
         with torch.no_grad():
-            theta = torch.stack([torch.sigmoid(self.agent_theta_tensor(agent).detach()) for agent in agents], dim=0)             
+            theta = torch.stack([self.agent_theta_tensor(agent).detach() for agent in agents], dim=0)
+            probs = torch.softmax(theta, dim=-1) if theta.dim() == 4 else torch.sigmoid(theta)
 
-        theta_i = theta.unsqueeze(1)             
-        theta_j = theta.unsqueeze(0)             
-        diff = torch.abs(theta_i - theta_j)             
-        pairwise = torch.sum(diff, dim=-1)           
-        pairwise_mean = pairwise.mean(dim=-1)         
+            theta_i = probs.unsqueeze(1)
+            theta_j = probs.unsqueeze(0)
+            diff = torch.abs(theta_i - theta_j)
+            per_elem = torch.sum(diff, dim=-1)                               # somme sur D (catégoriel) ou N (binaire)
+            if theta.dim() == 4:  # catégoriel : per_elem est (M, M, B, N) -> il reste N à agréger
+                pairwise = per_elem.sum(dim=-1)                              # somme sur N -> (M, M, B)
+            else:
+                pairwise = per_elem                                          # déjà (M, M, B)
+            pairwise_mean = pairwise.mean(dim=-1)                            # moyenne sur B -> (M, M)
 
         num_agents = theta.shape[0]
-        total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum() 
+        total = pairwise_mean.sum() - torch.diagonal(pairwise_mean).sum()
         num_pairs = num_agents * (num_agents - 1)
         avg = (total / num_pairs).item() if num_pairs > 0 else 0.0
         return avg, pairwise_mean.cpu().numpy()

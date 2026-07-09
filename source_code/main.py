@@ -35,6 +35,7 @@ from problems.nasbench import (
     resolve_nasbench_data_file,
 )
 from problems.viennarna import ETERNA100_TSV_URL, load_target_from_eterna100, normalize_target_struct
+from utils.main_utils import build_global_ranking_lines
 
 
 def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
@@ -62,6 +63,14 @@ def _load_ppo_config(ppo_name: str, repo_root: str) -> dict:
         )
     cfg = OmegaConf.load(str(ppo_path))
     return OmegaConf.to_container(cfg, resolve=True) or {}
+
+
+def print_global_ranking(repo_root: str, type_problem: str, dim: int, type_instance: int, avg_score: float) -> None:
+    """Situe notre score parmi les algos de additional_results/global_ranking (top 1, +-2 autour de nous)."""
+    lines = build_global_ranking_lines(repo_root, type_problem, dim, type_instance, avg_score)
+    print("\n=== " + lines[0] + " ===")
+    for line in lines[1:]:
+        print(line)
 
 
 @hydra.main(config_path="../config", config_name="config", version_base=None)
@@ -164,6 +173,8 @@ def main(cfg: DictConfig):
     kl_target_kl = None
     kl_beta_max = 100.0
     kl_beta_min = 1e-4
+    trpo_kl_threshold = 0.01
+    trpo_backoff_max_tries = 4
 
     if ppo_active:
         ppo_name = str(agent_val("ppo") or cfg.get("ppo") or "ppo")
@@ -181,8 +192,12 @@ def main(cfg: DictConfig):
             kl_target_kl = float(kl_target_kl_val) if kl_target_kl_val is not None else None
             kl_beta_max = float(kl_cfg.get("beta_max", 100.0))
             kl_beta_min = float(kl_cfg.get("beta_min", 1e-4))
+        elif ppo_mode == "trpo":
+            trpo_cfg = ppo_cfg.get("trpo") or {}
+            trpo_kl_threshold = float(trpo_cfg.get("kl_threshold", 0.01))
+            trpo_backoff_max_tries = int(trpo_cfg.get("backoff_max_tries", 4))
         else:
-            raise ValueError(f"Mode PPO inconnu : '{ppo_mode}'. Valeurs valides : clip, kl")
+            raise ValueError(f"Mode PPO inconnu : '{ppo_mode}'. Valeurs valides : clip, kl, trpo")
     else:
         ppo_epochs = 1
 
@@ -190,6 +205,11 @@ def main(cfg: DictConfig):
         ppo_info = "ppo_active=False"
     elif ppo_mode == "clip":
         ppo_info = f"ppo_active=True mode=clip ppo_epochs={ppo_epochs} clip_eps={clip_eps}"
+    elif ppo_mode == "trpo":
+        ppo_info = (
+            f"ppo_active=True mode=trpo ppo_epochs={ppo_epochs} "
+            f"kl_threshold={trpo_kl_threshold} backoff_max_tries={trpo_backoff_max_tries}"
+        )
     else:
         kl_adapt_str = f" target_kl={kl_target_kl} beta_range=[{kl_beta_min},{kl_beta_max}]" if kl_target_kl is not None else " beta=fixed"
         ppo_info = f"ppo_active=True mode=kl ppo_epochs={ppo_epochs} beta={kl_beta}{kl_adapt_str}"
@@ -310,6 +330,8 @@ def main(cfg: DictConfig):
         kl_target_kl=kl_target_kl,
         kl_beta_max=kl_beta_max,
         kl_beta_min=kl_beta_min,
+        trpo_kl_threshold=trpo_kl_threshold,
+        trpo_backoff_max_tries=trpo_backoff_max_tries,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None
@@ -325,6 +347,7 @@ def main(cfg: DictConfig):
             tensor_Q_test,
             device,
             verbose,
+            type_instance=type_instance,
             enable_visualization=visualization_enabled,
             return_history=False,
         )
@@ -403,6 +426,7 @@ def main(cfg: DictConfig):
 
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
+    print_global_ranking(repo_root, type_problem, dim, type_instance, avg)
 
     if not is_nasbench and type_problem_upper != "VIENNARNA":
         try:

@@ -1,11 +1,12 @@
 ppo_epochs: 4
-mode: kl  # clip | kl
+mode: kl  # clip | kl | trpo
 
 clip:
   clip_eps: 0.4
 
 kl:
-  beta: 10
-  target_kl: 0.001  # KL moyen par position ; optionnel : si présent, beta s'adapte ; si absent, beta est fixe
-  beta_max: 10000    # plafond de beta (l'ancien plafond à 100 saturait avant d'atteindre target_kl)
-  beta_min: 0.0001
+  beta: 1.0
+
+trpo:
+  kl_threshold: 0.002      # KL_mean max tolérée après le pas SVGD (contrainte dure, pas de -beta*KL)
+  backoff_max_tries: 4     # nb de tentatives de réduction du pas (x0.5) avant d'accepter tel quel
