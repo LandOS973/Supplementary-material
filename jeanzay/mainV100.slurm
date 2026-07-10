@@ -11,7 +11,7 @@
 
 OUTFILE="/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/outputs/main_${SLURM_JOB_ID}.out"
 
-echo "Job démarré sur $(hostname) à $(date) (account: $SLURM_JOB_ACCOUNT)"
+echo "Job démarré sur $(hostname) à $(date)"
 
 M_VALUES=""
 while getopts "m:" opt; do
@@ -35,9 +35,6 @@ cd $WORK/Supplementary-material
 mkdir -p outputs
 
 module purge
-if [[ "$SLURM_JOB_ACCOUNT" == *h100* ]]; then
-  module load arch/h100
-fi
 module load miniforge/24.9.0
 conda activate ppo_env
 
@@ -52,9 +49,8 @@ fi
 echo "Job terminé à $(date)"
 
 # Exemples de lancement :
-# sbatch jeanzay/main.slurm                                    # v100 (défaut), config par défaut
-# sbatch jeanzay/main.slurm budget=1000 verbose=false          # v100, overrides Hydra
-# sbatch jeanzay/main_h100.slurm budget=1000                   # h100
-# sbatch jeanzay/main_h100.slurm -m "seed=1,2,3 budget=1000"   # h100, Hydra multirun
+# sbatch jeanzay/mainV100.slurm                                    # config par défaut
+# sbatch jeanzay/mainV100.slurm budget=1000 verbose=false          # overrides Hydra
+# sbatch jeanzay/mainV100.slurm -m "seed=1,2,3 budget=1000"        # Hydra multirun
 
 #tail -n 100 -f $WORK/Supplementary-material/outputs/main_numjob.out
