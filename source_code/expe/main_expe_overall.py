@@ -39,15 +39,32 @@ DEFAULTS = dict(
 DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
-        advantages=["globalrankweighted"], 
+        advantages=["peragentrankweighted"], 
         M_values=[10],
-        lambda_values=[8,10,13,14],
-        epsilon_svgd=[0.08,0.10, 0.12],
-        gamma=[0.006 ,0.008, 0.015],
+        lambda_values=[13],
+        epsilon_svgd=[0.04,0.05,0.08],
+        gamma=[0.006],
         decay_start_ratio=[0.03],
         decay_min_factor=[0.01],
+        # Variantes PPO croisées avec le grid ci-dessus.
+        # Chaque entrée porte uniquement les params de son mode ("none" = baseline sans PPO).
+        ppo_variants=[
+            dict(mode="clip", ppo_epochs=[2,4,6,8], clip_eps=[0.2, 0.5, 0.8]),
+            dict(mode="kl", ppo_epochs=[2,4,6,8], kl_beta=[0.01, 0.2, 1.0]),
+            dict(mode="trpo", ppo_epochs=[2,4,6,8], kl_threshold=[0.002, 0.004, 0.01], backoff_max_tries=[6]),
+        ],
     )
 ]
+
+_PPO_INACTIVE = dict(
+    ppo_active=False,
+    ppo_mode=None,
+    ppo_epochs=None,
+    clip_eps=None,
+    kl_beta=None,
+    trpo_kl_threshold=None,
+    trpo_backoff_max_tries=None,
+)
 
 QUBO_PATTERN = re.compile(r"^puboi_evo_n_(?P<dim>\d+)_t_(?P<t>\d+)_i_(?P<i>\d+)\.json$")
 NK_PATTERN = re.compile(r"^nk_(?P<dim>\d+)_(?P<t>\d+)_?(?P<i>\d+)\.txt$")
@@ -103,9 +120,50 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
     ]
     if params.get("bandwith_kernel") is not None:
         parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
+    if params.get("ppo_active"):
+        mode = params["ppo_mode"]
+        parts.append(f"ppo{_slugify(mode)}")
+        parts.append(f"pe{_slugify(params['ppo_epochs'])}")
+        if mode == "clip":
+            parts.append(f"ce{_slugify(params['clip_eps'])}")
+        elif mode == "kl":
+            parts.append(f"b{_slugify(params['kl_beta'])}")
+        elif mode == "trpo":
+            parts.append(f"kt{_slugify(params['trpo_kl_threshold'])}")
+            parts.append(f"bo{_slugify(params['trpo_backoff_max_tries'])}")
     if prefix:
         return f"{prefix}__" + "__".join(parts)
     return "__".join(parts)
+
+
+def _expand_ppo_variants(grid: dict):
+    variants = grid.get("ppo_variants")
+    if not variants:
+        yield dict(_PPO_INACTIVE)
+        return
+    for var in variants:
+        mode = str(var.get("mode", "none")).lower()
+        if mode in ("none", "off"):
+            yield dict(_PPO_INACTIVE)
+            continue
+        epochs_list = var.get("ppo_epochs", [4])
+        if mode == "clip":
+            for ep, ce in itertools.product(epochs_list, var.get("clip_eps", [0.2])):
+                yield dict(_PPO_INACTIVE, ppo_active=True, ppo_mode="clip",
+                           ppo_epochs=int(ep), clip_eps=float(ce))
+        elif mode == "kl":
+            for ep, beta in itertools.product(epochs_list, var.get("kl_beta", [0.5])):
+                yield dict(_PPO_INACTIVE, ppo_active=True, ppo_mode="kl",
+                           ppo_epochs=int(ep), kl_beta=float(beta))
+        elif mode == "trpo":
+            for ep, klt, bo in itertools.product(
+                epochs_list, var.get("kl_threshold", [0.004]), var.get("backoff_max_tries", [6])
+            ):
+                yield dict(_PPO_INACTIVE, ppo_active=True, ppo_mode="trpo",
+                           ppo_epochs=int(ep), trpo_kl_threshold=float(klt),
+                           trpo_backoff_max_tries=int(bo))
+        else:
+            raise ValueError(f"Unknown ppo mode: {mode} (expected none|clip|kl|trpo)")
 
 
 def _expand_grid(grid: dict):
@@ -122,6 +180,8 @@ def _expand_grid(grid: dict):
                 "decay_min_factor": float(cfg["decay_min_factor"]),
                 "bandwith_kernel": cfg.get("bandwith_kernel"),
             }
+            for key, default in _PPO_INACTIVE.items():
+                params[key] = cfg.get(key, default)
             cfg_name = _build_config_name(None, params)
             yield cfg_name, params
         return
@@ -147,7 +207,7 @@ def _expand_grid(grid: dict):
         decay_min_factor,
         bandwith_kernel,
     ):
-        params = dict(
+        base_params = dict(
             kernel=str(kernel).lower(),
             advantage=str(advantage),
             M=int(M),
@@ -158,8 +218,10 @@ def _expand_grid(grid: dict):
             decay_min_factor=float(dm),
             bandwith_kernel=bw,
         )
-        cfg_name = _build_config_name(None, params)
-        yield cfg_name, params
+        for ppo in _expand_ppo_variants(grid):
+            params = dict(base_params, **ppo)
+            cfg_name = _build_config_name(None, params)
+            yield cfg_name, params
 
 
 def _load_grids():
@@ -364,6 +426,7 @@ def _run_once(
     bandwith_kernel,
     device=None,
     nb_restarts=None,
+    ppo_params=None,
 ):
     device = device or DEFAULTS["device"]
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
@@ -371,6 +434,22 @@ def _run_once(
     kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
     if kernel_name in ("rbf", "pk") and bandwith_kernel is not None:
         kernel_config["bandwith_kernel"] = bandwith_kernel
+
+    ppo_params = ppo_params or {}
+    ppo_kwargs = {}
+    if ppo_params.get("ppo_active"):
+        ppo_kwargs["ppo_active"] = True
+        ppo_kwargs["ppo_mode"] = str(ppo_params.get("ppo_mode") or "clip")
+        if ppo_params.get("ppo_epochs") is not None:
+            ppo_kwargs["ppo_epochs"] = int(ppo_params["ppo_epochs"])
+        if ppo_params.get("clip_eps") is not None:
+            ppo_kwargs["clip_eps"] = float(ppo_params["clip_eps"])
+        if ppo_params.get("kl_beta") is not None:
+            ppo_kwargs["kl_beta"] = float(ppo_params["kl_beta"])
+        if ppo_params.get("trpo_kl_threshold") is not None:
+            ppo_kwargs["trpo_kl_threshold"] = float(ppo_params["trpo_kl_threshold"])
+        if ppo_params.get("trpo_backoff_max_tries") is not None:
+            ppo_kwargs["trpo_backoff_max_tries"] = int(ppo_params["trpo_backoff_max_tries"])
 
     factory = FactoryStrategyEA()
     strategy = factory.createStrategyEA(
@@ -391,6 +470,7 @@ def _run_once(
         kernel_config=kernel_config,
         no_interact=False,
         is_nk3=(problem_ctx["type_problem"] == "NK3"),
+        **ppo_kwargs,
     ).to(device)
 
     if problem_ctx["type_problem"] == "QUBO":
@@ -469,6 +549,13 @@ def _run_once(
         decay_start_ratio=decay_start_ratio,
         decay_min_factor=decay_min_factor,
         bandwith_kernel=bandwith_kernel,
+        ppo_active=bool(ppo_params.get("ppo_active", False)),
+        ppo_mode=ppo_params.get("ppo_mode"),
+        ppo_epochs=ppo_params.get("ppo_epochs"),
+        clip_eps=ppo_params.get("clip_eps"),
+        kl_beta=ppo_params.get("kl_beta"),
+        trpo_kl_threshold=ppo_params.get("trpo_kl_threshold"),
+        trpo_backoff_max_tries=ppo_params.get("trpo_backoff_max_tries"),
         no_interact=False,
         avg_score=avg_score,
         median_score=median_score,
@@ -693,6 +780,12 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
             gamma=_round_float(params["gamma"]),
             decay_start_ratio=_round_float(params["decay_start_ratio"]),
             decay_min_factor=_round_float(params["decay_min_factor"]),
+            ppo_mode=params.get("ppo_mode"),
+            ppo_epochs=params.get("ppo_epochs"),
+            clip_eps=params.get("clip_eps"),
+            kl_beta=params.get("kl_beta"),
+            trpo_kl_threshold=params.get("trpo_kl_threshold"),
+            trpo_backoff_max_tries=params.get("trpo_backoff_max_tries"),
             mean_rank=None,
             median_rank=None,
             std_percent=None,
@@ -856,6 +949,12 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
         gamma=_round_float(params["gamma"]),
         decay_start_ratio=_round_float(params["decay_start_ratio"]),
         decay_min_factor=_round_float(params["decay_min_factor"]),
+        ppo_mode=params.get("ppo_mode"),
+        ppo_epochs=params.get("ppo_epochs"),
+        clip_eps=params.get("clip_eps"),
+        kl_beta=params.get("kl_beta"),
+        trpo_kl_threshold=params.get("trpo_kl_threshold"),
+        trpo_backoff_max_tries=params.get("trpo_backoff_max_tries"),
         mean_rank=mean_rank,
         median_rank=median_rank,
         std_percent=std_percent,
@@ -943,6 +1042,7 @@ def main():
                             params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
+                            ppo_params=params,
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
@@ -1001,6 +1101,7 @@ def main():
                             params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
+                            ppo_params=params,
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
@@ -1059,6 +1160,7 @@ def main():
                             params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
+                            ppo_params=params,
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
