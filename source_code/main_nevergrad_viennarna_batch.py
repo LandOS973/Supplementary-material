@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 
 from main_nevergrad_viennarna import (
     DEFAULT_TARGET_STRUCT,
-    _run_restart,
+    _score_tokens,
     _slugify,
 )
 from problems.viennarna import (
@@ -67,6 +67,41 @@ def _resolve_registry_key(name: str) -> str:
             return key
     available = sorted(k.strip() for k in reg.keys())
     raise ValueError(f"Unknown Nevergrad algo '{name}'. Available: {available}")
+
+
+def _run_restart_streaming(
+    target_struct: str,
+    dim: int,
+    budget: int,
+    step_record: int,
+    registry_key: str,
+    seed: int,
+    out_path: str,
+) -> float:
+    """Run one restart, writing each checkpoint to `out_path` as it is reached
+    (flushed immediately). If the job is killed mid-restart, the file keeps all
+    checkpoints produced so far. Returns the final best score."""
+    param = ng.p.TransitionChoice(range(4), repetitions=dim, ordered=False)
+    algo_cls = ng.optimizers.registry.get(registry_key)
+    optimizer = algo_cls(parametrization=param, budget=budget)
+    optimizer.parametrization.random_state.seed(seed)
+
+    best_score = -float("inf")
+    with open(out_path, "w") as f:
+        f.write("runtime, score\n")
+        for step in range(1, budget + 1):
+            candidate = optimizer.ask()
+            score = _score_tokens(np.asarray(candidate.value), target_struct)
+            optimizer.tell(candidate, -score)
+            if score > best_score:
+                best_score = score
+            if step % step_record == 0:
+                f.write(f"{step},{best_score}\n")
+                f.flush()
+        if budget % step_record != 0:
+            f.write(f"{budget},{best_score}\n")
+            f.flush()
+    return best_score
 
 
 def main() -> None:
@@ -127,30 +162,20 @@ def main() -> None:
 
     for r in range(nb_restarts):
         restart_seed = seed + r
-        best_score, checkpoints = _run_restart(
-            target_struct=target_struct,
-            dim=dim,
-            budget=budget,
-            step_record=step_record,
-            algo_name=registry_key,
-            seed=restart_seed,
-            progress_bar=None,
-        )
-
-        # runtimes: step_record, 2*step_record, ...; last point clamped to budget
-        runtimes = [(idx + 1) * step_record for idx in range(len(checkpoints))]
-        if runtimes:
-            runtimes[-1] = budget
-
         filename = (
             f"results_nevergrad_{name_algo}_VIENNARNA_{target_slug}_budget_{budget}"
             f"_{timestamp}_i_0_r_{r}.txt"
         )
-        with open(os.path.join(out_dir, filename), "w") as f:
-            f.write("runtime, score\n")
-            for runtime, score in zip(runtimes, checkpoints):
-                f.write(f"{runtime},{score}\n")
-
+        out_path = os.path.join(out_dir, filename)
+        best_score = _run_restart_streaming(
+            target_struct=target_struct,
+            dim=dim,
+            budget=budget,
+            step_record=step_record,
+            registry_key=registry_key,
+            seed=restart_seed,
+            out_path=out_path,
+        )
         print(f"  [r={r}] final best score={best_score:.6f}")
 
 

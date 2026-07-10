@@ -25,8 +25,6 @@
 #   -r  nombre de restarts          (defaut : 10)
 #   -s  seed de base                (defaut : 0)
 
-set -euo pipefail
-
 echo "Job ${SLURM_ARRAY_JOB_ID} tache ${SLURM_ARRAY_TASK_ID} sur $(hostname) a $(date)"
 
 # 1. Racine du projet
