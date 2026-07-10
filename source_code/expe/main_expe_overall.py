@@ -593,7 +593,7 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None, c
         runtime,
         history.get("best_fitness", []),
         history.get("avg_hamming", []),
-        history.get("avg_l1", []),
+        history.get("avg_l1") or history.get("avg_js", []),
         history.get("avg_entropy", []),
         score_mean,
         score_median,
