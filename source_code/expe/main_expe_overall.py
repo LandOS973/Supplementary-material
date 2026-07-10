@@ -1009,10 +1009,12 @@ def main():
     _set_seeds(DEFAULTS["seed"])
 
     start_all = time.time()
+    config_idx = 0
     for grid in grids:
         for config_name, params in _expand_grid(grid):
+            config_idx += 1
             config_dir = os.path.join(out_root, config_name)
-            print(f"[CONFIG] {config_name}")
+            print(f"[CONFIG {config_idx}/{total_configs}] {config_name}")
 
             pending_instances = list(instances)
 
