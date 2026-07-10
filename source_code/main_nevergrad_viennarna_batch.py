@@ -109,8 +109,9 @@ def main() -> None:
     parser.add_argument("name_algo", type=str, help="Nevergrad optimizer name (e.g. DiscreteDE)")
     parser.add_argument("--target", type=str, default="Simple Hairpin",
                         help="Eterna100 target name (default: Simple Hairpin)")
-    parser.add_argument("--target_source", type=str, default=ETERNA100_TSV_URL,
-                        help="TSV url or local path for the Eterna100 benchmark")
+    parser.add_argument("--target_source", type=str, default=None,
+                        help="TSV url or local path for the Eterna100 benchmark "
+                             "(default: local cached TSV in problems/, else the GitHub URL)")
     parser.add_argument("--target_struct", type=str, default=None,
                         help="Explicit dot-bracket target; overrides --target if set")
     parser.add_argument("--nb_restarts", type=int, default=10, help="number of independent runs")
@@ -132,12 +133,27 @@ def main() -> None:
         target_struct = normalize_target_struct(args.target_struct)
         target_name = "cfg_target_struct"
     else:
+        # Prefer the TSV cached in the repo: Jean Zay compute nodes have NO
+        # internet, so fetching from the URL would fail and silently fall back
+        # to a wrong default target.
+        local_tsv = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "problems", "eterna100_puzzles.tsv")
+        target_source = args.target_source or (local_tsv if os.path.exists(local_tsv) else ETERNA100_TSV_URL)
         target_struct, target_name = load_target_from_eterna100(
             target_name=args.target,
-            source=args.target_source,
+            source=target_source,
             fallback_target=DEFAULT_TARGET_STRUCT,
             verbose=True,
         )
+        # Never run on the silent fallback target: fail loudly instead of
+        # producing results for the wrong structure.
+        if target_name == "fallback_default":
+            raise RuntimeError(
+                f"Could not load target '{args.target}' from '{target_source}'. "
+                "Refusing to run on the fallback default target. On Jean Zay ensure "
+                "the cached TSV 'source_code/problems/eterna100_puzzles.tsv' exists "
+                "(compute nodes have no internet)."
+            )
 
     dim = len(target_struct)
     budget = int(args.budget)
