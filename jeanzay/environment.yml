@@ -14,3 +14,6 @@ dependencies:
   - matplotlib
   - hydra-core
   - omegaconf
+  - pip
+  - pip:
+      - ViennaRNA   # bindings Python `import RNA`, requis par les runs ViennaRNA

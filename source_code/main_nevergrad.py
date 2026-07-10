@@ -154,7 +154,14 @@ def get_Score_Problem(optimizer, problem, type_problem, id):
 
 print(name_algo)
 
-list_algos = [ng.optimizers.registry.get(name_algo)(parametrization=param, budget=budget) for i in range(nb_instances)]
+# Certaines cles du registry nevergrad ont un espace final (ex.
+# 'UltraSmoothDiscreteLognormalOnePlusOne '), on tolere ce cas.
+algo_cls = ng.optimizers.registry.get(name_algo) or ng.optimizers.registry.get(name_algo + " ")
+if algo_cls is None:
+    available = sorted(k.strip() for k in ng.optimizers.registry.keys())
+    raise ValueError(f"Unknown Nevergrad algo '{name_algo}'. Available: {available}")
+
+list_algos = [algo_cls(parametrization=param, budget=budget) for i in range(nb_instances)]
 
 
 
