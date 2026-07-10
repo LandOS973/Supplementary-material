@@ -479,17 +479,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 surrogate = torch.min(surr1, surr2).sum(dim=-1)   # (BM, λa)
                 objective = surrogate.mean(dim=1).sum()
 
-                with torch.no_grad():
-                    surr_val = float(surrogate.mean(dim=1).sum())
-                    ratio_mean = float(ratio.mean())
-                    ratio_min = float(ratio.min())
-                    ratio_max = float(ratio.max())
-                    clipped_frac = float(((ratio < 1.0 - self.clip_eps) | (ratio > 1.0 + self.clip_eps)).float().mean())
-                    print(
-                        f"  [clip epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  clip_eps={self.clip_eps}  "
-                        f"ratio(mean/min/max)={ratio_mean:.4f}/{ratio_min:.4f}/{ratio_max:.4f}  clipped_frac={clipped_frac:.4f}"
-                    )
-
             else:  # 'kl' | 'trpo'
                 surrogate = surr1.sum(dim=-1)                      # (BM, λa) — pas de clipping
                 pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \
@@ -500,18 +489,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                     # Pas de pénalité -beta*KL : la contrainte est appliquée sur le PAS SVGD lui-même
                     # (backoff façon line-search TRPO), cf. _apply_svgd_with_kl_constraint.
                     objective = surrogate.mean(dim=1).sum()
-                    with torch.no_grad():
-                        surr_val = float(surrogate.mean(dim=1).sum())
-                        kl_mean_val = float(kl_mean)
-                        print(f"  [trpo epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  KL_mean(pre-step)={kl_mean_val:.6f}  threshold={self.trpo_kl_threshold}  ratio={kl_mean_val/self.trpo_kl_threshold:.4f}")
                 else:  # 'kl'
                     objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl_sum
-                    with torch.no_grad():
-                        surr_val = float(surrogate.mean(dim=1).sum())
-                        kl_mean_val = float(kl_mean)
-                        kl_sum_val = float(kl_sum)
-                        pen_val = self.kl_beta * kl_sum_val
-                        print(f"  [kl epoch {k+1}/{self.ppo_epochs}] surrogate={surr_val:.4f}  beta={self.kl_beta:.4f}  KL_mean={kl_mean_val:.6f}  KL_sum={kl_sum_val:.4f}  beta*KL_sum={pen_val:.4f}  ratio={pen_val/abs(surr_val):.4f}")
 
                     # Adaptation de β à la dernière epoch seulement (KL moyenne par position après K steps)
                     if self.kl_target_kl is not None and k == self.ppo_epochs - 1:
@@ -534,7 +513,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
             # Pas SVGD : θ_i += ε · φ(θ)  — à l'intérieur de la boucle K
             if self.ppo_mode == 'trpo':
-                self._apply_svgd_with_kl_constraint(pi_old_full, BM, N, k=k, surr_val=surr_val)
+                self._apply_svgd_with_kl_constraint(pi_old_full, BM, N)
             else:
                 self._apply_svgd()
 
@@ -612,7 +591,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self.theta += step_scale * self.epsilon_svgd * phi
             self.probs = None
 
-    def _apply_svgd_with_kl_constraint(self, pi_old_full, BM, N, k=None, surr_val=None):
+    def _apply_svgd_with_kl_constraint(self, pi_old_full, BM, N):
         """
         Mode 'trpo' : applique le pas SVGD sous contrainte dure de KL, façon line-search TRPO,
         au lieu d'une pénalité -beta*KL dans l'objectif.
@@ -631,8 +610,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if self.last_theta_grad is None:
             return
 
-        epoch_str = f"epoch {k + 1}/{self.ppo_epochs}" if k is not None else "epoch ?"
-        surr_str = f"{surr_val:.4f}" if surr_val is not None else "n/a"
         theta_before = self.theta.detach().clone()
         step_scale = 1.0
         kl_mean_after = None
@@ -644,27 +621,13 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                     else probs_after.view(BM, N)
                 _, kl_mean_after = self._compute_kl(pi_old_full, pi_after_full)
             kl_val = float(kl_mean_after)
-            ratio_val = kl_val / self.trpo_kl_threshold
             ok = kl_val <= self.trpo_kl_threshold
-            if attempt > 0 or not ok:
-                status = "OK" if ok else "> seuil"
-                print(
-                    f"    [trpo backoff] {epoch_str}  essai {attempt + 1}/{self.trpo_backoff_max_tries}  "
-                    f"surrogate={surr_str}  step_scale={step_scale:.4f}  KL_mean={kl_val:.6f}  "
-                    f"threshold={self.trpo_kl_threshold}  ratio={ratio_val:.4f}  {status}"
-                )
             if ok:
                 break
             if attempt < self.trpo_backoff_max_tries - 1:
                 self.theta.data.copy_(theta_before)
                 self.probs = None
                 step_scale *= 0.5
-            else:
-                print(
-                    f"    [trpo backoff] {epoch_str}  seuil toujours dépassé après {self.trpo_backoff_max_tries} "
-                    f"essais (surrogate={surr_str}  KL_mean={kl_val:.6f} > {self.trpo_kl_threshold}  ratio={ratio_val:.4f}) "
-                    f"-> pas accepté tel quel"
-                )
 
     def _should_debug(self) -> bool:
         if not self.debug_svgd:

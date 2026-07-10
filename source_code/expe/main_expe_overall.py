@@ -994,6 +994,9 @@ def main():
         m_vals = _get_grid_m_values(grid)
         print(f"[GRID {idx}] M_values={m_vals}")
 
+    total_configs = sum(1 for grid in grids for _ in _expand_grid(grid))
+    print(f"[INFO] {total_configs} configs a tester")
+
     instances_root = Path(repo_root) / "source_code" / "instances"
     qubo_instances = _discover_qubo_instances(instances_root / "QUBO", DEFAULTS["nb_instances_test"])
     nk_instances = _discover_nk_instances(instances_root / "nk", DEFAULTS["nb_instances_test"])
@@ -1001,6 +1004,7 @@ def main():
     instances = qubo_instances + nk_instances + nk3_instances
     if not instances:
         raise SystemExit("Aucune instance QUBO/NK/NK3 compatible avec nb_instances_test.")
+    print(f"[INFO] {len(instances)} instances -> {total_configs * len(instances)} runs au total")
 
     _set_seeds(DEFAULTS["seed"])
 
