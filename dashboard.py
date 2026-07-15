@@ -134,13 +134,26 @@ def _compute_config_row(config_dir: Path) -> tuple[dict | None, list[dict]]:
         if not m:
             continue
         metrics = inst_dir / "best_metrics.csv"
-        if not metrics.exists():
-            continue
+        score = None
+        hamming = None
         try:
-            df = pd.read_csv(metrics)
-            score = abs(float(df["best_fitness"].iloc[-1]))
-            hamming = float(df["avg_hamming"].iloc[-1]) if "avg_hamming" in df.columns else None
+            if metrics.exists():
+                df = pd.read_csv(metrics)
+                if not df.empty:
+                    score = abs(float(df["best_fitness"].iloc[-1]))
+                    hamming = float(df["avg_hamming"].iloc[-1]) if "avg_hamming" in df.columns else None
+            if score is None:
+                # best_metrics.csv vide (runs ppo rapatriés) → repli sur raw_scores.csv.
+                # abs(best_fitness) == moyenne des raw_scores (vérifié NK/NK3/QUBO),
+                # donc le score reste comparable aux configs non-ppo. Pas de hamming dispo.
+                raw = inst_dir / "raw_scores.csv"
+                if raw.exists():
+                    s = pd.read_csv(raw)["score"].abs()
+                    if not s.empty:
+                        score = float(s.mean())
         except Exception:
+            continue
+        if score is None:
             continue
         rank = _get_rank(m.group("problem"), int(m.group("dim")), int(m.group("t")), score)
         if rank is not None:
@@ -269,7 +282,10 @@ def load_summary() -> pd.DataFrame:
 def load_curve(config: str, instance: str) -> pd.DataFrame | None:
     p = RESULTS_DIR / config / instance / "best_metrics.csv"
     try:
-        return pd.read_csv(p) if p.exists() else None
+        if not p.exists():
+            return None
+        df = pd.read_csv(p)
+        return df if not df.empty else None  # best_metrics vide (runs ppo) → pas de courbe
     except Exception:
         return None
 
@@ -1058,6 +1074,8 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         gap = (sa - sb) / abs(sb) * 100 if sb != 0 else 0.0
         ha = float(ca["avg_hamming"].iloc[-1]) if "avg_hamming" in ca.columns else None
         hb = float(cb["avg_hamming"].iloc[-1]) if "avg_hamming" in cb.columns else None
+        la = float(ca["avg_l1"].iloc[-1]) if "avg_l1" in ca.columns else None
+        lb = float(cb["avg_l1"].iloc[-1]) if "avg_l1" in cb.columns else None
         m_inst = INSTANCE_RE.match(inst)
         prob, dim, t = m_inst.group("problem"), int(m_inst.group("dim")), int(m_inst.group("t"))
         ra = _get_rank(prob, dim, t, sa)
@@ -1070,6 +1088,8 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             "Gap %":        round(gap, 2),
             col_hamming_a:  round(ha, 2) if ha is not None else None,
             col_hamming_b:  round(hb, 2) if hb is not None else None,
+            "_l1_a":        round(la, 2) if la is not None else None,
+            "_l1_b":        round(lb, 2) if lb is not None else None,
             col_rank_a:     ra,
             col_rank_b:     rb,
             "Résultat":     f"{label_a} ✓" if gap > 0 else (f"{label_b} ✓" if gap < 0 else "égalité"),
@@ -1082,8 +1102,6 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             mean_gap   = sum(r["Gap %"] for r in summary_rows) / len(summary_rows)
             ranks_a    = [r[col_rank_a]    for r in summary_rows if r[col_rank_a]    is not None]
             ranks_b    = [r[col_rank_b]    for r in summary_rows if r[col_rank_b]    is not None]
-            hammings_a = [r[col_hamming_a] for r in summary_rows if r[col_hamming_a] is not None]
-            hammings_b = [r[col_hamming_b] for r in summary_rows if r[col_hamming_b] is not None]
 
             top1_a = sum(1 for r in summary_rows if r[col_rank_a] == 1)
             top1_b = sum(1 for r in summary_rows if r[col_rank_b] == 1)
@@ -1098,8 +1116,16 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     ("Rank moy", f"{sum(ranks_a)/len(ranks_a):.1f}", f"{sum(ranks_b)/len(ranks_b):.1f}"),
                     ("Rank méd", sorted(ranks_a)[len(ranks_a)//2],   sorted(ranks_b)[len(ranks_b)//2]),
                 ]
-            if hammings_a and hammings_b:
-                stat_rows.append(("Hamming moy", f"{sum(hammings_a)/len(hammings_a):.1f}", f"{sum(hammings_b)/len(hammings_b):.1f}"))
+            for dim in [64, 128, 256]:
+                dim_ha = [r[col_hamming_a] for r in summary_rows if r["_dim"] == dim and r[col_hamming_a] is not None]
+                dim_hb = [r[col_hamming_b] for r in summary_rows if r["_dim"] == dim and r[col_hamming_b] is not None]
+                if dim_ha and dim_hb:
+                    stat_rows.append((f"Hamming {dim}", f"{sum(dim_ha)/len(dim_ha):.1f}", f"{sum(dim_hb)/len(dim_hb):.1f}"))
+            for dim in [64, 128, 256]:
+                dim_la = [r["_l1_a"] for r in summary_rows if r["_dim"] == dim and r["_l1_a"] is not None]
+                dim_lb = [r["_l1_b"] for r in summary_rows if r["_dim"] == dim and r["_l1_b"] is not None]
+                if dim_la and dim_lb:
+                    stat_rows.append((f"L1 {dim}", f"{sum(dim_la)/len(dim_la):.2f}", f"{sum(dim_lb)/len(dim_lb):.2f}"))
             for prob in ["NK", "NK3", "QUBO"]:
                 prob_gaps = [r["Gap %"] for r in summary_rows if r["_prob"] == prob]
                 if prob_gaps:
@@ -1537,9 +1563,15 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 rank  = _get_rank(prob, dim, t, score)
                 row[f"Score {short}"] = round(score, 4)
                 row[f"Rang {short}"]  = rank
+                ham = float(curve["avg_hamming"].iloc[-1]) if "avg_hamming" in curve.columns else None
+                row[f"_ham_{short}"]  = round(ham, 2) if ham is not None else None
+                l1  = float(curve["avg_l1"].iloc[-1]) if "avg_l1" in curve.columns else None
+                row[f"_l1_{short}"]   = round(l1, 2) if l1 is not None else None
             else:
                 row[f"Score {short}"] = None
                 row[f"Rang {short}"]  = None
+                row[f"_ham_{short}"]  = None
+                row[f"_l1_{short}"]   = None
         summary_rows.append(row)
 
     summary_rows.sort(key=lambda r: (_PROB_ORDER.get(r["_prob"], 99), r["_dim"], r["_t"]))
@@ -1558,6 +1590,41 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
         top1  = sum(1 for r in summary_rows if r.get(f"Rang {short}") == 1)
         mc[ci * 2].metric(f"Rank moy — {lbl}", f"{sum(ranks)/len(ranks):.1f}" if ranks else "—")
         mc[ci * 2 + 1].metric(f"Top 1 — {lbl}", top1)
+
+    # ── Hamming / L1 moyens par dimension (64 / 128 / 256) ────────────────────
+    h_th_l = "padding:6px 22px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:17px;"
+    h_th   = "padding:6px 22px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:17px;"
+    h_td_l = "padding:6px 22px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:16px;"
+    h_td_r = "padding:6px 22px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:16px;text-align:right;"
+
+    def _dim_table(title: str, prefix: str, fmt: str) -> None:
+        dims_present = [
+            d for d in [64, 128, 256]
+            if any(r["_dim"] == d and any(r.get(f"{prefix}{config_shorts[cfg]}") is not None for cfg in configs)
+                   for r in summary_rows)
+        ]
+        if not dims_present:
+            return
+        st.markdown(f"**{title}**")
+        html = '<table style="border-collapse:collapse;margin-bottom:16px;"><thead><tr>'
+        html += f'<th style="{h_th_l}">Dim</th>'
+        for cfg in configs:
+            html += f'<th style="{h_th}">{config_shorts[cfg]}</th>'
+        html += "</tr></thead><tbody>"
+        for dim in dims_present:
+            html += f'<tr><td style="{h_td_l}">DIM {dim}</td>'
+            for cfg in configs:
+                short = config_shorts[cfg]
+                vals = [r[f"{prefix}{short}"] for r in summary_rows
+                        if r["_dim"] == dim and r.get(f"{prefix}{short}") is not None]
+                cell = format(sum(vals) / len(vals), fmt) if vals else ""
+                html += f'<td style="{h_td_r}">{cell}</td>'
+            html += "</tr>"
+        html += "</tbody></table>"
+        st.markdown(html, unsafe_allow_html=True)
+
+    _dim_table("Hamming moyen par dimension", "_ham_", ".1f")
+    _dim_table("L1 moyen par dimension",      "_l1_",  ".2f")
 
     col_cfg_display: dict = {}
     for cfg in configs:
