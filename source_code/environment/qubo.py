@@ -55,6 +55,7 @@ def get_Score_trajectoriesQUBO_cuda(
 
     avg_hamming_history = []
     avg_js_history = []
+    avg_l1_history = []
     avg_entropy_history = []
     best_fitness_history = []
     runtime_steps = []
@@ -212,13 +213,16 @@ def get_Score_trajectoriesQUBO_cuda(
 
             if collect_summary_metrics:
                 avg_hamming, pairwise_matrix = metrics.compute_average_hamming(strategy.agents)
+                avg_l1, _pairwise_l1 = metrics.compute_l1_distance(strategy.agents)
                 avg_entropy, per_agent_entropy = metrics.compute_entropy(strategy.agents)
                 avg_hamming_history.append(avg_hamming if avg_hamming is not None else 0.0)
+                avg_l1_history.append(avg_l1 if avg_l1 is not None else 0.0)
                 avg_entropy_history.append(avg_entropy if avg_entropy is not None else 0.0)
             else:
                 pairwise_matrix = None
                 per_agent_entropy = None
                 avg_hamming_history.append(0.0)
+                avg_l1_history.append(0.0)
                 avg_entropy_history.append(0.0)
 
             if collect_pairwise_metrics:
@@ -379,6 +383,7 @@ def get_Score_trajectoriesQUBO_cuda(
             best_fitness=best_fitness_history,
             avg_hamming=avg_hamming_history,
             avg_js=avg_js_history,
+            avg_l1=avg_l1_history,
             avg_entropy=avg_entropy_history,
             score_mean=score_mean_history,
             score_median=score_median_history,
