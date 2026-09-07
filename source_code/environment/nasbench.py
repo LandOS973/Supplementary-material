@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from environment.visualization import render_agent_dashboard
+
 
 def get_Score_trajectories_nasbench_cuda(
     objective,
@@ -13,6 +15,7 @@ def get_Score_trajectories_nasbench_cuda(
     verbose,
     name_file=None,
     return_history=False,
+    enable_visualization=True,
 ):
     """
     NasBench evaluation loop (categorical, 26 variables, one-hot with 3 classes).
@@ -29,6 +32,8 @@ def get_Score_trajectories_nasbench_cuda(
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
     agent_best_overall = None
+    agent_best_solution = None
+    agent_best_epoch = None
     if track_leader:
         agent_best_overall = [torch.ones(nb_instances, device=device) * (-99999) for _ in agent_lambdas]
     if greedy_agent_count <= 0 and isinstance(agent_lambdas, (list, tuple)):
@@ -56,18 +61,29 @@ def get_Score_trajectories_nasbench_cuda(
                 tensor_score[i, j] = -float(evals[0])
         return tensor_score
 
-    def _update_agent_best_overall(tensor_score, greedy_one_per_agent=False):
+    def _update_agent_best_overall(tensor_score, tensor_solution=None, epoch=None, greedy_one_per_agent=False):
+        nonlocal agent_best_solution, agent_best_epoch
         if not (track_leader and agent_best_overall is not None):
             return
+        if tensor_solution is not None and agent_best_solution is None:
+            genotype_dim = tensor_solution.size(2)
+            agent_best_solution = [
+                torch.zeros(nb_instances, genotype_dim, device=device) for _ in agent_lambdas
+            ]
+            agent_best_epoch = [
+                torch.zeros(nb_instances, dtype=torch.long, device=device) for _ in agent_lambdas
+            ]
         if greedy_one_per_agent:
             num_agents = min(len(agent_lambdas), tensor_score.size(1))
             for idx in range(num_agents):
                 agent_scores = tensor_score[:, idx]
-                agent_best_overall[idx] = torch.where(
-                    agent_scores > agent_best_overall[idx],
-                    agent_scores,
-                    agent_best_overall[idx],
-                )
+                improved = agent_scores > agent_best_overall[idx]
+                agent_best_overall[idx] = torch.where(improved, agent_scores, agent_best_overall[idx])
+                if tensor_solution is not None and agent_best_solution is not None:
+                    genotype = tensor_solution[:, idx, :, 0]
+                    agent_best_solution[idx] = torch.where(improved.unsqueeze(-1), genotype, agent_best_solution[idx])
+                if epoch is not None and agent_best_epoch is not None:
+                    agent_best_epoch[idx][improved] = epoch
             return
         start_idx = 0
         for idx, agent_lambda in enumerate(agent_lambdas):
@@ -75,12 +91,17 @@ def get_Score_trajectories_nasbench_cuda(
                 break
             end_idx = min(start_idx + agent_lambda, tensor_score.size(1))
             agent_scores = tensor_score[:, start_idx:end_idx]
-            agent_best_values, _ = torch.max(agent_scores, dim=1)
-            agent_best_overall[idx] = torch.where(
-                agent_best_values > agent_best_overall[idx],
-                agent_best_values,
-                agent_best_overall[idx],
-            )
+            agent_best_values, agent_best_local_idx = torch.max(agent_scores, dim=1)
+            improved = agent_best_values > agent_best_overall[idx]
+            agent_best_overall[idx] = torch.where(improved, agent_best_values, agent_best_overall[idx])
+            if tensor_solution is not None and agent_best_solution is not None:
+                agent_solutions = tensor_solution[:, start_idx:end_idx, :, 0]
+                best_genotype = torch.gather(
+                    agent_solutions, 1, agent_best_local_idx.view(-1, 1, 1).expand(-1, 1, agent_solutions.size(-1))
+                ).squeeze(1)
+                agent_best_solution[idx] = torch.where(improved.unsqueeze(-1), best_genotype, agent_best_solution[idx])
+            if epoch is not None and agent_best_epoch is not None:
+                agent_best_epoch[idx][improved] = epoch
             start_idx = end_idx
 
     runtime_steps = []
@@ -110,7 +131,7 @@ def get_Score_trajectories_nasbench_cuda(
     for epoch in pbar:
         tensor_solution = strategy.sample_solutions()                     
         tensor_score = _evaluate_population(tensor_solution)
-        _update_agent_best_overall(tensor_score, greedy_one_per_agent=False)
+        _update_agent_best_overall(tensor_score, tensor_solution, epoch=epoch + 1, greedy_one_per_agent=False)
 
         current_score = torch.max(tensor_score, dim=1).values
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
@@ -167,7 +188,7 @@ def get_Score_trajectories_nasbench_cuda(
     if use_greedy_final and stochastic_remainder > 0:
         tensor_solution = strategy.sample_solutions()[:, :stochastic_remainder, :, :]
         tensor_score = _evaluate_population(tensor_solution)
-        _update_agent_best_overall(tensor_score, greedy_one_per_agent=False)
+        _update_agent_best_overall(tensor_score, tensor_solution, epoch=nb_iterations, greedy_one_per_agent=False)
         current_score = torch.max(tensor_score, dim=1).values
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
 
@@ -200,11 +221,61 @@ def get_Score_trajectories_nasbench_cuda(
                         f"Instance {inst_idx + 1} => nb d'agent qui ameliorent le score "
                         f"{count} ({mean_gain:+.4f} de score en moyenne)"
                     )
-        _update_agent_best_overall(tensor_score, greedy_one_per_agent=True)
+        _update_agent_best_overall(tensor_score, tensor_solution, epoch=nb_iterations, greedy_one_per_agent=True)
         current_score = torch.max(tensor_score, dim=1).values
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
 
     bestScore_np = bestScore.detach().cpu().numpy()
+
+    best_individual_history = None
+    if track_leader and agent_best_solution is not None and len(agent_best_solution) > 1:
+        with torch.no_grad():
+            stacked_best = torch.stack(agent_best_solution, dim=0)
+            diff = (stacked_best.unsqueeze(1) != stacked_best.unsqueeze(0)).float()
+            hamming_bmm = diff.sum(dim=-1).permute(2, 0, 1).cpu().numpy()
+            best_scores_bm = np.stack(
+                [(agent_best_overall[idx].detach().cpu().numpy()) for idx in range(len(agent_best_overall))],
+                axis=1,
+            )
+            best_epochs_bm = None
+            if agent_best_epoch is not None:
+                best_epochs_bm = np.stack(
+                    [agent_best_epoch[idx].detach().cpu().numpy() for idx in range(len(agent_best_epoch))],
+                    axis=1,
+                )
+        best_individual_history = {
+            "hamming": hamming_bmm,
+            "best_scores": best_scores_bm,
+            "best_epochs": best_epochs_bm,
+        }
+
+    if track_leader and agent_best_overall is not None and hasattr(strategy, "agents"):
+        print("Per-agent summary:")
+        for idx, agent in enumerate(strategy.agents):
+            avg_best = torch.mean(agent_best_overall[idx]).item()
+            print(f"Agent {idx}: avg_best_score={avg_best:.4f}")
+        if best_individual_history is not None:
+            mean_hamming = best_individual_history["hamming"].mean(axis=0)
+            print(f"Best-individual Hamming distance (raw bits, mean over {best_individual_history['hamming'].shape[0]} instances):")
+            header = "        " + "".join(f"Agt{j:<5}" for j in range(mean_hamming.shape[0]))
+            print(header)
+            for i in range(mean_hamming.shape[0]):
+                row = "".join(f"{mean_hamming[i, j]:<8.1f}" for j in range(mean_hamming.shape[1]))
+                print(f"Agent {i}: {row}")
+
+    if enable_visualization and hasattr(strategy, "agents"):
+        num_agents = len(strategy.agents)
+        if best_individual_history is not None:
+            render_agent_dashboard(
+                runtime_steps,
+                avg_hamming_history,
+                [],
+                [],
+                num_agents,
+                None,
+                best_individual_history=best_individual_history,
+            )
+
     if return_history:
         history = dict(
             runtime=runtime_steps,

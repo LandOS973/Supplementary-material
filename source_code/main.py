@@ -307,6 +307,7 @@ def main(cfg: DictConfig):
             device,
             verbose,
             name_file=None,
+            enable_visualization=visualization_enabled,
         )
         list_scores = result
     elif type_problem_upper == "VIENNARNA":

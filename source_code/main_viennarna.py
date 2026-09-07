@@ -195,6 +195,36 @@ def get_Score_trajectories_viennarna_cuda(
     nb_iterations = budget // size_pop
     stochastic_remainder = budget - (nb_iterations * size_pop)
 
+    agent_lambdas = getattr(strategy, "agent_lambdas", None)
+    track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
+    agent_best_overall = None
+    agent_best_solution = None
+    agent_best_epoch = None
+    if track_leader:
+        agent_best_overall = [torch.full((nb_instances,), -float("inf"), device=device) for _ in agent_lambdas]
+        agent_best_solution = [torch.zeros(nb_instances, target_len, device=device) for _ in agent_lambdas]
+        agent_best_epoch = [torch.zeros(nb_instances, dtype=torch.long, device=device) for _ in agent_lambdas]
+
+    def _update_agent_best_overall(tensor_score, tensor_solution, epoch):
+        if not (track_leader and agent_best_overall is not None):
+            return
+        start_idx = 0
+        for idx, agent_lambda in enumerate(agent_lambdas):
+            if start_idx >= tensor_score.size(1):
+                break
+            end_idx = min(start_idx + agent_lambda, tensor_score.size(1))
+            agent_scores = tensor_score[:, start_idx:end_idx]
+            agent_best_values, agent_best_local_idx = torch.max(agent_scores, dim=1)
+            improved = agent_best_values > agent_best_overall[idx]
+            agent_best_overall[idx] = torch.where(improved, agent_best_values, agent_best_overall[idx])
+            agent_solutions = tensor_solution[:, start_idx:end_idx, :, 0]
+            best_genotype = torch.gather(
+                agent_solutions, 1, agent_best_local_idx.view(-1, 1, 1).expand(-1, 1, agent_solutions.size(-1))
+            ).squeeze(1)
+            agent_best_solution[idx] = torch.where(improved.unsqueeze(-1), best_genotype, agent_best_solution[idx])
+            agent_best_epoch[idx][improved] = epoch
+            start_idx = end_idx
+
     runtime_steps = []
     best_fitness_history = []
     avg_hamming_history = []
@@ -314,6 +344,7 @@ def get_Score_trajectories_viennarna_cuda(
 
             current_score = torch.max(tensor_score, dim=1).values
             best_score = torch.where(current_score > best_score, current_score, best_score)
+            _update_agent_best_overall(tensor_score, tensor_solution, epoch=epoch + 1)
 
             if hasattr(strategy, "decay_svgd_gamma"):
                 strategy.decay_svgd_gamma(epoch, nb_iterations)
@@ -374,6 +405,7 @@ def get_Score_trajectories_viennarna_cuda(
             tensor_score = _evaluate_population(tensor_solution)
             current_score = torch.max(tensor_score, dim=1).values
             best_score = torch.where(current_score > best_score, current_score, best_score)
+            _update_agent_best_overall(tensor_score, tensor_solution, epoch=nb_iterations)
             if collect_dashboard:
                 avg_js_history.append(avg_js_history[-1] if avg_js_history else 0.0)
                 avg_l2_history.append(avg_l2_history[-1] if avg_l2_history else 0.0)
@@ -398,6 +430,32 @@ def get_Score_trajectories_viennarna_cuda(
         if callable(theta_history_fn):
             theta_history = theta_history_fn()
         num_agents = len(strategy.agents)
+        best_individual_history = None
+        if track_leader and agent_best_solution is not None and len(agent_best_solution) > 1:
+            with torch.no_grad():
+                stacked_best = torch.stack(agent_best_solution, dim=0)
+                diff = (stacked_best.unsqueeze(1) != stacked_best.unsqueeze(0)).float()
+                hamming_bmm = diff.sum(dim=-1).permute(2, 0, 1).cpu().numpy()
+                best_scores_bm = np.stack(
+                    [agent_best_overall[idx].detach().cpu().numpy() for idx in range(len(agent_best_overall))],
+                    axis=1,
+                )
+                best_epochs_bm = np.stack(
+                    [agent_best_epoch[idx].detach().cpu().numpy() for idx in range(len(agent_best_epoch))],
+                    axis=1,
+                )
+            best_individual_history = {
+                "hamming": hamming_bmm,
+                "best_scores": best_scores_bm,
+                "best_epochs": best_epochs_bm,
+            }
+            mean_hamming = hamming_bmm.mean(axis=0)
+            print(f"Best-individual Hamming distance (raw bits, mean over {hamming_bmm.shape[0]} instances):")
+            header = "        " + "".join(f"Agt{j:<5}" for j in range(mean_hamming.shape[0]))
+            print(header)
+            for i in range(mean_hamming.shape[0]):
+                row = "".join(f"{mean_hamming[i, j]:<8.1f}" for j in range(mean_hamming.shape[1]))
+                print(f"Agent {i}: {row}")
         render_agent_dashboard(
             runtime_steps,
             avg_hamming_history,
@@ -416,6 +474,7 @@ def get_Score_trajectories_viennarna_cuda(
             entropy_agent_history,
             avg_kernel_value_history,
             avg_kernel_grad_history,
+            best_individual_history=best_individual_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

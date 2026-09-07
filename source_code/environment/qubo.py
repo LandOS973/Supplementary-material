@@ -20,6 +20,7 @@ def get_Score_trajectoriesQUBO_cuda(
     device,
     verbose,
     enable_visualization=True,
+    collect_debug_metrics=None,
     return_history=False,
 ):
 
@@ -35,10 +36,15 @@ def get_Score_trajectoriesQUBO_cuda(
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
     collect_summary_metrics = track_leader
-    collect_pairwise_metrics = track_leader and bool(enable_visualization)
+    collect_debug_metrics = bool(enable_visualization) if collect_debug_metrics is None else bool(collect_debug_metrics)
+    collect_pairwise_metrics = track_leader and collect_debug_metrics
     agent_best_overall = None
+    agent_best_solution = None
+    agent_best_epoch = None
     if track_leader:
         agent_best_overall = [torch.ones(total_cases).to(device) * (-99999) for _ in agent_lambdas]
+        agent_best_solution = [torch.zeros(total_cases, N, device=device) for _ in agent_lambdas]
+        agent_best_epoch = [torch.zeros(total_cases, dtype=torch.long, device=device) for _ in agent_lambdas]
     greedy_sampler = getattr(strategy, "sample_greedy_agent_solutions", None)
     greedy_agent_count = int(getattr(strategy, "M", 0))
     if greedy_agent_count <= 0 and isinstance(agent_lambdas, (list, tuple)):
@@ -69,6 +75,8 @@ def get_Score_trajectoriesQUBO_cuda(
     score_p95_history = []
     score_p98_history = []
     agent_fitness_history = []
+    attraction_agent_history = []
+    repulsion_agent_history = []
     hamming_pairwise_history = []
     js_pairwise_history = []
     l2_pairwise_history = []
@@ -77,7 +85,7 @@ def get_Score_trajectoriesQUBO_cuda(
     kl_pairwise_history = []
     avg_kernel_value_history = []
     avg_kernel_grad_history = []
-    solutions_history = [] if enable_visualization else None
+    solutions_history = [] if collect_debug_metrics else None
     metrics = MetricsCalculator()
 
     use_tqdm = bool(verbose)
@@ -90,18 +98,20 @@ def get_Score_trajectoriesQUBO_cuda(
         Qx = tensor_Q[:, :pop_size, :, :] @ tensor_QUBO
         return -(torch.transpose(Qx, 2, 3) @ tensor_QUBO).squeeze(2).squeeze(2)
 
-    def _update_agent_best_overall(tensor_score, greedy_one_per_agent=False):
+    def _update_agent_best_overall(tensor_score, tensor_solution=None, epoch=None, greedy_one_per_agent=False):
         if not (track_leader and agent_best_overall is not None):
             return
         if greedy_one_per_agent:
             num_agents = min(len(agent_lambdas), tensor_score.size(1))
             for idx in range(num_agents):
                 agent_scores = tensor_score[:, idx]
-                agent_best_overall[idx] = torch.where(
-                    agent_scores > agent_best_overall[idx],
-                    agent_scores,
-                    agent_best_overall[idx],
-                )
+                improved = agent_scores > agent_best_overall[idx]
+                agent_best_overall[idx] = torch.where(improved, agent_scores, agent_best_overall[idx])
+                if tensor_solution is not None and agent_best_solution is not None:
+                    genotype = tensor_solution[:, idx, :, 0]
+                    agent_best_solution[idx] = torch.where(improved.unsqueeze(-1), genotype, agent_best_solution[idx])
+                if epoch is not None and agent_best_epoch is not None:
+                    agent_best_epoch[idx][improved] = epoch
             return
         start_idx = 0
         for idx, agent_lambda in enumerate(agent_lambdas):
@@ -109,12 +119,17 @@ def get_Score_trajectoriesQUBO_cuda(
                 break
             end_idx = min(start_idx + agent_lambda, tensor_score.size(1))
             agent_scores = tensor_score[:, start_idx:end_idx]
-            agent_best_values, _ = torch.max(agent_scores, dim=1)
-            agent_best_overall[idx] = torch.where(
-                agent_best_values > agent_best_overall[idx],
-                agent_best_values,
-                agent_best_overall[idx],
-            )
+            agent_best_values, agent_best_local_idx = torch.max(agent_scores, dim=1)
+            improved = agent_best_values > agent_best_overall[idx]
+            agent_best_overall[idx] = torch.where(improved, agent_best_values, agent_best_overall[idx])
+            if tensor_solution is not None and agent_best_solution is not None:
+                agent_solutions = tensor_solution[:, start_idx:end_idx, :, 0]
+                best_genotype = torch.gather(
+                    agent_solutions, 1, agent_best_local_idx.view(-1, 1, 1).expand(-1, 1, agent_solutions.size(-1))
+                ).squeeze(1)
+                agent_best_solution[idx] = torch.where(improved.unsqueeze(-1), best_genotype, agent_best_solution[idx])
+            if epoch is not None and agent_best_epoch is not None:
+                agent_best_epoch[idx][improved] = epoch
             start_idx = end_idx
         
         
@@ -200,11 +215,18 @@ def get_Score_trajectoriesQUBO_cuda(
             for idx, agent_lambda in enumerate(agent_lambdas):
                 end_idx = start_idx + agent_lambda
                 agent_scores = tensor_score[:, start_idx:end_idx]
-                agent_best_values, _ = torch.max(agent_scores, dim=1)
+                agent_best_values, agent_best_local_idx = torch.max(agent_scores, dim=1)
                 agent_best_scores.append(agent_best_values)
-                agent_best_overall[idx] = torch.where(agent_best_values > agent_best_overall[idx],
-                                                      agent_best_values,
-                                                      agent_best_overall[idx])
+                improved = agent_best_values > agent_best_overall[idx]
+                agent_best_overall[idx] = torch.where(improved, agent_best_values, agent_best_overall[idx])
+                if agent_best_solution is not None:
+                    agent_solutions = tensor_solution[:, start_idx:end_idx, :, 0]
+                    best_genotype = torch.gather(
+                        agent_solutions, 1, agent_best_local_idx.view(-1, 1, 1).expand(-1, 1, N)
+                    ).squeeze(1)
+                    agent_best_solution[idx] = torch.where(improved.unsqueeze(-1), best_genotype, agent_best_solution[idx])
+                if agent_best_epoch is not None:
+                    agent_best_epoch[idx][improved] = epoch + 1
                 start_idx = end_idx
 
             agent_mean_scores = torch.stack([scores.mean() for scores in agent_best_scores])
@@ -227,31 +249,26 @@ def get_Score_trajectoriesQUBO_cuda(
 
             if collect_pairwise_metrics:
                 avg_js, pairwise_js = metrics.compute_average_js(strategy.agents)
-                avg_l2, pairwise_l2 = metrics.compute_l2_distance(strategy.agents)
                 avg_js_history.append(avg_js if avg_js is not None else 0.0)
-                avg_l2_history.append(avg_l2 if avg_l2 is not None else 0.0)
                 hamming_pairwise_history.append(pairwise_matrix.tolist() if pairwise_matrix is not None else None)
                 js_pairwise_history.append(pairwise_js.tolist() if pairwise_js is not None else None)
-                l2_pairwise_history.append(pairwise_l2.tolist() if pairwise_l2 is not None else None)
                 l1_pairwise_history.append(pairwise_l1.tolist() if pairwise_l1 is not None else None)
                 entropy_agent_history.append(per_agent_entropy if per_agent_entropy is not None else None)
             else:
                 avg_js_history.append(0.0)
-                avg_l2_history.append(0.0)
                 hamming_pairwise_history.append(None)
                 js_pairwise_history.append(None)
-                l2_pairwise_history.append(None)
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
-            agent_fitness_history.append([score.item() for score in agent_mean_scores])
-            kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
-            kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
-            if kernel_stats:
-                avg_kernel_value_history.append(kernel_stats.get("avg_kernel_value", 0.0))
-                avg_kernel_grad_history.append(kernel_stats.get("avg_kernel_grad", 0.0))
+            agent_fitness_history.append([-score.item() for score in agent_mean_scores])
+            force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
+            force_stats = force_stats_fn() if callable(force_stats_fn) else None
+            if force_stats:
+                attraction_agent_history.append(force_stats.get("attraction_per_agent"))
+                repulsion_agent_history.append(force_stats.get("repulsion_per_agent"))
             else:
-                avg_kernel_value_history.append(0.0)
-                avg_kernel_grad_history.append(0.0)
+                attraction_agent_history.append(None)
+                repulsion_agent_history.append(None)
 
         if use_tqdm:
            postfix = {"bestScore": -global_best, "current_score": -global_current}
@@ -268,7 +285,7 @@ def get_Score_trajectoriesQUBO_cuda(
     if use_greedy_final and stochastic_remainder > 0:
         tensor_solution = strategy.sample_solutions()[:, :stochastic_remainder, :, :]
         tensor_score = _evaluate_population(tensor_solution)
-        _update_agent_best_overall(tensor_score, greedy_one_per_agent=False)
+        _update_agent_best_overall(tensor_score, tensor_solution, epoch=nb_iterations, greedy_one_per_agent=False)
         current_score = torch.max(tensor_score, dim=1).values
         index_solution = torch.argmax(tensor_score, dim=1)
         index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1, 1, N, 1)
@@ -323,7 +340,7 @@ def get_Score_trajectoriesQUBO_cuda(
                         f"Instance {inst_idx + 1} => nb d'agent qui ameliorent le score "
                         f"{count_str} ({mean_gain:+.4f} de score normalise en moyenne)"
                     )
-        _update_agent_best_overall(tensor_score, greedy_one_per_agent=True)
+        _update_agent_best_overall(tensor_score, tensor_solution, epoch=nb_iterations, greedy_one_per_agent=True)
         index_solution = torch.argmax(tensor_score, dim=1)
         index_solution = index_solution.unsqueeze(1).unsqueeze(2).unsqueeze(3).repeat(1, 1, N, 1)
         best_current_solution = torch.gather(tensor_solution, 1, index_solution).squeeze(3).squeeze(1)
@@ -337,12 +354,42 @@ def get_Score_trajectoriesQUBO_cuda(
 
     bestScore_np = -bestScore.detach().cpu().numpy()
 
+    best_individual_history = None
+    if track_leader and agent_best_solution is not None and len(agent_best_solution) > 1:
+        with torch.no_grad():
+            stacked_best = torch.stack(agent_best_solution, dim=0)
+            diff = (stacked_best.unsqueeze(1) != stacked_best.unsqueeze(0)).float()
+            hamming_bmm = diff.sum(dim=-1).permute(2, 0, 1).cpu().numpy()
+            best_scores_bm = np.stack(
+                [(-agent_best_overall[idx].detach().cpu().numpy()) for idx in range(len(agent_best_overall))],
+                axis=1,
+            )
+            best_epochs_bm = None
+            if agent_best_epoch is not None:
+                best_epochs_bm = np.stack(
+                    [agent_best_epoch[idx].detach().cpu().numpy() for idx in range(len(agent_best_epoch))],
+                    axis=1,
+                )
+        best_individual_history = {
+            "hamming": hamming_bmm,
+            "best_scores": best_scores_bm,
+            "best_epochs": best_epochs_bm,
+        }
+
     if track_leader and enable_visualization and agent_best_overall is not None and hasattr(strategy, "agents"):
         print("Per-agent summary:")
         for idx, agent in enumerate(strategy.agents):
             avg_best = -torch.mean(agent_best_overall[idx]).item()
             theta_mean = torch.mean(metrics.agent_theta_tensor(agent)).item()
             print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
+        if best_individual_history is not None:
+            mean_hamming = best_individual_history["hamming"].mean(axis=0)
+            print(f"Best-individual Hamming distance (raw bits, mean over {best_individual_history['hamming'].shape[0]} instances):")
+            header = "        " + "".join(f"Agt{j:<5}" for j in range(mean_hamming.shape[0]))
+            print(header)
+            for i in range(mean_hamming.shape[0]):
+                row = "".join(f"{mean_hamming[i, j]:<8.1f}" for j in range(mean_hamming.shape[1]))
+                print(f"Agent {i}: {row}")
 
     if enable_visualization:
         iterations = [(idx + 1) * size_pop for idx in range(len(avg_hamming_history))] if avg_hamming_history else []
@@ -371,6 +418,9 @@ def get_Score_trajectoriesQUBO_cuda(
             entropy_agent_history,
             avg_kernel_value_history,
             avg_kernel_grad_history,
+            best_individual_history=best_individual_history,
+            attraction_agent_history=attraction_agent_history,
+            repulsion_agent_history=repulsion_agent_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)
