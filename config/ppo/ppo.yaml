@@ -5,7 +5,7 @@ clip:
   clip_eps: 0.2
 
 kl:
-  beta: 0.5
+  beta: 0.01
 
 trpo:
   kl_threshold: 0.004      # KL_mean max tolérée après le pas SVGD (contrainte dure, pas de -beta*KL)
