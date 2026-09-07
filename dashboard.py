@@ -20,15 +20,22 @@ RANKING_DIR = ROOT / "additional_results" / "global_ranking"
 INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
 SKIP_ALGOS = {"ppo-eda", "tabu", "svgd-eda"}
 
+# Ordre important : les préfixes les plus spécifiques d'abord (le 1er match gagne).
+# "kt" (seuil KL TRPO) doit passer avant "k" (kernel), sinon "kt0p01" écrase le kernel.
+# "bw"/"bo" doivent passer avant "b" (kl_beta).
 PARSERS = [
     ("adv", "advantage", str),
     ("eps", "epsilon_svgd", float),
     ("ds",  "decay_start_ratio", float),
     ("dm",  "decay_min_factor", float),
     ("bw",  "bandwith_kernel", float),
+    ("bo",  "trpo_backoff", int),
     ("ks",  "ppo_epochs", int),
     ("pe",  "ppo_epochs", int),   # legacy (anciens résultats)
+    ("ppo", "ppo_mode", str),     # ppoclip / ppokl / ppotrpo -> clip / kl / trpo
     ("ce",  "clip_eps", float),
+    ("kt",  "trpo_kl_threshold", float),
+    ("b",   "kl_beta", float),
     ("M",   "M", int),
     ("L",   "lambda", int),
     ("g",   "gamma", float),
@@ -493,7 +500,7 @@ def tab_classement(filtered: pd.DataFrame) -> None:
 
     cols = [c for c in [
         *stat_cols,
-        "ppo_epochs", "clip_eps",
+        "ppo_mode", "ppo_epochs", "clip_eps", "kl_beta", "trpo_kl_threshold",
         "epsilon_svgd", "gamma", "M", "lambda",
         "kernel", "advantage",
         "decay_start_ratio", "decay_min_factor",
@@ -514,8 +521,11 @@ def tab_classement(filtered: pd.DataFrame) -> None:
             "mean_rank_NK3":  st.column_config.NumberColumn("Rank NK3", format="%.2f"),
             "mean_rank_QUBO": st.column_config.NumberColumn("Rank QUBO",format="%.2f"),
             "median_rank":    st.column_config.NumberColumn("Rank med", format="%.1f"),
+            "ppo_mode":       st.column_config.TextColumn("ppo mode", width="small"),
             "ppo_epochs":     st.column_config.NumberColumn("ks",       format="%d"),
             "clip_eps":       st.column_config.NumberColumn("ce",       format="%.2f"),
+            "kl_beta":        st.column_config.NumberColumn("β",        format="%.3f"),
+            "trpo_kl_threshold": st.column_config.NumberColumn("kt",    format="%.3f"),
             "epsilon_svgd":   st.column_config.NumberColumn("ε_svgd",  format="%.4f"),
             "gamma":          st.column_config.NumberColumn("γ",        format="%.4f"),
         },

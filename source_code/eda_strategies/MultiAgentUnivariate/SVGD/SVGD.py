@@ -9,6 +9,7 @@ class SVGD:
         self.gamma = float(gamma)
         self.no_repulsion = bool(no_repulsion)
         self.last_kernel_stats = None
+        self.last_force_stats = None
 
     def phi(self, thetas, score, probs=None):
         """
@@ -36,12 +37,9 @@ class SVGD:
             score_term = (K.unsqueeze(-1).unsqueeze(-1) * score.unsqueeze(1)).sum(dim=2)
         else:
             score_term = torch.matmul(K, score)
-        if self.no_repulsion:
-            phi = (score_term / self.gamma) / M             
-        else:
-            phi = (score_term / self.gamma + grad_term) / M             
-
-
+        attraction = (score_term / self.gamma) / M
+        repulsion = torch.zeros_like(attraction) if self.no_repulsion else grad_term / M
+        phi = attraction + repulsion
 
         if torch.isnan(phi).any() or torch.isinf(phi).any():
             phi = torch.nan_to_num(phi, nan=0.0, posinf=0.0, neginf=0.0)
@@ -49,7 +47,17 @@ class SVGD:
             "avg_kernel_value": float(K.mean().item()),
             "avg_kernel_grad": float(grad_term.mean().item()),
         }
+        with torch.no_grad():
+            attraction_flat = attraction.reshape(B, M, -1)
+            repulsion_flat = repulsion.reshape(B, M, -1)
+            self.last_force_stats = {
+                "attraction_per_agent": attraction_flat.norm(dim=-1).mean(dim=0).cpu().tolist(),
+                "repulsion_per_agent": repulsion_flat.norm(dim=-1).mean(dim=0).cpu().tolist(),
+            }
         return phi
 
     def get_last_kernel_stats(self):
         return self.last_kernel_stats or None
+
+    def get_last_force_stats(self):
+        return self.last_force_stats or None

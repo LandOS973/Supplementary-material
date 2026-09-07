@@ -690,6 +690,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             return None
         return self.kernel_metric_history[-1]
 
+    def get_latest_force_stats(self):
+        return self.svgd.get_last_force_stats()
+
     def _refresh_agent_views(self):
         if self.theta is None:
             self.agents = []

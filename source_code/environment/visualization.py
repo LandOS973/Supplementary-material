@@ -42,6 +42,11 @@ def render_agent_dashboard(
     sample_hamming_pairwise_history=None,
     score_history=None,
     ranking_lines=None,
+    l1_history=None,
+    l1_pairwise_history=None,
+    best_individual_history=None,
+    attraction_agent_history=None,
+    repulsion_agent_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -75,6 +80,7 @@ def render_agent_dashboard(
 
     pairwise_hamming = _prepare_pairwise(hamming_pairwise_history)
     pairwise_js = _prepare_pairwise(js_pairwise_history)
+    pairwise_l1 = _prepare_pairwise(l1_pairwise_history)
     entropy_agent_series = _prepare_agent_series(entropy_agent_history)
     sample_entropy_agent_series = _prepare_agent_series(sample_entropy_agent_history)
     sample_hamming_pairwise = _prepare_pairwise(sample_hamming_pairwise_history)
@@ -107,6 +113,15 @@ def render_agent_dashboard(
             overlay_type=None,
             overlay_data=None,
         )
+    if iterations and l1_history:
+        metrics_data["L1"] = dict(
+            average=l1_history,
+            ylabel="L1",
+            title="Average L1 Distance",
+            color="tab:pink",
+            overlay_type="pairwise",
+            overlay_data=pairwise_l1,
+        )
     if entropy_history and entropy_agent_series is not None:
         metrics_data["Entropy"] = dict(
             average=entropy_history,
@@ -134,25 +149,6 @@ def render_agent_dashboard(
             overlay_type="pairwise",
             overlay_data=sample_hamming_pairwise,
         )
-    if iterations and kernel_value_history:
-        metrics_data["Kernel Value"] = dict(
-            average=kernel_value_history,
-            ylabel="k(i,j)",
-            title="Average Kernel Similarity",
-            color="tab:purple",
-            overlay_type=None,
-            overlay_data=None,
-        )
-    if iterations and kernel_grad_history:
-        metrics_data["Kernel Gradient"] = dict(
-            average=kernel_grad_history,
-            ylabel="‖∇k‖",
-            title="Average Kernel Gradient ",
-            color="tab:brown",
-            overlay_type=None,
-            overlay_data=None,
-        )
-
     metric_names = list(metrics_data.keys())
 
     try:
@@ -190,17 +186,59 @@ def render_agent_dashboard(
             )
         extra_series_vars = {name: tk.IntVar(value=1) for name in extra_series_config}
 
-        theta_available = bool(solutions_history and solutions_history.get("values"))
-        theta_var = tk.IntVar(value=1 if theta_available else 0)
+        theta_available = bool(theta_history and theta_history.get("values"))
+        hamming_evo_series, hamming_evo_num_instances = (
+            _compute_agent_hamming_evolution(theta_history) if theta_available else (None, 0)
+        )
+        hamming_evo_available = bool(iterations and hamming_evo_series is not None and num_agents > 0)
+        show_hamming_evo_var = tk.IntVar(value=1 if hamming_evo_available else 0)
+
+        best_individual_hamming = best_individual_history.get("hamming") if best_individual_history else None
+        best_individual_available = best_individual_hamming is not None and getattr(best_individual_hamming, "size", 0) > 0
+        show_instance_column = theta_available or best_individual_available
+        theta_var = tk.IntVar(value=1 if show_instance_column else 0)
         theta_panel = None
         theta_pack_info = None
         theta_container = None
         pane_theta_width = max(400, root.winfo_screenwidth() // 5)
-        if theta_available:
+        if show_instance_column:
             theta_container = tk.Frame(pane, width=pane_theta_width)
             pane.add(theta_container)
             pane.paneconfigure(theta_container, minsize=pane_theta_width // 2)
-            theta_panel = _build_solution_tsne_panel(theta_container, root, solutions_history, num_agents)
+
+            shared_num_instances = 0
+            if best_individual_available:
+                shared_num_instances = int(best_individual_hamming.shape[0])
+            elif theta_available:
+                first_agent = theta_history["values"][0][0]
+                first_arr = (
+                    first_agent.detach().cpu().numpy() if hasattr(first_agent, "detach") else np.asarray(first_agent)
+                )
+                shared_num_instances = int(first_arr.shape[0]) if first_arr.ndim >= 1 else 0
+
+            shared_instance_var = tk.IntVar(value=0)
+            shared_average_var = tk.IntVar(value=0)
+            if shared_num_instances > 0:
+                instance_controls = tk.Frame(theta_container)
+                instance_controls.pack(side="top", fill="x", padx=10, pady=(6, 2))
+                tk.Label(instance_controls, text="Instance:").pack(side="left", padx=(0, 4))
+                instance_menu = tk.OptionMenu(instance_controls, shared_instance_var, *range(shared_num_instances))
+                instance_menu.pack(side="left", padx=(0, 12))
+                tk.Checkbutton(instance_controls, text="Moyenne", variable=shared_average_var).pack(side="left")
+
+                def _toggle_instance_menu(*_):
+                    instance_menu.configure(state="disabled" if shared_average_var.get() else "normal")
+
+                shared_average_var.trace_add("write", _toggle_instance_menu)
+
+            if best_individual_available:
+                _build_best_individual_table_panel(
+                    theta_container, best_individual_history, shared_instance_var, shared_average_var
+                )
+            if theta_available:
+                theta_panel = _build_probs_heatmap_panel(
+                    theta_container, root, theta_history, num_agents, shared_instance_var, shared_average_var
+                )
             if theta_panel:
                 theta_pack_info = theta_panel.pack_info()
                 if theta_var.get() == 0:
@@ -252,7 +290,34 @@ def render_agent_dashboard(
             ax.legend()
             return ax, lines
 
+        def is_hamming_evo_enabled():
+            return hamming_evo_available and show_hamming_evo_var.get() == 1
+
+        hamming_evo_ax = None
+
+        def draw_hamming_evo_axis(total_rows, row):
+            if not is_hamming_evo_enabled():
+                return None
+            ax = fig.add_subplot(total_rows, 1, row)
+            if shared_average_var.get():
+                series = hamming_evo_series.mean(axis=-1)
+                label_suffix = f"moyenne sur {hamming_evo_num_instances} instances"
+            else:
+                idx = max(0, min(hamming_evo_num_instances - 1, shared_instance_var.get()))
+                series = hamming_evo_series[:, :, idx]
+                label_suffix = f"instance {idx}"
+            steps = min(len(iterations), series.shape[0])
+            x_axis = iterations[:steps]
+            for agent_idx in range(num_agents):
+                ax.plot(x_axis, series[:steps, agent_idx], label=f"Agent {agent_idx}")
+            ax.set_title(f"Hamming Evolution par agent ({label_suffix})")
+            ax.set_ylabel("Hamming vs autres agents")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            ax.legend(fontsize="x-small", ncol=min(num_agents, 4))
+            return ax
+
         def draw_metrics():
+            nonlocal hamming_evo_ax
             fig.clear()
             plot_handles.clear()
             overlay_lines.clear()
@@ -260,7 +325,11 @@ def render_agent_dashboard(
             extra_lines.clear()
             active_extra = enabled_extra_series()
             total_metric_rows = len(selected_metrics)
-            total_rows = total_metric_rows + len(active_extra)
+            total_rows = (
+                total_metric_rows
+                + len(active_extra)
+                + (1 if is_hamming_evo_enabled() else 0)
+            )
             if total_rows == 0:
                 fig.text(0.5, 0.5, "No metrics to display", ha="center", va="center")
                 canvas.draw_idle()
@@ -287,6 +356,10 @@ def render_agent_dashboard(
                 extra_axes[name] = ax
                 extra_lines[name] = lines
                 last_axis = ax
+            hamming_evo_ax = draw_hamming_evo_axis(total_rows, row)
+            if hamming_evo_ax is not None:
+                row += 1
+                last_axis = hamming_evo_ax
             if last_axis is None and selected_metrics:
                 last_axis = plot_handles[selected_metrics[-1]]["axis"]
             if last_axis is not None:
@@ -407,7 +480,7 @@ def render_agent_dashboard(
             canvas.draw_idle()
 
         def _toggle_theta_panel():
-            if not theta_container or not theta_panel:
+            if not theta_container:
                 return
             if theta_var.get():
                 pane_children = pane.panes()
@@ -459,10 +532,19 @@ def render_agent_dashboard(
                 variable=extra_series_vars[name],
                 command=draw_metrics,
             ).pack(side="left", padx=4)
-        if theta_panel is not None:
+        if hamming_evo_available:
             tk.Checkbutton(
                 options_frame,
-                text="Solutions t-SNE",
+                text="Show Hamming Evolution",
+                variable=show_hamming_evo_var,
+                command=draw_metrics,
+            ).pack(side="left", padx=4)
+            shared_instance_var.trace_add("write", lambda *_: draw_metrics())
+            shared_average_var.trace_add("write", lambda *_: draw_metrics())
+        if theta_container is not None:
+            tk.Checkbutton(
+                options_frame,
+                text="Instance Explorer",
                 variable=theta_var,
                 command=_toggle_theta_panel,
             ).pack(side="left", padx=4)
@@ -554,39 +636,232 @@ def render_svgd_field_plot(snapshot):
         print(f"Failed to render SVGD field plot: {exc}")
 
 
-def _build_solution_tsne_panel(container, root_window, history, num_agents):
-    try:
-        from sklearn.manifold import TSNE
-    except Exception:
-        TSNE = None
+def _build_best_individual_table_panel(container, history, instance_var, average_var):
+    """
+    Table M x M de la distance de Hamming réelle (pas d'expectation) entre les
+    meilleurs individus trouvés par chaque agent, par instance (axe B préservé,
+    aucune moyenne inter-instances par défaut). `instance_var`/`average_var` sont
+    partagés avec les autres panels d'instance (ex: heatmap probs) pour rester
+    synchronisés. Quand `average_var` est actif, affiche la moyenne sur toutes
+    les instances plutôt que l'instance sélectionnée.
+    """
+    hamming = history.get("hamming")
+    best_scores = history.get("best_scores")
+    best_epochs = history.get("best_epochs")
+    if hamming is None or hamming.ndim != 3 or hamming.shape[0] == 0:
+        return None
 
+    num_instances, num_agents, _ = hamming.shape
+
+    panel = tk.LabelFrame(container, text="Best Individuals Hamming (bits)")
+    panel.pack(side="top", fill="x", padx=10, pady=6)
+
+    status_var = tk.StringVar()
+    tk.Label(panel, textvariable=status_var).pack(pady=(0, 2))
+
+    tables_row = tk.Frame(panel)
+    tables_row.pack(fill="x", padx=10, pady=6)
+
+    table_frame = tk.Frame(tables_row)
+    table_frame.pack(side="left", anchor="n")
+
+    groups_frame = tk.Frame(tables_row)
+    groups_frame.pack(side="left", anchor="n", padx=(20, 0))
+
+    def _shade(ratio):
+        ratio = max(0.0, min(1.0, float(ratio)))
+        r0, g0, b0 = 255, 255, 255
+        r1, g1, b1 = 217, 83, 79
+        r = int(r0 + (r1 - r0) * ratio)
+        g = int(g0 + (g1 - g0) * ratio)
+        b = int(b0 + (b1 - b0) * ratio)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _group_agents_by_optimum(mat, scores_row):
+        parent = list(range(num_agents))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for i in range(num_agents):
+            for j in range(i + 1, num_agents):
+                if float(mat[i, j]) == 0.0:
+                    union(i, j)
+
+        groups = {}
+        for idx in range(num_agents):
+            groups.setdefault(find(idx), []).append(idx)
+        ordered = sorted(groups.values(), key=lambda members: (-len(members), members[0]))
+        lines = []
+        for rank, members in enumerate(ordered, start=1):
+            agents_str = ", ".join(f"Agent {m}" for m in members)
+            score_str = f"{scores_row[members[0]]:.3f}" if scores_row is not None else "n/a"
+            lines.append(f"Optimum {rank} ({agents_str}) score: {score_str}")
+        return lines
+
+    def draw_table(*_):
+        for widget in table_frame.winfo_children():
+            widget.destroy()
+        for widget in groups_frame.winfo_children():
+            widget.destroy()
+        if average_var.get():
+            mat = hamming.mean(axis=0)
+            scores_row = best_scores.mean(axis=0) if best_scores is not None else None
+            epochs_row = best_epochs.mean(axis=0) if best_epochs is not None else None
+            status_var.set(f"Moyenne sur {num_instances} instances")
+        else:
+            instance_idx = max(0, min(num_instances - 1, instance_var.get()))
+            mat = hamming[instance_idx]
+            scores_row = best_scores[instance_idx] if best_scores is not None else None
+            epochs_row = best_epochs[instance_idx] if best_epochs is not None else None
+            status_var.set(f"Instance {instance_idx}")
+
+        if average_var.get():
+            tk.Label(
+                groups_frame,
+                text="Optima (masqué en vue Moyenne, sélectionnez une instance)",
+                anchor="w",
+                justify="left",
+            ).pack(anchor="w")
+        else:
+            tk.Label(groups_frame, text="Optima trouvés :", anchor="w", justify="left", font=("", 9, "bold")).pack(
+                anchor="w"
+            )
+            for line in _group_agents_by_optimum(mat, scores_row):
+                tk.Label(groups_frame, text=line, anchor="w", justify="left").pack(anchor="w")
+
+        mat_max = float(mat.max()) if mat.size else 0.0
+
+        tk.Label(table_frame, text="", width=9).grid(row=0, column=0)
+        for j in range(num_agents):
+            header = f"Agent {j}"
+            if scores_row is not None:
+                header += f"\n{scores_row[j]:.3f}"
+            if epochs_row is not None:
+                header += f"\nep {epochs_row[j]:.0f}"
+            tk.Label(table_frame, text=header, borderwidth=1, relief="solid", width=9).grid(
+                row=0, column=j + 1, sticky="nsew"
+            )
+        for i in range(num_agents):
+            tk.Label(table_frame, text=f"Agent {i}", borderwidth=1, relief="solid", width=9).grid(
+                row=i + 1, column=0, sticky="nsew"
+            )
+            for j in range(num_agents):
+                value = float(mat[i, j])
+                ratio = value / mat_max if mat_max > 0 else 0.0
+                tk.Label(
+                    table_frame,
+                    text=f"{value:.1f}",
+                    borderwidth=1,
+                    relief="solid",
+                    width=9,
+                    bg=_shade(ratio),
+                ).grid(row=i + 1, column=j + 1, sticky="nsew")
+
+    instance_var.trace_add("write", draw_table)
+    average_var.trace_add("write", draw_table)
+    draw_table()
+    return panel
+
+
+def _compute_agent_hamming_evolution(history):
+    """
+    Calcul pur (sans Tkinter) : pour chaque step enregistre, la distance de
+    Hamming attendue moyenne de chaque agent vis-a-vis des M-1 autres, a partir
+    des probs (meme formule que HK.py). Axe B preserve (pas via metrics.py).
+
+    Retourne (per_agent_all, num_instances) avec per_agent_all de forme
+    (T, M, B), ou (None, 0) si les donnees ne s'y pretent pas.
+    """
     values = history.get("values") or []
-    if not values:
-        return
-    score_values = history.get("scores") or []
+    if not values or len(values[0]) < 2:
+        return None, 0
 
-    if num_agents == 0:
-        return
-    lambda_per_agent = int(history.get("lambda_per_agent") or 0)
-    if lambda_per_agent <= 0:
+    def _to_numpy(tensor):
+        return tensor.detach().cpu().numpy() if hasattr(tensor, "detach") else np.asarray(tensor)
+
+    try:
+        stacked = np.stack(
+            [np.stack([_to_numpy(agent_tensor) for agent_tensor in step], axis=0) for step in values],
+            axis=0,
+        )
+    except ValueError:
+        return None, 0
+    # stacked: (T, M, B, N) binaire, ou (T, M, B, N, D) categoriel
+    if stacked.ndim not in (4, 5):
+        return None, 0
+    M = stacked.shape[1]
+    num_instances = stacked.shape[2]
+    if num_instances <= 0 or M < 2:
+        return None, 0
+    is_categorical = stacked.ndim == 5
+
+    pi = stacked[:, :, None, ...]
+    pj = stacked[:, None, :, ...]
+    if is_categorical:
+        match = (pi * pj).sum(axis=-1)
+        dist = (1.0 - match).mean(axis=-1)
+    else:
+        dist = (pi + pj - 2 * pi * pj).mean(axis=-1)
+    # dist: (T, M, M, B) ; dist[t, i, i, b] == 0, donc sommer sur j inclut le "soi" sans biaiser
+    per_agent_all = dist.sum(axis=2) / max(M - 1, 1)  # (T, M, B)
+    return per_agent_all, num_instances
+
+
+def _build_probs_heatmap_panel(container, root_window, history, num_agents, instance_var, average_var):
+    """
+    Heatmap M agents x N dimensions des probabilités (sigmoid/softmax de theta),
+    avec un slider sur les steps enregistrés. `instance_var`/`average_var` sont
+    partagés avec les autres panels d'instance (ex: table Hamming) pour rester
+    synchronisés. Quand `average_var` est actif, affiche la moyenne des probas
+    sur toutes les instances plutôt que l'instance sélectionnée.
+    """
+    values = history.get("values") or []
+    if not values or num_agents == 0:
         return
 
-    panel = tk.LabelFrame(container, text="Solutions t-SNE Explorer")
-    panel.pack(side="right", fill="both", expand=True, padx=10, pady=6)
+    def _agent_matrix(agent_tensor, instance_idx):
+        arr = agent_tensor.detach().cpu().numpy() if hasattr(agent_tensor, "detach") else np.asarray(agent_tensor)
+        row = arr.mean(axis=0) if instance_idx is None else arr[instance_idx]
+        if row.ndim == 2:
+            return row.argmax(axis=-1), row.max(axis=-1), row.shape[-1]
+        return row, None, None
+
+    def _to_matrix(step_entry, instance_idx):
+        rows = [_agent_matrix(agent_tensor, instance_idx) for agent_tensor in step_entry]
+        if rows[0][1] is not None:
+            cat_matrix = np.stack([r[0] for r in rows], axis=0)
+            conf_matrix = np.stack([r[1] for r in rows], axis=0)
+            return True, cat_matrix, conf_matrix, rows[0][2]
+        matrix = np.stack([r[0] for r in rows], axis=0)
+        return False, matrix, None, None
+
+    first_agent = values[0][0]
+    first_arr = first_agent.detach().cpu().numpy() if hasattr(first_agent, "detach") else np.asarray(first_agent)
+    num_instances = int(first_arr.shape[0]) if first_arr.ndim >= 1 else 0
+    if num_instances <= 0:
+        return
+
+    panel = tk.LabelFrame(container, text="Probs Heatmap Explorer")
+    panel.pack(side="bottom", fill="both", expand=True, padx=10, pady=6)
     panel.pack_propagate(False)
 
-    fig, ax = plt.subplots(figsize=(5, 5))
-    fig.tight_layout()
+    fig = plt.figure(figsize=(6, 4))
     canvas = FigureCanvasTkAgg(fig, master=panel)
     canvas.draw()
     canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    controls = tk.Frame(panel)
-    controls.pack(fill="x", padx=10, pady=6)
-
     epoch_var = tk.IntVar(value=0)
-    total_lambda = lambda_per_agent * num_agents
-    fixed_perplexity = min(50, max(1, total_lambda - 1))
+    status_var = tk.StringVar()
+    tk.Label(panel, textvariable=status_var).pack(pady=2)
 
     def clamp(var, upper):
         try:
@@ -594,169 +869,57 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
         except (tk.TclError, ValueError):
             val = 0
         val = max(0, min(upper, val))
-        if isinstance(var, tk.StringVar):
-            var.set(str(val))
-        else:
+        if val != var.get():
             var.set(val)
         return val
 
-    status_var = tk.StringVar()
-    tk.Label(panel, textvariable=status_var).pack(pady=2)
-
-    if num_agents < 2:
-        tk.Label(panel, text="t-SNE requires at least 2 agents.").pack(pady=8)
-        return panel
-    if TSNE is None:
-        tk.Label(panel, text="scikit-learn not available (install scikit-learn).").pack(pady=8)
-        return panel
-
-    labels = np.repeat(np.arange(num_agents), lambda_per_agent)
-    embedding_cache = {}
-
     def update_plot(*_):
         epoch_idx = clamp(epoch_var, len(values) - 1)
-        perp = fixed_perplexity
+        if average_var.get():
+            instance_idx = None
+            instance_label = f"Moyenne sur {num_instances} instances"
+        else:
+            instance_idx = clamp(instance_var, num_instances - 1)
+            instance_label = f"Instance {instance_idx}"
+        is_categorical, mat_a, mat_b, num_categories = _to_matrix(values[epoch_idx], instance_idx)
 
-        entry = values[epoch_idx]
-        if entry is None:
-            status_var.set("t-SNE skipped: no sampled solutions.")
-            return
-        X = np.asarray(entry)
-        if X.ndim == 3 and X.shape[-1] == 1:
-            X = X[:, :, 0]
-        if X.ndim != 2:
-            status_var.set("t-SNE skipped: expected (total_lambda, N) samples.")
-            return
-        if X.shape[0] != total_lambda:
-            status_var.set("t-SNE skipped: unexpected sample count.")
-            return
+        fig.clear()
+        ax = fig.add_subplot(111)
+        num_rows = mat_a.shape[0]
 
-        init_value = "pca"
-        prev_embedding = embedding_cache.get(epoch_idx - 1)
-        if prev_embedding is not None and prev_embedding.shape[0] == X.shape[0]:
-            init_value = prev_embedding
-
-        try:
-            tsne = TSNE(
-                n_components=2,
-                metric="hamming",
-                init=init_value,
-                perplexity=perp,
-                random_state=0,
+        if is_categorical:
+            from matplotlib.colors import hsv_to_rgb
+            from matplotlib.patches import Patch
+            num_categories = max(int(num_categories), 1)
+            hue = mat_a.astype(np.float32) / num_categories
+            sat = np.ones_like(hue)
+            val = np.clip(mat_b, 0.0, 1.0)
+            rgb = hsv_to_rgb(np.stack([hue, sat, val], axis=-1))
+            ax.imshow(rgb, aspect="auto", interpolation="nearest")
+            legend_handles = [
+                Patch(facecolor=hsv_to_rgb([c / num_categories, 1.0, 1.0]), label=f"Cat. {c}")
+                for c in range(num_categories)
+            ]
+            ax.legend(
+                handles=legend_handles,
+                loc="upper right",
+                fontsize="x-small",
+                title="Teinte=catégorie, luminosité=confiance",
+                framealpha=0.85,
             )
-            embedding = tsne.fit_transform(X)
-        except Exception as exc:
-            status_var.set(f"t-SNE failed: {exc}")
-            return
+        else:
+            im = ax.imshow(mat_a, cmap="viridis", vmin=0.0, vmax=1.0, aspect="auto", interpolation="nearest")
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-        embedding_cache[epoch_idx] = embedding
-
-        ax.clear()
-        xs = embedding[:, 0]
-        ys = embedding[:, 1]
-        span = max(float(xs.max() - xs.min()), float(ys.max() - ys.min()), 1e-6)
-        norm_scores = None
-        score_entry = score_values[epoch_idx] if epoch_idx < len(score_values) else None
-        if score_entry is not None:
-            scores = np.asarray(score_entry, dtype=np.float32).reshape(-1)
-            if scores.shape[0] == embedding.shape[0]:
-                norm_scores = np.clip(scores, 0.0, 1.0)
-                xmin, xmax = float(xs.min()), float(xs.max())
-                ymin, ymax = float(ys.min()), float(ys.max())
-                pad = 0.06 * span
-                gx = np.linspace(xmin - pad, xmax + pad, 140)
-                gy = np.linspace(ymin - pad, ymax + pad, 140)
-                GX, GY = np.meshgrid(gx, gy)
-                heat = np.zeros_like(GX, dtype=np.float32)
-                sigma = max(1e-3, 0.07 * span)
-                inv = 1.0 / (2.0 * sigma * sigma)
-                for x, y, s in zip(xs, ys, norm_scores):
-                    if s <= 0.0:
-                        continue
-                    dx = GX - x
-                    dy = GY - y
-                    influence = s * np.exp(-(dx * dx + dy * dy) * inv)
-                    heat = np.maximum(heat, influence)
-                ax.imshow(
-                    heat,
-                    origin="lower",
-                    extent=[gx[0], gx[-1], gy[0], gy[-1]],
-                    cmap="Reds",
-                    vmin=0.0,
-                    vmax=1.0,
-                    alpha=0.35,
-                    aspect="auto",
-                )
-        ax.grid(True, linestyle="--", alpha=0.4)
-        ax.set_xlabel("t-SNE 1")
-        ax.set_ylabel("t-SNE 2")
-        ax.set_title(f"Epoch {epoch_idx + 1}/{len(values)} – samples {total_lambda}")
-        from matplotlib.lines import Line2D
-        from matplotlib.colors import hsv_to_rgb
-        hues = np.linspace(0, 1, max(num_agents, 1), endpoint=False)
-        colors = hsv_to_rgb(np.stack([hues, np.ones_like(hues), np.ones_like(hues)], axis=1))
-        legend_handles = []
-        marker = "o"
-        scale = float(np.std(embedding, axis=0).mean()) if embedding.size else 0.0
-        jitter_scale = max(0.001, 0.02 * scale)
-        for agent_idx in range(num_agents):
-            mask = labels == agent_idx
-            if not np.any(mask):
-                continue
-            points = embedding[mask]
-            if norm_scores is None:
-                scores_agent = np.zeros(points.shape[0], dtype=np.float32)
-            else:
-                scores_agent = norm_scores[mask]
-            rounded = np.round(points, 3)
-            uniq, inverse, counts = np.unique(rounded, axis=0, return_inverse=True, return_counts=True)
-            uniq_scores = np.zeros(len(uniq), dtype=np.float32)
-            np.maximum.at(uniq_scores, inverse, scores_agent)
-            sizes = 45 * (1 + 0.6 * (counts - 1))
-            angle = 2 * np.pi * (agent_idx / max(num_agents, 1))
-            offset = np.array([np.cos(angle), np.sin(angle)]) * jitter_scale
-            ax.scatter(
-                uniq[:, 0] + offset[0],
-                uniq[:, 1] + offset[1],
-                s=sizes,
-                color=colors[agent_idx],
-                edgecolor="white",
-                linewidth=0.4,
-                zorder=3,
-                alpha=0.9,
-                marker=marker,
-            )
-            if norm_scores is not None:
-                for (x, y, s_val) in zip(uniq[:, 0], uniq[:, 1], uniq_scores):
-                    ax.text(
-                        x + offset[0],
-                        y + offset[1] + 0.01 * span,
-                        f"{s_val:.2f}",
-                        fontsize=7,
-                        color="#222222",
-                        ha="center",
-                        va="bottom",
-                        zorder=4,
-                    )
-            legend_handles.append(
-                Line2D(
-                    [0],
-                    [0],
-                    marker=marker,
-                    color="w",
-                    markerfacecolor=colors[agent_idx],
-                    markeredgecolor="white",
-                    markersize=8,
-                    label=f"Agent {agent_idx}",
-                )
-            )
-        if legend_handles:
-            ax.legend(handles=legend_handles, loc="best", fontsize="small")
-        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)} – perplexity {perp}")
+        ax.set_yticks(range(num_rows))
+        ax.set_yticklabels([f"Agent {m}" for m in range(num_rows)])
+        for row in range(1, num_rows):
+            ax.axhline(row - 0.5, color="white", linewidth=1.2)
+        ax.set_xlabel("Dimension")
+        ax.set_title(f"{instance_label} – Epoch {epoch_idx + 1}/{len(values)}")
+        fig.tight_layout()
+        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)} – {instance_label}")
         canvas.draw_idle()
-
-    def recompute_now():
-        update_plot()
 
     slider = tk.Scale(
         panel,
@@ -764,11 +927,10 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
         to=len(values) - 1,
         orient="horizontal",
         length=450,
-        command=lambda val: (epoch_var.set(int(float(val))), status_var.set("Press Recompute t-SNE")),
+        command=lambda val: (epoch_var.set(int(float(val))), update_plot()),
         label="Epoch",
     )
     slider.pack(fill="x", padx=12, pady=6)
-    tk.Button(controls, text="Recompute t-SNE", command=recompute_now).pack(side="left", padx=4)
 
     def step_epoch(delta):
         new_idx = max(0, min(len(values) - 1, epoch_var.get() + delta))
@@ -776,9 +938,9 @@ def _build_solution_tsne_panel(container, root_window, history, num_agents):
 
     root_window.bind("<Left>", lambda event: step_epoch(-1))
     root_window.bind("<Right>", lambda event: step_epoch(1))
-    root_window.bind("<Return>", lambda event: recompute_now())
-    root_window.bind("<KP_Enter>", lambda event: recompute_now())
 
+    instance_var.trace_add("write", update_plot)
+    average_var.trace_add("write", update_plot)
     update_plot()
 
     return panel
