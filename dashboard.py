@@ -320,6 +320,19 @@ def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
 
 
 @st.cache_data(show_spinner=False)
+def load_agent_debug(config: str) -> dict | None:
+    """agent_debug.npz d'une config : clés '<instance>/genotype|epoch|score|meta'."""
+    p = RESULTS_DIR / config / "agent_debug.npz"
+    if not p.exists():
+        return None
+    try:
+        with np.load(p, allow_pickle=False) as z:
+            return {k: z[k] for k in z.files}
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
 def load_comparisons() -> list[dict]:
     if COMPARISONS_FILE.exists():
         try:
@@ -350,6 +363,149 @@ def save_favorites(favs: list[dict]) -> None:
 
 
 from plotly.subplots import make_subplots
+
+# ── Courbes des concurrents (réutilise curves/main_plot.py) ───────────────────
+import csv as _csv
+import sys as _sys
+
+if str(ROOT / "curves") not in _sys.path:
+    _sys.path.insert(0, str(ROOT / "curves"))
+try:
+    from main_plot import (
+        find_competitor_files as _cmp_find,
+        load_mean_across_runs as _cmp_mean,
+        load_xy_from_csv as _cmp_xy,
+        clip_series_to_budget as _cmp_clip,
+        _normalize_score_sign as _cmp_signfix,
+        aggregate_quantile_stats as _cmp_qstats,
+        normalize_box_stats as _cmp_normbox,
+        parse_float as _cmp_pf,
+    )
+    _COMPETITORS_OK = True
+except Exception:
+    _COMPETITORS_OK = False
+
+_COMPETITOR_BUDGET = 50000
+
+
+def _cmp_read_final_score(path, budget: int) -> float | None:
+    """Score au budget exact sinon dernier score dispo (cf. main_curves_overall)."""
+    try:
+        with open(path, newline="") as fh:
+            reader = _csv.reader(fh)
+            header = next(reader, None)
+            ri, si = 0, 1
+            first_data = None
+            if header:
+                low = [c.strip().lower() for c in header]
+                if "runtime" in low or "score" in low:
+                    if "runtime" in low:
+                        ri = low.index("runtime")
+                    if "score" in low:
+                        si = low.index("score")
+                elif _cmp_pf(header[0].strip()) is not None and _cmp_pf(header[1].strip()) is not None:
+                    first_data = header
+            last = at_budget = None
+            rows = ([first_data] if first_data is not None else []) + list(reader)
+            for row in rows:
+                if len(row) <= max(ri, si):
+                    continue
+                rt, sc = _cmp_pf(row[ri].strip()), _cmp_pf(row[si].strip())
+                if rt is None or sc is None:
+                    continue
+                last = sc
+                if abs(rt - budget) < 1e-9:
+                    at_budget = sc
+            return at_budget if at_budget is not None else last
+    except OSError:
+        return None
+
+
+def _cmp_pct(sv: list[float], p: float) -> float:
+    if p <= 0:
+        return sv[0]
+    if p >= 1:
+        return sv[-1]
+    k = (len(sv) - 1) * p
+    f = int(k)
+    c = min(f + 1, len(sv) - 1)
+    return sv[f] if f == c else sv[f] * (c - k) + sv[c] * (k - f)
+
+
+def _cmp_final_stats(paths, budget: int) -> dict | None:
+    vals: list[float] = []
+    for p in paths:
+        p = Path(p)
+        # mean_curve_budget_* → utiliser final_scores_budget_*.csv (1 score par run)
+        if p.name.startswith("mean_curve_budget_"):
+            fs = p.parent / f"final_scores_budget_{budget}.csv"
+            if fs.exists():
+                try:
+                    with fs.open(newline="") as fh:
+                        for row in _csv.DictReader(fh):
+                            sc = _cmp_pf((row.get("score") or "").strip())
+                            if sc is not None:
+                                vals.append(sc)
+                    continue
+                except OSError:
+                    pass
+        sc = _cmp_read_final_score(p, budget)
+        if sc is not None:
+            vals.append(sc)
+    if not vals:
+        return None
+    vals.sort()
+    return {
+        "low": _cmp_pct(vals, 0.02), "q1": _cmp_pct(vals, 0.25),
+        "med": _cmp_pct(vals, 0.50), "q3": _cmp_pct(vals, 0.75),
+        "high": _cmp_pct(vals, 0.98), "mean": sum(vals) / len(vals),
+    }
+
+
+@st.cache_data(show_spinner=False)
+def load_competitor_curve(algo: str, problem: str, dim: int, t: int):
+    """(x, y) courbe moyenne d'un concurrent — score normalisé, borné au budget."""
+    if not _COMPETITORS_OK:
+        return None
+    try:
+        paths, has_header = _cmp_find(algo, dim, t, problem)
+        if has_header:
+            if len(paths) > 1:
+                x, y = _cmp_mean(paths)
+            else:
+                x, y = _cmp_xy(paths[0], has_header=True, x_key="runtime", y_key="mean")
+        else:
+            x, y = _cmp_xy(paths[0], has_header=False)
+        x, y = _cmp_clip(list(x), list(y), max_budget=_COMPETITOR_BUDGET)
+        if not x:
+            return None
+        y = _cmp_signfix(problem, list(y))
+        return list(x), list(y)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_competitor_box(algo: str, problem: str, dim: int, t: int):
+    """Stats quantiles finales d'un concurrent : {low,q1,med,q3,high,mean} ou None."""
+    if not _COMPETITORS_OK:
+        return None
+    try:
+        paths, has_header = _cmp_find(algo, dim, t, problem)
+    except Exception:
+        return None
+    try:
+        if has_header:
+            stats = _cmp_qstats(paths, problem_name=problem)
+            if stats:
+                return stats
+    except Exception:
+        pass
+    raw = _cmp_final_stats(paths, _COMPETITOR_BUDGET)
+    try:
+        return _cmp_normbox(problem, raw) if raw else None
+    except Exception:
+        return raw
 
 
 def _config_label(row: pd.Series) -> str:
@@ -1154,7 +1310,42 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                                f'<td style="{s_td}color:{COLOR_B};">{vb}</td>'
                                f'</tr>')
             html_stats += "</tbody></table>"
-            st.markdown(html_stats, unsafe_allow_html=True)
+
+            # Comparaison Hamming par K (t pour QUBO) — à droite du résumé
+            hk_rows = []
+            for prob in ["NK", "NK3", "QUBO"]:
+                klbl = "t" if prob == "QUBO" else "K"
+                for k in sorted({r["_t"] for r in summary_rows if r["_prob"] == prob}):
+                    ha = [r[col_hamming_a] for r in summary_rows
+                          if r["_prob"] == prob and r["_t"] == k and r[col_hamming_a] is not None]
+                    hb = [r[col_hamming_b] for r in summary_rows
+                          if r["_prob"] == prob and r["_t"] == k and r[col_hamming_b] is not None]
+                    if ha and hb:
+                        hk_rows.append((f"{prob} · {klbl} {k}",
+                                        sum(ha) / len(ha), sum(hb) / len(hb)))
+
+            html_hk = ""
+            if hk_rows:
+                html_hk = '<table style="border-collapse:collapse;margin-bottom:16px;">'
+                html_hk += (f'<thead><tr>'
+                            f'<th style="{s_th}color:#333;text-align:left;">Hamming / K</th>'
+                            f'<th style="{s_th}color:{COLOR_A};">{label_a}</th>'
+                            f'<th style="{s_th}color:{COLOR_B};">{label_b}</th>'
+                            f'</tr></thead><tbody>')
+                for lbl, va, vb in hk_rows:
+                    html_hk += (f'<tr><td style="{s_td0}">{lbl}</td>'
+                                f'<td style="{s_td}color:{COLOR_A};">{va:.1f}</td>'
+                                f'<td style="{s_td}color:{COLOR_B};">{vb:.1f}</td></tr>')
+                html_hk += "</tbody></table>"
+
+            if html_hk:
+                st.markdown(
+                    '<div style="display:flex;gap:56px;flex-wrap:wrap;align-items:flex-start;">'
+                    + html_stats + html_hk + "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(html_stats, unsafe_allow_html=True)
 
             _PROB_ORDER_C = {"NK": 0, "NK3": 1, "QUBO": 2}
             summary_rows.sort(key=lambda r: (_PROB_ORDER_C.get(r["_prob"], 99), r["_dim"], r["_t"]))
@@ -1592,61 +1783,107 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
     for cfg in configs:
         st.caption(f"{config_shorts[cfg]} = {_fav_lbl(cfg)}")
 
-    mc = st.columns(max(len(configs) * 2, 1))
-    for ci, cfg in enumerate(configs):
+    # Ligne 1 : Rank moy + Top 1 côte à côte, par config
+    for cfg in configs:
         lbl   = _fav_lbl(cfg)
         short = config_shorts[cfg]
         ranks = [r[f"Rang {short}"] for r in summary_rows if r.get(f"Rang {short}") is not None]
         top1  = sum(1 for r in summary_rows if r.get(f"Rang {short}") == 1)
-        mc[ci * 2].metric(f"Rank moy — {lbl}", f"{sum(ranks)/len(ranks):.1f}" if ranks else "—")
-        mc[ci * 2 + 1].metric(f"Top 1 — {lbl}", top1)
+        mc1, mc2 = st.columns(2)
+        mc1.metric(f"Rank moy — {lbl}", f"{sum(ranks)/len(ranks):.1f}" if ranks else "—")
+        mc2.metric(f"Top 1 — {lbl}", top1)
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Hamming / L1 moyens par dimension (64 / 128 / 256) ────────────────────
-    h_th_l = "padding:6px 22px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:17px;"
-    h_th   = "padding:6px 22px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:17px;"
-    h_td_l = "padding:6px 22px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:16px;"
-    h_td_r = "padding:6px 22px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:16px;text-align:right;"
+    h_th_l = "padding:8px 20px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
+    h_th   = "padding:8px 20px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
+    h_td_l = "padding:7px 20px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;"
+    h_td_r = "padding:7px 20px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;text-align:right;"
 
-    def _dim_table(title: str, prefix: str, fmt: str) -> None:
-        dims_present = [
-            d for d in [64, 128, 256]
-            if any(r["_dim"] == d and any(r.get(f"{prefix}{config_shorts[cfg]}") is not None for cfg in configs)
-                   for r in summary_rows)
-        ]
-        if not dims_present:
-            return
-        st.markdown(f"**{title}**")
-        html = '<table style="border-collapse:collapse;margin-bottom:16px;"><thead><tr>'
-        html += f'<th style="{h_th_l}">Dim</th>'
+    _tbl_title = "font-weight:bold;font-size:17px;margin-bottom:4px;"
+
+    def _table_html(title: str, first_hdr: str, row_defs: list) -> str:
+        """row_defs = [(label, [cell_str_par_config])] ; renvoie titre + table, ou ''."""
+        if not row_defs:
+            return ""
+        html = f'<div style="{_tbl_title}">{title}</div>'
+        html += '<table style="border-collapse:collapse;margin-bottom:4px;"><thead><tr>'
+        html += f'<th style="{h_th_l}">{first_hdr}</th>'
         for cfg in configs:
             html += f'<th style="{h_th}">{config_shorts[cfg]}</th>'
         html += "</tr></thead><tbody>"
-        for dim in dims_present:
-            html += f'<tr><td style="{h_td_l}">DIM {dim}</td>'
+        for label, cells in row_defs:
+            html += f'<tr><td style="{h_td_l}">{label}</td>'
+            for cell in cells:
+                html += f'<td style="{h_td_r}">{cell}</td>'
+            html += "</tr>"
+        html += "</tbody></table>"
+        return f'<div>{html}</div>'
+
+    def _dim_html(title: str, prefix: str, fmt: str) -> str:
+        rows = []
+        for dim in [64, 128, 256]:
+            cells, has = [], False
             for cfg in configs:
                 short = config_shorts[cfg]
                 vals = [r[f"{prefix}{short}"] for r in summary_rows
                         if r["_dim"] == dim and r.get(f"{prefix}{short}") is not None]
-                cell = format(sum(vals) / len(vals), fmt) if vals else ""
-                html += f'<td style="{h_td_r}">{cell}</td>'
-            html += "</tr>"
-        html += "</tbody></table>"
-        st.markdown(html, unsafe_allow_html=True)
+                if vals:
+                    has = True
+                cells.append(format(sum(vals) / len(vals), fmt) if vals else "")
+            if has:
+                rows.append((f"DIM {dim}", cells))
+        return _table_html(title, "Dim", rows)
 
-    _dim_table("Hamming moyen par dimension", "_ham_", ".1f")
-    _dim_table("L1 moyen par dimension",      "_l1_",  ".2f")
+    def _k_html(title: str, prefix: str, fmt: str, prob: str) -> str:
+        klbl = "t" if prob == "QUBO" else "K"
+        rows = []
+        for k in sorted({r["_t"] for r in summary_rows if r["_prob"] == prob}):
+            cells, has = [], False
+            for cfg in configs:
+                short = config_shorts[cfg]
+                vals = [r[f"{prefix}{short}"] for r in summary_rows
+                        if r["_prob"] == prob and r["_t"] == k and r.get(f"{prefix}{short}") is not None]
+                if vals:
+                    has = True
+                cells.append(format(sum(vals) / len(vals), fmt) if vals else "")
+            if has:
+                rows.append((f"{klbl} {k}", cells))
+        return _table_html(title, klbl, rows)
 
-    col_cfg_display: dict = {}
+    _sep = ('<div style="align-self:stretch;border-left:3px solid #2ca02c;'
+            'margin:0 4px;"></div>')
+
+    def _flex_groups(groups: list) -> None:
+        # groups = liste de listes de fragments HTML ; séparateur vert entre groupes
+        clean = [[f for f in g if f] for g in groups]
+        clean = [g for g in clean if g]
+        if not clean:
+            return
+        inner = _sep.join("".join(g) for g in clean)
+        st.markdown(
+            '<div style="display:flex;gap:56px;flex-wrap:wrap;align-items:flex-start;'
+            'margin-bottom:22px;">' + inner + "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Tous les tableaux sur une ligne, séparateur vert entre chaque type
+    _flex_groups([
+        [_dim_html("Hamming moyen / dim", "_ham_", ".1f"),
+         _dim_html("L1 moyen / dim",      "_l1_",  ".2f")],
+        [_k_html(f"Hamming / K — {p}", "_ham_", ".1f", p) for p in ["NK", "NK3", "QUBO"]],
+        [_k_html(f"L1 / K — {p}",      "_l1_",  ".2f", p) for p in ["NK", "NK3", "QUBO"]],
+    ])
+
+    # Un tableau HTML par problème — colonnes Score / Rang / Hamming par config
+    col_specs: list[tuple[str, str, str]] = []  # (entête, clé, type)
     for cfg in configs:
-        short = config_shorts[cfg]
-        col_cfg_display[f"Score {short}"] = st.column_config.NumberColumn(f"Score {short}", format="%.4f")
-        col_cfg_display[f"Rang {short}"]  = st.column_config.NumberColumn(f"Rang {short}",  format="%d")
+        s = config_shorts[cfg]
+        col_specs.append((f"Score {s}",   f"Score {s}",  "score"))
+        col_specs.append((f"Rang {s}",    f"Rang {s}",   "rank"))
+        col_specs.append((f"Hamming {s}", f"_ham_{s}",   "ham"))
 
-    # Colonnes d'affichage (sans les clés internes de tri)
-    data_cols = [c for c in (next(iter(summary_rows), {}) or {}).keys() if not c.startswith("_")]
-
-    # Un tableau HTML par problème — autosize natif du browser
-    score_rang_cols = [c for c in data_cols if c != "Instance"]
     th = "padding:8px 28px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
     th_l = "padding:8px 28px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
     td_l = "padding:7px 28px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;"
@@ -1661,11 +1898,11 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
         with col_widget:
             st.markdown(f"##### {prob}")
 
-            ncols = 1 + len(score_rang_cols)
+            ncols = 1 + len(col_specs)
             html = '<table style="border-collapse:collapse;">'
             html += f'<thead><tr><th style="{th_l}">Instance</th>'
-            for col in score_rang_cols:
-                html += f'<th style="{th}">{col}</th>'
+            for hdr, _, _ in col_specs:
+                html += f'<th style="{th}">{hdr}</th>'
             html += "</tr></thead><tbody>"
 
             current_dim = None
@@ -1674,19 +1911,387 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     current_dim = r["_dim"]
                     html += f'<tr><td colspan="{ncols}" style="{td_sep}">DIM {current_dim}</td></tr>'
                 html += f'<tr><td style="{td_l}">{r["Instance"]}</td>'
-                for col in score_rang_cols:
-                    val = r.get(col)
+                for _, key, kind in col_specs:
+                    val = r.get(key)
                     if val is None:
                         cell = ""
-                    elif "Score" in col:
+                    elif kind == "score":
                         cell = f"{val:.4f}"
-                    else:
+                    elif kind == "rank":
                         cell = str(int(val))
+                    else:  # ham
+                        cell = f"{val:.2f}"
                     html += f'<td style="{td_r}">{cell}</td>'
                 html += "</tr>"
 
             html += "</tbody></table>"
             st.markdown(html, unsafe_allow_html=True)
+
+    # ── Courbes ──────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### 📈 Courbes")
+
+    o1, o2, o3 = st.columns(3)
+    fav_top5    = o1.checkbox("Concurrents top 5 (courbes + boxplot)", value=True, key=f"fav_top5_{sel_idx}")
+    fav_hamming = o2.checkbox("Hamming (diversité)",     value=True,  key=f"fav_ham_{sel_idx}")
+    fav_box     = o3.checkbox("Distribution finale",     value=True,  key=f"fav_box_{sel_idx}")
+
+    # Sélecteur d'instance — colonne par problème, sous-groupe par dimension
+    st.markdown("**Instance à visualiser**")
+    st.markdown(
+        "<style>"
+        '[data-testid="stPills"] button,'
+        '[data-testid="stBaseButton-pills"],'
+        '[data-testid="stBaseButton-pillsActive"]{'
+        'padding:0.4rem 0.95rem !important;border-radius:10px !important;'
+        'min-height:2.2rem !important;}'
+        '[data-testid="stPills"] button p,'
+        '[data-testid="stBaseButton-pills"] p,'
+        '[data-testid="stBaseButton-pillsActive"] p{'
+        'font-size:1.15rem !important;font-weight:600 !important;}'
+        ".fav-curve-hdr{font-size:1.5rem;font-weight:700;margin:6px 0 2px;}"
+        ".fav-curve-dim{font-size:1.2rem;font-weight:600;color:#555;margin:10px 0 2px;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    _iprob = lambda i: INSTANCE_RE.match(i).group("problem")
+    _idim  = lambda i: int(INSTANCE_RE.match(i).group("dim"))
+    _it    = lambda i: int(INSTANCE_RE.match(i).group("t"))
+    probs_curve = [p for p in ["NK", "NK3", "QUBO"] if any(_iprob(i) == p for i in instances)]
+    sel_key = f"fav_curve_sel_{sel_idx}"
+
+    # toutes les clés de puces, connues d'avance → utilisables dans le callback
+    all_pick_keys = [
+        f"fav_curve_pick_{sel_idx}_{p}_{d}"
+        for p in probs_curve
+        for d in sorted({_idim(i) for i in instances if _iprob(i) == p})
+    ]
+
+    def _fav_pick_cb(changed: str):
+        v = st.session_state.get(changed)
+        st.session_state[sel_key] = v or None
+        if v:                                   # un clic sélectionne → vide les autres groupes
+            for k in all_pick_keys:
+                if k != changed:
+                    st.session_state[k] = None
+
+    for pcol, p in zip(st.columns(len(probs_curve), gap="large"), probs_curve):
+        with pcol:
+            st.markdown(f'<div class="fav-curve-hdr">{p}</div>', unsafe_allow_html=True)
+            _plbl = "t" if p == "QUBO" else "K"
+            p_insts = [i for i in instances if _iprob(i) == p]
+            for d in sorted({_idim(i) for i in p_insts}):
+                d_insts = sorted((i for i in p_insts if _idim(i) == d), key=_it)
+                wkey = f"fav_curve_pick_{sel_idx}_{p}_{d}"
+                st.markdown(f'<div class="fav-curve-dim">DIM {d}</div>', unsafe_allow_html=True)
+                st.pills(
+                    wkey, d_insts, selection_mode="single", key=wkey,
+                    format_func=lambda i, _l=_plbl: f"{_l}{_it(i)}",
+                    on_change=_fav_pick_cb, args=(wkey,),
+                    label_visibility="collapsed",
+                )
+
+    sel_curve_inst = st.session_state.get(sel_key)
+    if not sel_curve_inst:
+        st.info("Sélectionnez une instance ci-dessus pour afficher ses courbes.")
+        return
+
+    # ── Placement dans le classement global (cf. build_global_ranking_lines) ──
+    _ACCENT = "#2ca02c"
+
+    def _ranking_html(our_score: float, rk_df: pd.DataFrame, label: str) -> str:
+        entries = [(str(n), float(s)) for n, s in zip(rk_df["name_algo"], rk_df["score"])]
+        entries.append(("__OURS__", our_score))
+        entries.sort(key=lambda x: x[1], reverse=True)
+        our   = next(i for i, (n, _) in enumerate(entries) if n == "__OURS__")
+        total = len(entries)
+        if our == 0:                                  # on est #1 → avance sur #2
+            gap_txt = f"{our_score - entries[1][1]:+.4f} vs #2" if total > 1 else ""
+        else:                                         # sinon → retard sur #1
+            gap_txt = f"{our_score - entries[0][1]:+.4f} vs #1"
+
+        head = list(range(min(4, total)))
+        tail = [i for i in (our - 1, our, our + 1) if 0 <= i < total and i not in head]
+        show, prev = [], None
+        for i in head + tail:
+            if prev is not None and i > prev + 1:
+                show.append(None)          # séparateur "⋯"
+            show.append(i)
+            prev = i
+
+        th  = ("padding:5px 14px;font-size:13px;font-weight:700;color:#888;"
+               "text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid #e0e0e0;")
+        td  = "padding:6px 14px;font-size:16px;border-bottom:1px solid #f0f0f0;"
+        tdn = td + "white-space:nowrap;"                     # # et score : pas de retour
+        tdr = tdn + "text-align:right;font-variant-numeric:tabular-nums;"
+        td  = td + "word-break:break-word;line-height:1.25;"  # nom : peut passer à la ligne
+
+        rows = ""
+        for i in show:
+            if i is None:
+                rows += (f'<tr><td colspan="3" style="{tdn}text-align:center;color:#bbb;">⋯</td></tr>')
+                continue
+            name, score = entries[i]
+            mine = (i == our)
+            disp = "Nous" if mine else name
+            rstyle = (f'background:rgba(44,160,44,.12);' if mine else "")
+            nstyle = (f'color:{_ACCENT};font-weight:800;' if mine else "font-weight:500;")
+            marker = f'<span style="color:{_ACCENT};font-weight:800;">▸ </span>' if mine else ""
+            rows += (
+                f'<tr style="{rstyle}">'
+                f'<td style="{tdn}color:#999;">{marker}#{i + 1}</td>'
+                f'<td style="{td}{nstyle}">{disp}</td>'
+                f'<td style="{tdr}{nstyle}">{score:.4f}</td>'
+                f"</tr>"
+            )
+
+        return (
+            f'<div style="border:1px solid #e6e6e6;border-radius:12px;overflow:hidden;">'
+            f'<div style="padding:10px 14px;background:#fafafa;border-bottom:1px solid #eee;">'
+            f'<div style="font-weight:700;font-size:15px;">{label}</div>'
+            f'<div style="font-size:15px;margin-top:2px;">'
+            f'rang <b style="color:{_ACCENT};font-size:19px;">{our + 1}</b>'
+            f'<span style="color:#999;"> / {total}</span>'
+            f'&nbsp;&nbsp;·&nbsp;&nbsp;score <b>{our_score:.4f}</b>'
+            + (f'<span style="color:#999;"> ({gap_txt})</span>' if gap_txt else "")
+            + f"</div></div>"
+            f'<table style="border-collapse:collapse;width:100%;">'
+            f'<thead><tr><th style="{th}">#</th><th style="{th}">Algorithme</th>'
+            f'<th style="{th}text-align:right;">Score</th></tr></thead>'
+            f"<tbody>{rows}</tbody></table></div>"
+        )
+
+    _rm = INSTANCE_RE.match(sel_curve_inst)
+    _rk_df = load_ranking(_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")))
+    if _rk_df is not None and not _rk_df.empty:
+        st.markdown(f"##### 🏅 Placement — {sel_curve_inst}")
+        _frags = []
+        for _cfg in configs:
+            _cv = load_curve(_cfg, sel_curve_inst)
+            if _cv is None or _cv.empty:
+                continue
+            _our = abs(float(_cv["best_fitness"].iloc[-1]))
+            _frags.append(_ranking_html(_our, _rk_df, _fav_lbl(_cfg)))
+        if _frags:
+            st.markdown(
+                '<div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;'
+                'margin-bottom:14px;">'
+                + "".join(f'<div style="flex:1 1 420px;max-width:560px;min-width:320px;">{f}</div>' for f in _frags)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
+    for instance in [sel_curve_inst]:
+        with st.container():
+            with st.container():
+
+                m_i = INSTANCE_RE.match(instance)
+                prob, dim, t = m_i.group("problem"), int(m_i.group("dim")), int(m_i.group("t"))
+
+                curves  = {cfg: load_curve(cfg, instance) for cfg in configs}
+                scores  = {cfg: load_raw_scores(cfg, instance) for cfg in configs} if fav_box else {}
+
+                top5 = []
+                comp_curves: dict = {}   # algo -> (x, y)
+                comp_boxes:  dict = {}   # algo -> stats dict
+                if fav_top5:
+                    ranking = load_ranking(prob, dim, t)
+                    if ranking is not None:
+                        for _, rk in ranking.nlargest(5, "score").iterrows():
+                            algo = rk["name_algo"]
+                            top5.append((algo, float(rk["score"])))
+                            cc = load_competitor_curve(algo, prob, dim, t)
+                            if cc is not None:
+                                comp_curves[algo] = cc
+                            if fav_box:
+                                cb = load_competitor_box(algo, prob, dim, t)
+                                if cb is not None:
+                                    comp_boxes[algo] = cb
+
+                has_curve   = any(c is not None for c in curves.values())
+                has_hamming = fav_hamming and any(
+                    c is not None and "avg_hamming" in c.columns for c in curves.values()
+                )
+                has_box     = fav_box and (
+                    any(s is not None for s in scores.values()) or bool(comp_boxes)
+                )
+
+                if not has_curve and not has_hamming and not has_box:
+                    st.warning("Pas de données pour cette instance.")
+                    continue
+
+                row_idx = 1
+                curve_row = hamming_row = box_row = None
+                if has_curve:
+                    curve_row = row_idx; row_idx += 1
+                if has_hamming:
+                    hamming_row = row_idx; row_idx += 1
+                if has_box:
+                    box_row = row_idx; row_idx += 1
+                n_rows = row_idx - 1
+
+                titles = (
+                    (["Convergence"]         if has_curve   else []) +
+                    (["Hamming (diversité)"] if has_hamming else []) +
+                    (["Distribution finale"] if has_box     else [])
+                )
+                row_heights = (
+                    [0.40, 0.25, 0.35] if n_rows == 3 else
+                    [0.60, 0.40]       if n_rows == 2 else
+                    [1.0]
+                )
+
+                fig = make_subplots(
+                    rows=n_rows, cols=1, subplot_titles=titles,
+                    row_heights=row_heights, vertical_spacing=0.10,
+                )
+
+                ref = next((c for c in curves.values() if c is not None), None)
+
+                if has_curve:
+                    for i, cfg in enumerate(configs):
+                        curve = curves[cfg]
+                        if curve is None:
+                            continue
+                        fig.add_trace(go.Scatter(
+                            x=curve["step"], y=_norm(curve["best_fitness"]),
+                            name=_fav_lbl(cfg),
+                            line=dict(color=COLORS[i % len(COLORS)], width=2),
+                            mode="lines",
+                        ), row=curve_row, col=1)
+                    for j, (algo, score) in enumerate(top5):
+                        ccol = COLORS[(len(configs) + j) % len(COLORS)]
+                        cc = comp_curves.get(algo)
+                        if cc is not None:
+                            cx, cy = cc
+                            fig.add_trace(go.Scatter(
+                                x=cx, y=cy, name=algo, mode="lines",
+                                line=dict(dash="dash", color=ccol, width=1.5),
+                                opacity=0.9,
+                            ), row=curve_row, col=1)
+                        elif ref is not None:
+                            fig.add_trace(go.Scatter(
+                                x=[ref["step"].iloc[0], ref["step"].iloc[-1]], y=[score, score],
+                                name=algo, mode="lines",
+                                line=dict(dash="dot", color=ccol, width=1),
+                            ), row=curve_row, col=1)
+                    fig.update_xaxes(title_text="Évaluations", row=curve_row, col=1)
+                    fig.update_yaxes(title_text="Score",       row=curve_row, col=1)
+
+                if has_hamming:
+                    for i, cfg in enumerate(configs):
+                        curve = curves[cfg]
+                        if curve is None or "avg_hamming" not in curve.columns:
+                            continue
+                        fig.add_trace(go.Scatter(
+                            x=curve["step"], y=curve["avg_hamming"],
+                            name=_fav_lbl(cfg),
+                            line=dict(color=COLORS[i % len(COLORS)], width=2, dash="dot"),
+                            mode="lines", showlegend=False,
+                        ), row=hamming_row, col=1)
+                    fig.update_xaxes(title_text="Évaluations",  row=hamming_row, col=1)
+                    fig.update_yaxes(title_text="Hamming moy.", row=hamming_row, col=1)
+
+                if has_box:
+                    for i, cfg in enumerate(configs):
+                        s = scores.get(cfg)
+                        if s is None:
+                            continue
+                        lbl = _fav_lbl(cfg)
+                        fig.add_trace(go.Box(
+                            y=s, x=[lbl] * len(s), name=lbl,
+                            marker_color=COLORS[i % len(COLORS)],
+                            boxpoints="outliers", showlegend=False,
+                        ), row=box_row, col=1)
+                    for j, (algo, score) in enumerate(top5):
+                        st_ = comp_boxes.get(algo)
+                        ccol = COLORS[(len(configs) + j) % len(COLORS)]
+                        if st_ is not None:
+                            fig.add_trace(go.Box(
+                                x=[algo], name=algo, marker_color=ccol, showlegend=False,
+                                lowerfence=[st_["low"]], q1=[st_["q1"]], median=[st_["med"]],
+                                q3=[st_["q3"]], upperfence=[st_["high"]],
+                                mean=[st_["mean"]] if "mean" in st_ else None,
+                            ), row=box_row, col=1)
+                        else:
+                            fig.add_hline(
+                                y=score, row=box_row, col=1,
+                                line=dict(dash="dot", color=ccol, width=1),
+                                annotation_text=algo, annotation_position="bottom right",
+                            )
+                    fig.update_xaxes(type="category", row=box_row, col=1)
+                    fig.update_yaxes(title_text="Score final", row=box_row, col=1)
+
+                fig.update_layout(
+                    height={3: 960, 2: 720, 1: 440}.get(n_rows, 720),
+                    margin=dict(r=100, t=40, b=10),
+                    legend=dict(orientation="v", x=1.02, y=1),
+                )
+                st.plotly_chart(fig, use_container_width=True, key=f"fav_fig_{sel_idx}_{instance}")
+
+    # ── Agents : génotype final / Hamming pairwise / moment de rencontre ─────
+    st.divider()
+    st.markdown("#### 🧬 Agents — génotype final & rencontre du meilleur")
+
+    _dcfg = st.pills(
+        "Config", configs, selection_mode="single", format_func=_fav_lbl,
+        default=configs[0] if configs else None, key=f"fav_dbg_cfg_{sel_idx}",
+    )
+    if _dcfg:
+        dbg = load_agent_debug(_dcfg)
+        gkey = f"{sel_curve_inst}/genotype"
+        if not dbg or gkey not in dbg:
+            st.info("Pas de `agent_debug.npz` pour cette config / instance — "
+                    "relancer le grid-search (collecte debug activée dans main_expe_overall).")
+        else:
+            geno = dbg[gkey]                              # (nb_inst, A, N)
+            epo  = dbg[f"{sel_curve_inst}/epoch"]         # (nb_inst, A)
+            sco  = dbg[f"{sel_curve_inst}/score"]         # (nb_inst, A)
+            nb_inst, nb_restarts, size_pop, N_, A_ = (int(x) for x in dbg[f"{sel_curve_inst}/meta"])
+
+            ti = 0
+            if geno.shape[0] > 1:
+                ti = st.slider("Instance de test", 0, geno.shape[0] - 1, 0,
+                               key=f"fav_dbg_ti_{sel_idx}",
+                               help=f"agrégé sur {nb_restarts} restarts (vote majoritaire)")
+
+            g = geno[ti]                                  # (A, N)
+            agents = [f"A{a}" for a in range(g.shape[0])]
+
+            gc, hc = st.columns([3, 2])
+            with gc:
+                fig_g = go.Figure(go.Heatmap(
+                    z=g, x=list(range(g.shape[1])), y=agents,
+                    colorscale="Blues", zmin=0, zmax=max(1, int(g.max())), showscale=False,
+                ))
+                fig_g.update_layout(
+                    title="Génotype final par agent", xaxis_title="Position",
+                    height=320, margin=dict(l=10, r=10, t=40, b=10),
+                )
+                st.plotly_chart(fig_g, use_container_width=True, key=f"fav_dbg_g_{sel_idx}")
+            with hc:
+                H = (g[:, None, :] != g[None, :, :]).sum(-1)
+                fig_h = go.Figure(go.Heatmap(
+                    z=H, x=agents, y=agents, colorscale="Reds",
+                    text=H, texttemplate="%{text}", showscale=False,
+                ))
+                fig_h.update_layout(
+                    title="Hamming pairwise (solutions finales)",
+                    height=320, margin=dict(l=10, r=10, t=40, b=10),
+                )
+                st.plotly_chart(fig_h, use_container_width=True, key=f"fav_dbg_h_{sel_idx}")
+
+            ev = epo[ti] * max(1, size_pop)
+            fig_e = go.Figure(go.Bar(
+                x=agents, y=ev, marker_color=COLORS[1],
+                text=[f"{s:.4f}" for s in sco[ti]], textposition="outside",
+            ))
+            fig_e.update_layout(
+                title="Moment où chaque agent atteint son meilleur (≈ évaluations)",
+                yaxis_title="Évaluations", height=300,
+                margin=dict(l=10, r=10, t=40, b=30),
+            )
+            st.plotly_chart(fig_e, use_container_width=True, key=f"fav_dbg_e_{sel_idx}")
 
 
 # ── App ───────────────────────────────────────────────────────────────────────

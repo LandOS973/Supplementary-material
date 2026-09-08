@@ -485,6 +485,7 @@ def _run_once(
             device,
             False,
             enable_visualization=False,
+            collect_debug_metrics=True,
             return_history=True,
         )
     else:
@@ -514,6 +515,7 @@ def _run_once(
             device,
             False,
             enable_visualization=False,
+            collect_debug_metrics=True,
             return_history=True,
         )
 
@@ -629,6 +631,55 @@ def _save_raw_scores_csv(out_dir, scores_array):
         f.write("score\n")
         for val in scores_array:
             f.write(f"{float(val)}\n")
+
+
+def _mode_over_restarts(geno, nb_restarts):
+    """geno (I, A, N) uint8 instance-major -> (nb_inst, A, N) vote majoritaire sur les restarts."""
+    I, A, N = geno.shape
+    nb_inst = max(1, I // max(1, nb_restarts))
+    g = geno[: nb_inst * nb_restarts].reshape(nb_inst, nb_restarts, A, N)
+    V = int(g.max()) + 1 if g.size else 1
+    if V <= 1:
+        return g[:, 0].astype(np.uint8)
+    onehot = (g[..., None] == np.arange(V)).astype(np.int16)      # (nb_inst, R, A, N, V)
+    return onehot.sum(axis=1).argmax(axis=-1).astype(np.uint8)     # (nb_inst, A, N)
+
+
+def _save_agent_debug_npz(config_dir, entries):
+    """entries: {inst_name: (history, nb_restarts)}. Un seul .npz par config, fusionné si existant."""
+    path = os.path.join(config_dir, "agent_debug.npz")
+    data = {}
+    if os.path.exists(path):
+        try:
+            with np.load(path, allow_pickle=False) as old:
+                data = {k: old[k] for k in old.files}
+        except Exception:
+            data = {}
+    wrote = False
+    for inst_name, (history, nb_restarts) in entries.items():
+        geno = history.get("agent_best_genotype")
+        if geno is None:
+            continue
+        geno = np.asarray(geno)
+        ep = np.asarray(history["agent_best_epoch"], dtype=np.float64)
+        sc = np.asarray(history["agent_best_score"], dtype=np.float64)
+        size_pop = int(history.get("agent_size_pop", 0))
+        I, A, N = geno.shape
+        nb_restarts = max(1, int(nb_restarts))
+        nb_inst = max(1, I // nb_restarts)
+        n = nb_inst * nb_restarts
+        data[f"{inst_name}/genotype"] = _mode_over_restarts(geno, nb_restarts)
+        data[f"{inst_name}/epoch"] = np.median(
+            ep[:n].reshape(nb_inst, nb_restarts, A), axis=1
+        )                                                             # (nb_inst, A)
+        data[f"{inst_name}/score"] = sc[:n].reshape(nb_inst, nb_restarts, A).mean(axis=1)
+        data[f"{inst_name}/meta"] = np.array(
+            [nb_inst, nb_restarts, size_pop, N, A], dtype=np.int64
+        )
+        wrote = True
+    if wrote:
+        Path(config_dir).mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(path, **data)
 
 
 def _parse_summary_config(summary_path: Path):
@@ -1017,6 +1068,7 @@ def main():
             print(f"[CONFIG {config_idx}/{total_configs}] {config_name}")
 
             pending_instances = list(instances)
+            debug_entries = {}
 
             qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO']
             nk_pending = [inst for inst in pending_instances if inst['name'] == 'NK']
@@ -1078,6 +1130,8 @@ def main():
                     config_name=config_name,
                 )
                 _save_raw_scores_csv(inst_dir, scores_array)
+                if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
+                    debug_entries[inst_name] = (history, nb_restarts)
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
 
@@ -1137,6 +1191,8 @@ def main():
                     config_name=config_name,
                 )
                 _save_raw_scores_csv(inst_dir, scores_array)
+                if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
+                    debug_entries[inst_name] = (history, nb_restarts)
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
 
@@ -1196,8 +1252,16 @@ def main():
                     config_name=config_name,
                 )
                 _save_raw_scores_csv(inst_dir, scores_array)
+                if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
+                    debug_entries[inst_name] = (history, nb_restarts)
                 if ranking and ranking[2] == 1:
                     print("     -> TOP 1")
+
+            if debug_entries:
+                try:
+                    _save_agent_debug_npz(config_dir, debug_entries)
+                except Exception as exc:
+                    print(f"  [WARN] agent_debug.npz non écrit: {exc}")
 
             stats = _collect_config_stats(config_dir, config_name, params, repo_root)
             print(f"\n  *** SUMMARY FOR CONFIG: {config_name} ***")

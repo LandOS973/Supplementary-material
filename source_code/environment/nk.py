@@ -589,6 +589,26 @@ def get_Score_trajectoriesNK_cuda(
             score_p95=score_p95_history,
             score_p98=score_p98_history,
         )
+        if (
+            collect_debug_metrics
+            and agent_best_solution is not None
+            and agent_best_epoch is not None
+            and agent_best_overall is not None
+        ):
+            with torch.no_grad():
+                history["agent_best_genotype"] = (
+                    torch.stack(agent_best_solution, dim=1)
+                    .round().clamp_(0, 255).to(torch.uint8).cpu().numpy()
+                )                                                          # (I, A, N)
+                history["agent_best_epoch"] = (
+                    torch.stack(agent_best_epoch, dim=1).cpu().numpy()
+                )                                                          # (I, A)
+                history["agent_best_score"] = np.stack(
+                    [(-agent_best_overall[a].detach().cpu().numpy() / N)
+                     for a in range(len(agent_best_overall))],
+                    axis=1,
+                )                                                          # (I, A)
+            history["agent_size_pop"] = int(size_pop)
         return -bestScore_np, history
 
     return -bestScore_np
