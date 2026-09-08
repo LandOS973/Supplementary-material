@@ -20,7 +20,6 @@ from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
 from environment.nasbench import get_Score_trajectories_nasbench_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
-from environment.tsne_agents import plot_agents_tsne
 from main_viennarna import (
     DEFAULT_TARGET_NAME,
     DEFAULT_TARGET_STRUCT,
@@ -428,21 +427,6 @@ def main(cfg: DictConfig):
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
     print_global_ranking(repo_root, type_problem, dim, type_instance, avg)
-
-    if not is_nasbench and type_problem_upper != "VIENNARNA":
-        try:
-            plot_agents_tsne(
-                strategy,
-                output_path=os.path.join(os.getcwd(), "agents_tsne.png"),
-                perplexity=None,
-                random_state=0,
-            )
-        except ValueError as exc:
-            print(f"[WARN] t-SNE agents skipped: {exc}")
-    elif is_nasbench:
-        print("[INFO] t-SNE skipped for nasbench (categorical variables).")
-    else:
-        print("[INFO] t-SNE skipped for ViennaRNA.")
 
 
 if __name__ == "__main__":

@@ -485,6 +485,74 @@ def load_competitor_curve(algo: str, problem: str, dim: int, t: int):
         return None
 
 
+_CMP_I_RE = re.compile(r"_i_(\d+)_r_\d+")
+
+
+@st.cache_data(show_spinner=False)
+def load_competitor_instance_curve(algo: str, problem: str, dim: int, t: int, ti: int):
+    """(x, y) courbe du concurrent sur la SEULE instance de test `ti` (moyenne sur ses restarts).
+    None si pas de trajectoires par-run (dossier avec seulement mean_curve)."""
+    if not _COMPETITORS_OK:
+        return None
+    try:
+        paths, has_header = _cmp_find(algo, dim, t, problem)
+    except Exception:
+        return None
+    sel = [p for p in paths
+           if (_m := _CMP_I_RE.search(Path(p).name)) and int(_m.group(1)) == ti]
+    if not sel:
+        return None
+    sums: dict[float, float] = {}
+    counts: dict[float, int] = {}
+    for p in sel:
+        try:
+            xs, ys = _cmp_xy(Path(p), has_header=has_header, x_key="runtime", y_key="score")
+        except Exception:
+            continue
+        for x, y in zip(xs, ys):
+            sums[x] = sums.get(x, 0.0) + y
+            counts[x] = counts.get(x, 0) + 1
+    if not sums:
+        return None
+    xs = sorted(sums)
+    ys = [sums[x] / counts[x] for x in xs]
+    xs, ys = _cmp_clip(list(xs), list(ys), max_budget=_COMPETITOR_BUDGET)
+    if not xs:
+        return None
+    return list(xs), _cmp_signfix(problem, list(ys))
+
+
+@st.cache_data(show_spinner=False)
+def load_competitor_instance_final(algo: str, problem: str, dim: int, t: int, ti: int):
+    """Score final moyen du concurrent sur l'instance de test `ti` (via final_scores_budget_*.csv)."""
+    if not _COMPETITORS_OK:
+        return None
+    try:
+        paths, _ = _cmp_find(algo, dim, t, problem)
+    except Exception:
+        return None
+    for p in paths:
+        p = Path(p)
+        if not p.name.startswith("mean_curve_budget_"):
+            continue
+        fs = p.parent / f"final_scores_budget_{_COMPETITOR_BUDGET}.csv"
+        if not fs.exists():
+            continue
+        vals = []
+        try:
+            with fs.open(newline="") as fh:
+                for row in _csv.DictReader(fh):
+                    if str(row.get("instance", "")).strip() == str(ti):
+                        sc = _cmp_pf((row.get("score") or "").strip())
+                        if sc is not None:
+                            vals.append(sc)
+        except OSError:
+            continue
+        if vals:
+            return _cmp_signfix(problem, [sum(vals) / len(vals)])[0]
+    return None
+
+
 @st.cache_data(show_spinner=False)
 def load_competitor_box(algo: str, problem: str, dim: int, t: int):
     """Stats quantiles finales d'un concurrent : {low,q1,med,q3,high,mean} ou None."""
@@ -494,18 +562,25 @@ def load_competitor_box(algo: str, problem: str, dim: int, t: int):
         paths, has_header = _cmp_find(algo, dim, t, problem)
     except Exception:
         return None
+    stats = None
     try:
         if has_header:
             stats = _cmp_qstats(paths, problem_name=problem)
-            if stats:
-                return stats
     except Exception:
-        pass
-    raw = _cmp_final_stats(paths, _COMPETITOR_BUDGET)
-    try:
-        return _cmp_normbox(problem, raw) if raw else None
-    except Exception:
-        return raw
+        stats = None
+    if not stats:
+        raw = _cmp_final_stats(paths, _COMPETITOR_BUDGET)
+        if raw:
+            try:
+                stats = _cmp_normbox(problem, raw)
+            except Exception:
+                stats = raw
+    if not stats:
+        return None
+    # boîte dégénérée (1 seule valeur récupérée) → pas de boxplot exploitable
+    if abs(float(stats["high"]) - float(stats["low"])) < 1e-9:
+        return None
+    return stats
 
 
 def _config_label(row: pd.Series) -> str:
@@ -2010,7 +2085,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
         else:                                         # sinon → retard sur #1
             gap_txt = f"{our_score - entries[0][1]:+.4f} vs #1"
 
-        head = list(range(min(4, total)))
+        head = list(range(min(12, total)))
         tail = [i for i in (our - 1, our, our + 1) if 0 <= i < total and i not in head]
         show, prev = [], None
         for i in head + tail:
@@ -2019,9 +2094,9 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             show.append(i)
             prev = i
 
-        th  = ("padding:5px 14px;font-size:13px;font-weight:700;color:#888;"
+        th  = ("padding:8px 20px;font-size:15px;font-weight:700;color:#888;"
                "text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid #e0e0e0;")
-        td  = "padding:6px 14px;font-size:16px;border-bottom:1px solid #f0f0f0;"
+        td  = "padding:10px 20px;font-size:19px;border-bottom:1px solid #f0f0f0;"
         tdn = td + "white-space:nowrap;"                     # # et score : pas de retour
         tdr = tdn + "text-align:right;font-variant-numeric:tabular-nums;"
         td  = td + "word-break:break-word;line-height:1.25;"  # nom : peut passer à la ligne
@@ -2046,11 +2121,12 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             )
 
         return (
-            f'<div style="border:1px solid #e6e6e6;border-radius:12px;overflow:hidden;">'
-            f'<div style="padding:10px 14px;background:#fafafa;border-bottom:1px solid #eee;">'
-            f'<div style="font-weight:700;font-size:15px;">{label}</div>'
-            f'<div style="font-size:15px;margin-top:2px;">'
-            f'rang <b style="color:{_ACCENT};font-size:19px;">{our + 1}</b>'
+            f'<div style="border:1px solid #e6e6e6;border-radius:12px;overflow:hidden;'
+            f'margin-bottom:16px;">'
+            f'<div style="padding:12px 20px;background:#fafafa;border-bottom:1px solid #eee;">'
+            f'<div style="font-weight:700;font-size:18px;">{label}</div>'
+            f'<div style="font-size:17px;margin-top:3px;">'
+            f'rang <b style="color:{_ACCENT};font-size:26px;">{our + 1}</b>'
             f'<span style="color:#999;"> / {total}</span>'
             f'&nbsp;&nbsp;·&nbsp;&nbsp;score <b>{our_score:.4f}</b>'
             + (f'<span style="color:#999;"> ({gap_txt})</span>' if gap_txt else "")
@@ -2061,28 +2137,25 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             f"<tbody>{rows}</tbody></table></div>"
         )
 
-    _rm = INSTANCE_RE.match(sel_curve_inst)
-    _rk_df = load_ranking(_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")))
-    if _rk_df is not None and not _rk_df.empty:
-        st.markdown(f"##### 🏅 Placement — {sel_curve_inst}")
-        _frags = []
-        for _cfg in configs:
-            _cv = load_curve(_cfg, sel_curve_inst)
-            if _cv is None or _cv.empty:
-                continue
-            _our = abs(float(_cv["best_fitness"].iloc[-1]))
-            _frags.append(_ranking_html(_our, _rk_df, _fav_lbl(_cfg)))
-        if _frags:
-            st.markdown(
-                '<div style="display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start;'
-                'margin-bottom:14px;">'
-                + "".join(f'<div style="flex:1 1 420px;max-width:560px;min-width:320px;">{f}</div>' for f in _frags)
-                + "</div>",
-                unsafe_allow_html=True,
-            )
-
     for instance in [sel_curve_inst]:
-        with st.container():
+        _pl, _cv = st.columns([3, 7], gap="large")
+
+        with _pl:
+            _rm = INSTANCE_RE.match(instance)
+            _rk_df = load_ranking(_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")))
+            if _rk_df is None or _rk_df.empty:
+                st.caption("Pas de classement pour cette instance.")
+            else:
+                st.markdown(f"##### 🏅 Placement — {instance}")
+                for _cfg in configs:
+                    _cvcur = load_curve(_cfg, instance)
+                    if _cvcur is None or _cvcur.empty:
+                        continue
+                    _our = abs(float(_cvcur["best_fitness"].iloc[-1]))
+                    st.markdown(_ranking_html(_our, _rk_df, _fav_lbl(_cfg)),
+                                unsafe_allow_html=True)
+
+        with _cv:
             with st.container():
 
                 m_i = INSTANCE_RE.match(instance)
@@ -2223,75 +2296,163 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     fig.update_yaxes(title_text="Score final", row=box_row, col=1)
 
                 fig.update_layout(
-                    height={3: 960, 2: 720, 1: 440}.get(n_rows, 720),
-                    margin=dict(r=100, t=40, b=10),
-                    legend=dict(orientation="v", x=1.02, y=1),
+                    height={3: 1240, 2: 880, 1: 520}.get(n_rows, 880),
+                    margin=dict(r=20, t=40, b=10),
+                    legend=dict(orientation="h", yanchor="top", y=-0.12),
                 )
                 st.plotly_chart(fig, use_container_width=True, key=f"fav_fig_{sel_idx}_{instance}")
 
-    # ── Agents : génotype final / Hamming pairwise / moment de rencontre ─────
-    st.divider()
-    st.markdown("#### 🧬 Agents — génotype final & rencontre du meilleur")
+        st.divider()
+        with st.container():
+            st.markdown("#### 🧬 Agents — génotype & rencontre du meilleur")
+            _dcfg = st.pills(
+                "Config", configs, selection_mode="single", format_func=_fav_lbl,
+                default=configs[0] if configs else None, key=f"fav_dbg_cfg_{sel_idx}",
+            )
+            dbg = load_agent_debug(_dcfg) if _dcfg else None
+            gkey = f"{instance}/genotype"
+            if not _dcfg:
+                pass
+            elif not dbg or gkey not in dbg:
+                st.info("Pas de `agent_debug.npz` pour cette config / instance — "
+                        "relancer le grid-search (collecte debug dans main_expe_overall).")
+            else:
+                geno = dbg[gkey]                              # (nb_inst, A, N)
+                epo  = dbg[f"{instance}/epoch"]               # (nb_inst, A)
+                sco  = dbg[f"{instance}/score"]               # (nb_inst, A)
+                nb_i2, nb_r2, size_pop2, N2, A2 = (int(x) for x in dbg[f"{instance}/meta"])
 
-    _dcfg = st.pills(
-        "Config", configs, selection_mode="single", format_func=_fav_lbl,
-        default=configs[0] if configs else None, key=f"fav_dbg_cfg_{sel_idx}",
-    )
-    if _dcfg:
-        dbg = load_agent_debug(_dcfg)
-        gkey = f"{sel_curve_inst}/genotype"
-        if not dbg or gkey not in dbg:
-            st.info("Pas de `agent_debug.npz` pour cette config / instance — "
-                    "relancer le grid-search (collecte debug activée dans main_expe_overall).")
-        else:
-            geno = dbg[gkey]                              # (nb_inst, A, N)
-            epo  = dbg[f"{sel_curve_inst}/epoch"]         # (nb_inst, A)
-            sco  = dbg[f"{sel_curve_inst}/score"]         # (nb_inst, A)
-            nb_inst, nb_restarts, size_pop, N_, A_ = (int(x) for x in dbg[f"{sel_curve_inst}/meta"])
+                ti = 0
+                if geno.shape[0] > 1:
+                    ti = st.pills(
+                        "Instance de test", list(range(geno.shape[0])),
+                        selection_mode="single", default=0,
+                        format_func=lambda x: f"#{x}",
+                        key=f"fav_dbg_ti_{sel_idx}",
+                        help=f"agrégé sur {nb_r2} restarts (vote majoritaire)",
+                    )
+                    if ti is None:
+                        ti = 0
 
-            ti = 0
-            if geno.shape[0] > 1:
-                ti = st.slider("Instance de test", 0, geno.shape[0] - 1, 0,
-                               key=f"fav_dbg_ti_{sel_idx}",
-                               help=f"agrégé sur {nb_restarts} restarts (vote majoritaire)")
+                g = geno[ti]                                  # (A, N)
+                agents = [f"A{a}" for a in range(g.shape[0])]
 
-            g = geno[ti]                                  # (A, N)
-            agents = [f"A{a}" for a in range(g.shape[0])]
+                _sc = np.abs(np.asarray(sco[ti], float))
+                _bi = int(np.argmax(_sc)) if _sc.size else 0
+                _wi = int(np.argmin(_sc)) if _sc.size and _sc.min() != _sc.max() else -1
 
-            gc, hc = st.columns([3, 2])
-            with gc:
+                def _ylab(a: int) -> str:
+                    s = f"A{a}  {abs(float(sco[ti][a])):.4f}"
+                    if a == _bi:
+                        return f'<span style="color:#2ca02c"><b>{s}</b></span>'
+                    if a == _wi:
+                        return f'<span style="color:#d62728"><b>{s}</b></span>'
+                    return s
+
                 fig_g = go.Figure(go.Heatmap(
                     z=g, x=list(range(g.shape[1])), y=agents,
                     colorscale="Blues", zmin=0, zmax=max(1, int(g.max())), showscale=False,
                 ))
                 fig_g.update_layout(
                     title="Génotype final par agent", xaxis_title="Position",
-                    height=320, margin=dict(l=10, r=10, t=40, b=10),
+                    height=600, margin=dict(l=90, r=10, t=40, b=10),
+                    yaxis=dict(autorange="reversed", tickmode="array",
+                               tickvals=agents, ticktext=[_ylab(a) for a in range(g.shape[0])]),
                 )
                 st.plotly_chart(fig_g, use_container_width=True, key=f"fav_dbg_g_{sel_idx}")
-            with hc:
-                H = (g[:, None, :] != g[None, :, :]).sum(-1)
-                fig_h = go.Figure(go.Heatmap(
-                    z=H, x=agents, y=agents, colorscale="Reds",
-                    text=H, texttemplate="%{text}", showscale=False,
-                ))
-                fig_h.update_layout(
-                    title="Hamming pairwise (solutions finales)",
-                    height=320, margin=dict(l=10, r=10, t=40, b=10),
-                )
-                st.plotly_chart(fig_h, use_container_width=True, key=f"fav_dbg_h_{sel_idx}")
 
-            ev = epo[ti] * max(1, size_pop)
-            fig_e = go.Figure(go.Bar(
-                x=agents, y=ev, marker_color=COLORS[1],
-                text=[f"{s:.4f}" for s in sco[ti]], textposition="outside",
-            ))
-            fig_e.update_layout(
-                title="Moment où chaque agent atteint son meilleur (≈ évaluations)",
-                yaxis_title="Évaluations", height=300,
-                margin=dict(l=10, r=10, t=40, b=30),
-            )
-            st.plotly_chart(fig_e, use_container_width=True, key=f"fav_dbg_e_{sel_idx}")
+                _hcol, _ecol = st.columns(2, gap="large")
+                with _hcol:
+                    H = (g[:, None, :] != g[None, :, :]).sum(-1)
+                    fig_h = go.Figure(go.Heatmap(
+                        z=H, x=agents, y=agents, colorscale="Reds",
+                        text=H, texttemplate="%{text}", showscale=False,
+                    ))
+                    fig_h.update_layout(
+                        title="Hamming pairwise (solutions finales)",
+                        height=560, margin=dict(l=10, r=10, t=40, b=10),
+                        yaxis=dict(autorange="reversed"),
+                    )
+                    st.plotly_chart(fig_h, use_container_width=True, key=f"fav_dbg_h_{sel_idx}")
+                with _ecol:
+                    ev = epo[ti] * max(1, size_pop2)
+                    x_all   = list(agents)
+                    y_all   = [float(v) for v in ev]
+                    txt_all = [f"{abs(s):.4f}" for s in sco[ti]]
+                    colors  = [COLORS[1]] * len(agents)
+                    # couleur par SCORE de l'agent : vert = meilleur, rouge = pire
+                    _asc = np.abs(np.asarray(sco[ti], float))
+                    _ibest = int(np.argmax(_asc)) if _asc.size else -1
+                    _iworst = (int(np.argmin(_asc))
+                               if _asc.size and _asc.min() != _asc.max() else -1)
+                    if _ibest >= 0:
+                        colors[_ibest] = "#2ca02c"
+                    if _iworst >= 0:
+                        colors[_iworst] = "#d62728"
+
+                    # bar orange à gauche : moment où le concurrent #1 (ou #2 si on est #1) plafonne
+                    _am = INSTANCE_RE.match(instance)
+                    _rk = load_ranking(_am.group("problem"), int(_am.group("dim")), int(_am.group("t")))
+                    if _rk is not None and not _rk.empty:
+                        _comps = _rk.sort_values("score", ascending=False).reset_index(drop=True)
+                        _ourcv = load_curve(_dcfg, instance)
+                        _our_s = (abs(float(_ourcv["best_fitness"].iloc[-1]))
+                                  if _ourcv is not None and not _ourcv.empty else None)
+                        _tgt = None
+                        if (_our_s is not None and len(_comps) > 1
+                                and _our_s >= float(_comps.iloc[0]["score"])):
+                            _tgt = str(_comps.iloc[1]["name_algo"])       # on est #1 → #2
+                        elif len(_comps):
+                            _tgt = str(_comps.iloc[0]["name_algo"])       # sinon → #1
+                        if _tgt:
+                            _pb = _am.group("problem")
+                            _pd, _pt = int(_am.group("dim")), int(_am.group("t"))
+
+                            def _moment_98(cx, cy):
+                                cx = np.asarray(cx, float); cy = np.asarray(cy, float)
+                                lo, hi = cy.min(), cy.max()
+                                thr = lo + 0.98 * (hi - lo) if hi > lo else hi
+                                return float(cx[int(np.argmax(cy >= thr))])
+
+                            # courbe du concurrent sur CETTE instance de test (moy. sur ses 10 restarts)
+                            _cc = load_competitor_instance_curve(_tgt, _pb, _pd, _pt, int(ti))
+                            _moment = _cfinal = None
+                            if _cc is not None:
+                                _moment = _moment_98(_cc[0], _cc[1])
+                                _cfinal = float(np.asarray(_cc[1], float)[-1])
+                            else:                                   # dossier sans trajectoires par-run
+                                _cfinal = load_competitor_instance_final(_tgt, _pb, _pd, _pt, int(ti))
+                                _g = load_competitor_curve(_tgt, _pb, _pd, _pt)
+                                if _g is not None:
+                                    _moment = _moment_98(_g[0], _g[1])   # moment approx. (courbe globale)
+
+                            if _moment is not None:
+                                _lbl = _tgt if len(_tgt) <= 16 else _tgt[:15] + "…"
+                                x_all   = [_lbl] + x_all
+                                y_all   = [_moment] + y_all
+                                txt_all = [f"{abs(_cfinal):.4f}" if _cfinal is not None else ""] + txt_all
+                                colors  = ["#ff7f0e"] + colors
+
+                    # étiquettes d'axe colorées : meilleur agent en vert, pire en rouge
+                    _off = len(x_all) - len(agents)          # 1 si barre concurrent en tête, sinon 0
+                    _ticktext = list(x_all)
+                    if _ibest >= 0:
+                        _ticktext[_off + _ibest] = f'<span style="color:#2ca02c"><b>{agents[_ibest]}</b></span>'
+                    if _iworst >= 0:
+                        _ticktext[_off + _iworst] = f'<span style="color:#d62728"><b>{agents[_iworst]}</b></span>'
+
+                    fig_e = go.Figure(go.Bar(
+                        x=x_all, y=y_all, marker_color=colors,
+                        text=txt_all, textposition="outside",
+                    ))
+                    fig_e.update_layout(
+                        title="Moment où chaque agent atteint son meilleur (≈ évaluations)  ·  "
+                              "vert = meilleur score · rouge = pire · orange = concurrent #1",
+                        yaxis=dict(title="Évaluations", range=[0, _COMPETITOR_BUDGET]),
+                        xaxis=dict(tickmode="array", tickvals=x_all, ticktext=_ticktext),
+                        height=560, margin=dict(l=10, r=10, t=40, b=30),
+                    )
+                    st.plotly_chart(fig_e, use_container_width=True, key=f"fav_dbg_e_{sel_idx}")
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
