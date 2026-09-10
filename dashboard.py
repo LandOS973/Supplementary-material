@@ -16,6 +16,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent
 RESULTS_DIR = ROOT / "results" / "config"
 RANKING_DIR = ROOT / "additional_results" / "global_ranking"
+BEAST_DIR = ROOT / "results" / "the beast"
 
 INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
 SKIP_ALGOS = {"ppo-eda", "tabu", "svgd-eda"}
@@ -315,6 +316,43 @@ def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
         if df is None:
             return None
         return df[~df["name_algo"].str.lower().isin(SKIP_ALGOS)]
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def load_beast_best(problem: str, dim: int, t: int, ti: int):
+    """Meilleur génotype trouvé par « the beast » pour l'instance de test `ti`.
+
+    Renvoie (genotype (N,) int, fitness float, nb_lignes int) ou None si absent.
+    Convention fitness des CSV : NK -> sco/N (max) ; QUBO -> -sᵀQs (plus grand = meilleur).
+    """
+    if problem == "QUBO":
+        stem = f"puboi_evo_n_{dim}_t_{t}_i_{ti + 1}"          # QUBO indexé à partir de 1
+        sub, ext = "qubo", "json"
+    elif problem == "NK":
+        stem = f"nk_{dim}_{t}_{ti}"
+        sub, ext = "nk", "txt"
+    elif problem == "NK3":
+        stem = f"nk_{dim}_{t}_3_{ti}"
+        sub, ext = "nk3", "txt"
+    else:
+        return None
+
+    # arbo courante : the beast/<sub>/<N>/<K|t>/<stem>/{fitness,solutions}.csv
+    d = BEAST_DIR / sub / str(dim) / str(t) / stem
+    fp, sp = d / "fitness.csv", d / "solutions.csv"
+    if not (fp.exists() and sp.exists()):
+        # repli sur l'ancien layout plat : the beast/<stem>_results/<stem>.<ext>_*.csv
+        d = BEAST_DIR / f"{stem}_results"
+        fp, sp = d / f"{stem}.{ext}_fitness.csv", d / f"{stem}.{ext}_solutions.csv"
+        if not (fp.exists() and sp.exists()):
+            return None
+    try:
+        fit = np.atleast_1d(np.loadtxt(fp))
+        best = int(np.argmax(fit))
+        geno = np.atleast_1d(np.loadtxt(sp, skiprows=best, max_rows=1))
+        return geno.round().astype(int), float(fit[best]), int(fit.shape[0])
     except Exception:
         return None
 
@@ -2274,7 +2312,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                         fig.add_trace(go.Box(
                             y=s, x=[lbl] * len(s), name=lbl,
                             marker_color=COLORS[i % len(COLORS)],
-                            boxpoints="outliers", showlegend=False,
+                            boxpoints="outliers", boxmean=True, showlegend=False,
                         ), row=box_row, col=1)
                     for j, (algo, score) in enumerate(top5):
                         st_ = comp_boxes.get(algo)
@@ -2305,6 +2343,50 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
         st.divider()
         with st.container():
             st.markdown("#### 🧬 Agents — génotype & rencontre du meilleur")
+
+            def _render_beast(inst, ti_beast, g=None, sco=None, bi=None, key=""):
+                """Heatmap du meilleur génotype « the beast ». Si g/sco/bi fournis,
+                ajoute le gap de fitness + Hamming vs nos agents."""
+                bm = INSTANCE_RE.match(inst)
+                beast = (load_beast_best(bm.group("problem"), int(bm.group("dim")),
+                                         int(bm.group("t")), int(ti_beast)) if bm else None)
+                if beast is None:
+                    st.caption(f"« the beast » : aucun résultat rangé pour {inst} "
+                               f"(test #{ti_beast}). Vérifie `results/the beast/…` "
+                               f"puis `python reorganize.py --apply`.")
+                    return
+                bg, bfit, bn = beast
+                title = (f"Génotype du meilleur trouvé par « the beast »  ·  "
+                         f"fitness = {bfit:.4f}  (sur {bn} solutions)")
+                bh = None
+                if g is not None and sco is not None and bi is not None \
+                        and bg.shape[0] == g.shape[1]:
+                    bh = [int((bg != g[a]).sum()) for a in range(g.shape[0])]
+                    bclose = int(np.argmin(bh))
+                    our_fit = abs(float(sco[ti_beast][bi]))
+                    gap = bfit - our_fit
+                    title += (f"  ·  gap vs notre A{bi} = {gap:+.4f}  ·  "
+                              f"Hamming = {bh[bi]} bits")
+                fig_b = go.Figure(go.Heatmap(
+                    z=bg.reshape(1, -1), x=list(range(bg.shape[0])), y=["beast"],
+                    colorscale="Blues", zmin=0, zmax=max(1, int(bg.max())), showscale=False,
+                ))
+                fig_b.update_layout(title=title, xaxis_title="Position", height=170,
+                                    margin=dict(l=90, r=10, t=40, b=10))
+                st.plotly_chart(fig_b, use_container_width=True, key=f"fav_dbg_beast_{key}")
+                if bh is not None:
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Gap de fitness (beast − nous)", f"{gap:+.4f}",
+                              help=f"beast {bfit:.4f}  vs  notre meilleur agent A{bi} {our_fit:.4f}")
+                    c2.metric(f"Hamming beast ↔ notre A{bi}", f"{bh[bi]} / {bg.shape[0]}")
+                    c3.metric("Agent le plus proche du beast", f"A{bclose}",
+                              f"{bh[bclose]} bits", delta_color="off")
+                    st.caption("Hamming beast ↔ chaque agent : "
+                               + " · ".join(f"A{a}={d}" for a, d in enumerate(bh)))
+                elif g is not None:
+                    st.caption(f"Comparaison agents impossible : N beast = {bg.shape[0]} "
+                               f"≠ N run = {g.shape[1]}.")
+
             _dcfg = st.pills(
                 "Config", configs, selection_mode="single", format_func=_fav_lbl,
                 default=configs[0] if configs else None, key=f"fav_dbg_cfg_{sel_idx}",
@@ -2315,7 +2397,11 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 pass
             elif not dbg or gkey not in dbg:
                 st.info("Pas de `agent_debug.npz` pour cette config / instance — "
-                        "relancer le grid-search (collecte debug dans main_expe_overall).")
+                        "relancer le grid-search (collecte debug dans main_expe_overall). "
+                        "Le génotype « the beast » reste affiché ci-dessous s'il est rangé.")
+                _tib = st.number_input("Instance de test (index)", min_value=0, max_value=99,
+                                       value=0, step=1, key=f"fav_beast_ti_{sel_idx}")
+                _render_beast(instance, int(_tib), key=f"nodbg_{sel_idx}")
             else:
                 geno = dbg[gkey]                              # (nb_inst, A, N)
                 epo  = dbg[f"{instance}/epoch"]               # (nb_inst, A)
@@ -2360,6 +2446,9 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                                tickvals=agents, ticktext=[_ylab(a) for a in range(g.shape[0])]),
                 )
                 st.plotly_chart(fig_g, use_container_width=True, key=f"fav_dbg_g_{sel_idx}")
+
+                # ── Génotype du meilleur trouvé par « the beast » (comparaison) ──
+                _render_beast(instance, ti, g=g, sco=sco, bi=_bi, key=str(sel_idx))
 
                 _hcol, _ecol = st.columns(2, gap="large")
                 with _hcol:

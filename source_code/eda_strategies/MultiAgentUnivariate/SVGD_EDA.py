@@ -677,7 +677,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         probs_final = [probs[:, m, :] for m in range(self.M)]
         if not probs_final:
             return
-        self.theta_history.append(probs_final)
+        if getattr(self, "record_full_theta_history", True):
+            self.theta_history.append(probs_final)
+        else:
+            # Panneau : seul le dernier snapshot (fin de budget) est conservé.
+            self.theta_history = [probs_final]
 
     def get_theta_history(self):
         return {"values": self.theta_history}

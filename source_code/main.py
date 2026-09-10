@@ -335,6 +335,11 @@ def main(cfg: DictConfig):
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None
 
+    # Le panneau ne montre que la heatmap finale des probs : inutile de garder
+    # tout l'historique theta (slider "Probs Heatmap Explorer"). Override possible
+    # via la config si on veut réactiver l'historique complet.
+    strategy.record_full_theta_history = bool(cfg.get("record_full_theta_history", False))
+
     if type_problem_upper == "QUBO":
         result = get_Score_trajectoriesQUBO_cuda(
             strategy,
