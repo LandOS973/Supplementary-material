@@ -41,16 +41,28 @@ def instance_path(problem, N, Kt, stem):
 
 
 def recompute(problem, inst, sols):
+    """Renvoie (rec, info, bad_rows) — bad_rows = indices ignorés (valeurs hors alphabet)."""
     if problem in ("nk", "nk3"):
         prob = problem_NKlandscape(inst)
         assert sols.shape[1] == prob.N, (sols.shape, prob.N)
-        return np.array([-prob.eval(r.astype(int)) for r in sols]), f"N={prob.N} K={prob.K} D={prob.D}"
+        alpha = prob.D
+        in_range = (sols >= 0) & (sols < alpha) & (sols == np.floor(sols))
+        bad_rows = np.where(~in_range.all(axis=1))[0]
+        rec = np.full(sols.shape[0], np.nan)
+        for i, r in enumerate(sols):
+            if i in bad_rows:
+                continue
+            rec[i] = -prob.eval(r.astype(int))
+        return rec, f"N={prob.N} K={prob.K} D={prob.D}", bad_rows
     we = WalshExpansion()
     we.load(inst)
     assert sols.shape[1] == we.n, (sols.shape, we.n)
+    bad_rows = np.where(~np.isin(sols, (0, 1)).all(axis=1))[0]
     Q = we.to_symmetric_Q()
-    S = sols * 2.0 - 1.0
-    return -np.einsum("ij,jk,ik->i", S, Q, S), f"N={we.n}"
+    S = np.where(np.isin(sols, (0, 1)), sols, 0.0) * 2.0 - 1.0
+    rec = -np.einsum("ij,jk,ik->i", S, Q, S)
+    rec[bad_rows] = np.nan
+    return rec, f"N={we.n}", bad_rows
 
 
 def _subdirs(path):
@@ -88,26 +100,36 @@ def main(flt):
             if not os.path.exists(inst):
                 print(f"[SKIP] {rel:40s} instance introuvable : {inst}")
                 continue
-            rec, info = recompute(problem, inst, sols)
-            diff = np.abs(rec - fits)
+            rec, info, bad_rows = recompute(problem, inst, sols)
+            valid = ~np.isnan(rec)
+            valid_idx = np.where(valid)[0]
+            n_valid = int(valid.sum())
+            diff_full = np.abs(rec - fits)                 # NaN sur les lignes ignorées
+            diff = diff_full[valid]
             tol = TOL[problem]
             ok = int((diff < tol).sum())
-            if len(diff) > 1 and np.std(fits) > 0 and np.std(rec) > 0:
-                c = float(np.corrcoef(fits, rec)[0, 1])
+            fv, rv = fits[valid], rec[valid]
+            if n_valid > 1 and np.std(fv) > 0 and np.std(rv) > 0:
+                c = float(np.corrcoef(fv, rv)[0, 1])
             else:
-                c = 1.0 if diff.max() < 1e-9 else 0.0     # variance nulle => juge sur l'ecart
+                c = 1.0 if (diff.size and diff.max() < 1e-9) else 0.0
+            dmax = float(diff.max()) if diff.size else 0.0
             # coherent = tout dans la tolerance, OU alignement parfait a un bruit d'arrondi pres
-            coherent = (ok == len(diff)) or (c > 1 - 1e-9 and diff.max() < 1e-4)
-            tag = "OK " if ok == len(diff) else ("~  " if coherent else "!! ")
-            print(f"[{tag}] {rel:40s} {ok:5d}/{len(diff):<5d} <{tol:g}  "
-                  f"max|diff|={diff.max():.2e}  corr={c:+.5f}  ({info})")
+            coherent = (ok == n_valid) or (c > 1 - 1e-9 and dmax < 1e-4)
+            tag = "OK " if (ok == n_valid and not len(bad_rows)) else ("~  " if coherent else "!! ")
+            print(f"[{tag}] {rel:40s} {ok:5d}/{n_valid:<5d} <{tol:g}  "
+                  f"max|diff|={dmax:.2e}  corr={c:+.5f}  ({info})")
+            if len(bad_rows):
+                print(f"        -> {len(bad_rows)} ligne(s) ignorée(s), valeur hors alphabet : "
+                      f"{list(bad_rows[:5])}{' …' if len(bad_rows) > 5 else ''}  "
+                      f"(données corrompues côté « the beast »)")
             if coherent:
                 n_ok += 1
-                if ok != len(diff):
-                    print(f"        -> {len(diff)-ok} lignes entre {tol:g} et {diff.max():.1e} : "
+                if ok != n_valid:
+                    print(f"        -> {n_valid-ok} lignes entre {tol:g} et {dmax:.1e} : "
                           f"arrondi 6 decimales du .txt d'instance, pas un decalage genotype")
             else:
-                bad = np.where(diff >= tol)[0][:3]
+                bad = valid_idx[np.where(diff >= tol)[0][:3]]
                 for i in bad:
                     print(f"        ligne {i}: stocke={fits[i]:.6g}  recalcule={rec[i]:.6g}")
                 print(f"        correlation={c:+.4f}  (~ -1 => inversion de signe ; "

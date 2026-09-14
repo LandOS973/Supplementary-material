@@ -320,39 +320,96 @@ def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
         return None
 
 
-@st.cache_data(show_spinner=False)
-def load_beast_best(problem: str, dim: int, t: int, ti: int):
-    """Meilleur génotype trouvé par « the beast » pour l'instance de test `ti`.
+def _beast_csv_paths(problem: str, dim: int, t: int, ti: int):
+    """(fitness.csv, solutions.csv) pour l'instance de test `ti`, ou None.
 
-    Renvoie (genotype (N,) int, fitness float, nb_lignes int) ou None si absent.
-    Convention fitness des CSV : NK -> sco/N (max) ; QUBO -> -sᵀQs (plus grand = meilleur).
+    Non caché : un fichier déposé en cours de session est vu tout de suite.
     """
     if problem == "QUBO":
-        stem = f"puboi_evo_n_{dim}_t_{t}_i_{ti + 1}"          # QUBO indexé à partir de 1
-        sub, ext = "qubo", "json"
+        stem, sub, ext = f"puboi_evo_n_{dim}_t_{t}_i_{ti + 1}", "qubo", "json"  # QUBO 1-indexé
     elif problem == "NK":
-        stem = f"nk_{dim}_{t}_{ti}"
-        sub, ext = "nk", "txt"
+        stem, sub, ext = f"nk_{dim}_{t}_{ti}", "nk", "txt"
     elif problem == "NK3":
-        stem = f"nk_{dim}_{t}_3_{ti}"
-        sub, ext = "nk3", "txt"
+        stem, sub, ext = f"nk_{dim}_{t}_3_{ti}", "nk3", "txt"
     else:
         return None
-
-    # arbo courante : the beast/<sub>/<N>/<K|t>/<stem>/{fitness,solutions}.csv
-    d = BEAST_DIR / sub / str(dim) / str(t) / stem
+    d = BEAST_DIR / sub / str(dim) / str(t) / stem                    # arbo courante
     fp, sp = d / "fitness.csv", d / "solutions.csv"
-    if not (fp.exists() and sp.exists()):
-        # repli sur l'ancien layout plat : the beast/<stem>_results/<stem>.<ext>_*.csv
-        d = BEAST_DIR / f"{stem}_results"
-        fp, sp = d / f"{stem}.{ext}_fitness.csv", d / f"{stem}.{ext}_solutions.csv"
-        if not (fp.exists() and sp.exists()):
-            return None
+    if fp.exists() and sp.exists():
+        return str(fp), str(sp)
+    d = BEAST_DIR / f"{stem}_results"                                 # repli layout plat
+    fp, sp = d / f"{stem}.{ext}_fitness.csv", d / f"{stem}.{ext}_solutions.csv"
+    return (str(fp), str(sp)) if (fp.exists() and sp.exists()) else None
+
+
+def load_beast_best(problem: str, dim: int, t: int, ti: int):
+    """Meilleur génotype « the beast » pour l'instance de test `ti`.
+    Renvoie (genotype (N,) int, fitness float, nb_lignes int) ou None.
+    Convention fitness : NK/NK3 -> sco/N ; QUBO -> -sᵀQs (plus grand = meilleur)."""
+    paths = _beast_csv_paths(problem, dim, t, ti)
+    return _load_beast_best_cached(*paths) if paths else None
+
+
+@st.cache_data(show_spinner=False)
+def _load_beast_best_cached(fp: str, sp: str):
     try:
         fit = np.atleast_1d(np.loadtxt(fp))
         best = int(np.argmax(fit))
         geno = np.atleast_1d(np.loadtxt(sp, skiprows=best, max_rows=1))
         return geno.round().astype(int), float(fit[best]), int(fit.shape[0])
+    except Exception:
+        return None
+
+
+def load_beast_optima(problem: str, dim: int, t: int, ti: int):
+    """Les ~64000 optima locaux tabou : Hamming au best-known + fitness brute.
+    Renvoie dict(ham, fit, best_known, best_geno, n, n_bad) ou None."""
+    paths = _beast_csv_paths(problem, dim, t, ti)
+    return _load_beast_optima_cached(problem, *paths) if paths else None
+
+
+@st.cache_data(show_spinner="Chargement des optima « the beast »…")
+def _load_beast_optima_cached(problem: str, fp: str, sp: str):
+    try:
+        fit = np.atleast_1d(np.loadtxt(fp)).astype(np.float64)
+        S = pd.read_csv(sp, sep=r"\s+", header=None).dropna(axis=1, how="all").to_numpy()
+        n = min(S.shape[0], fit.shape[0])
+        S, fit = S[:n], fit[:n]
+        amax = 2 if problem == "NK3" else 1                      # alphabet {0..amax}
+        valid = (S.min(axis=1) >= 0) & (S.max(axis=1) <= amax)
+        n_bad = int((~valid).sum())
+        S, fit = S[valid], fit[valid]
+        n = int(S.shape[0])
+        bk = float(fit.max())
+
+        # optima distincts = génotypes distincts, avec leur nb de visites (taille de bassin)
+        uniq, inv, counts = np.unique(S, axis=0, return_inverse=True, return_counts=True)
+        inv = inv.ravel()
+        fit_of_uniq = fit[np.unique(inv, return_index=True)[1]]     # fitness par génotype distinct
+
+        # optima globaux = génotypes distincts atteignant la meilleure fitness (peut y en avoir plusieurs)
+        g_mask = np.isclose(fit_of_uniq, bk)
+        g_counts = np.sort(counts[g_mask])[::-1]                   # visites par optimum global, décroissant
+        n_global_opt = int(g_mask.sum())
+        n_at_best_fit = int(g_counts.sum())                        # visites totales des optima globaux
+
+        # ancre du plot = l'optimum global le plus visité
+        g_idx = np.where(g_mask)[0]
+        best_uidx = int(g_idx[np.argmax(counts[g_mask])])
+        best_geno = uniq[best_uidx].round().astype(np.int16)
+        ham = (S != best_geno).sum(axis=1).astype(np.float32)      # Hamming brut (bits)
+
+        imode = int(counts.argmax())                               # optimum le plus visité, toutes fitness
+        return dict(
+            ham=ham, fit=fit.astype(np.float32), best_known=bk,
+            best_geno=best_geno.astype(int), n=n, n_bad=n_bad,
+            n_distinct=int(uniq.shape[0]),
+            n_global_opt=n_global_opt,
+            n_at_best_fit=n_at_best_fit,
+            top_global_count=int(g_counts[0]),                     # visites de l'optimum global n°1
+            mode_count=int(counts[imode]),
+            mode_fit=float(fit_of_uniq[imode]),
+        )
     except Exception:
         return None
 
@@ -2387,6 +2444,97 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     st.caption(f"Comparaison agents impossible : N beast = {bg.shape[0]} "
                                f"≠ N run = {g.shape[1]}.")
 
+            def _big_valley_plot(inst, ti_b, g=None, sco=None, bi=None, wi=None, key=""):
+                """Nuage des optima tabou (Hamming au best-known × fitness brute),
+                avec nos agents en surimpression quand g/sco sont fournis."""
+                bm = INSTANCE_RE.match(inst)
+                bo = (load_beast_optima(bm.group("problem"), int(bm.group("dim")),
+                                        int(bm.group("t")), int(ti_b)) if bm else None)
+                if bo is None:
+                    return
+                bk = bo["best_known"]
+                xN = int(bo["best_geno"].shape[0])                    # = N
+                fig = go.Figure()
+                fig.add_trace(go.Histogram2d(
+                    x=bo["ham"], y=bo["fit"], colorscale="Blues",
+                    xbins=dict(start=0, end=xN, size=max(1, xN // 70)),
+                    nbinsy=70, name="optima tabou",
+                    colorbar=dict(title="densité<br>d'optima", thickness=12),
+                    hovertemplate="Hamming=%{x:.0f} bits<br>fitness=%{y:.4g}"
+                                  "<br>n=%{z}<extra></extra>",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=[0.0], y=[bk], mode="markers+text", text=["★ best-known"],
+                    textposition="top right", cliponaxis=False,
+                    marker=dict(symbol="star", size=16, color="#d62728"),
+                    name="beast best", hoverinfo="text",
+                ))
+                if (g is not None and sco is not None
+                        and g.shape[1] == bo["best_geno"].shape[0]):
+                    bg = bo["best_geno"]
+                    hx = [float((g[a] != bg).sum()) for a in range(g.shape[0])]   # Hamming brut
+                    hy = [abs(float(sco[ti_b][a])) for a in range(g.shape[0])]
+                    cols = ["#1f77b4"] * g.shape[0]
+                    if bi is not None and 0 <= bi < len(cols):
+                        cols[bi] = "#2ca02c"
+                    if wi is not None and 0 <= wi < len(cols):
+                        cols[wi] = "#d62728"
+                    fig.add_trace(go.Scatter(
+                        x=hx, y=hy, mode="markers+text",
+                        text=[f"A{a}" for a in range(g.shape[0])],
+                        textposition="middle right",
+                        marker=dict(size=13, color=cols, line=dict(width=1.5, color="white")),
+                        name="nos agents",
+                        hovertemplate="%{text}<br>Hamming au best=%{x:.0f} bits"
+                                      "<br>fitness=%{y:.4g}<extra></extra>",
+                    ))
+                fig.update_layout(
+                    title=dict(
+                        text=(f"Big-valley plot — {inst} (test #{ti_b})  ·  "
+                              f"best-known = {bk:.4g}"
+                              + (f"  ·  {bo['n_bad']} corrompus exclus" if bo["n_bad"] else "")),
+                        y=0.98, yanchor="top",
+                    ),
+                    xaxis=dict(title="distance de Hamming au best-known (bits)",
+                               range=[0, xN], constrain="domain"),
+                    yaxis=dict(title="fitness (brute)", automargin=True),
+                    height=540, margin=dict(l=55, r=10, t=40, b=70),
+                    bargap=0, legend=dict(orientation="h", yanchor="top", y=-0.16, x=0),
+                )
+                st.plotly_chart(fig, use_container_width=True, key=f"fav_bigvalley_{key}")
+
+                _n = bo["n"]
+                _ng = bo["n_global_opt"]
+                _pc = lambda v: f"{100 * v / _n:.1f}"
+                _lines = [f"<b>{bo['n_distinct']:,} optima distincts</b> trouvés "
+                          f"sur {_n:,} restarts."]
+                if _ng == 1:
+                    _lines.append(
+                        f"<b>Optimum global</b> (fitness {bk:.4g}) : 1 seul génotype, "
+                        f"atteint par <b>{bo['n_at_best_fit']:,}</b> restarts "
+                        f"({_pc(bo['n_at_best_fit'])}&nbsp;%)."
+                    )
+                else:
+                    _lines.append(
+                        f"<b>Optima globaux</b> (fitness {bk:.4g}) : "
+                        f"<b>{_ng:,}</b> génotypes distincts.  "
+                        f"<b>{bo['n_at_best_fit']:,}</b> restarts ({_pc(bo['n_at_best_fit'])}&nbsp;%) "
+                        f"finissent sur l'un d'eux ; le plus attractif en capte à lui seul "
+                        f"<b>{bo['top_global_count']:,}</b> ({_pc(bo['top_global_count'])}&nbsp;%)."
+                    )
+                if not np.isclose(bo["mode_fit"], bk):
+                    _lines.append(
+                        f"⚠️ L'optimum au plus gros bassin n'est <b>pas</b> le meilleur : "
+                        f"<b>{bo['mode_count']:,}</b> restarts ({_pc(bo['mode_count'])}&nbsp;%) "
+                        f"convergent vers un optimum de fitness {bo['mode_fit']:.4g} "
+                        f"(&lt; {bk:.4g})."
+                    )
+                st.markdown(
+                    "<div style='font-size:1.05rem;line-height:1.7'>"
+                    + "<br>".join(_lines) + "</div>",
+                    unsafe_allow_html=True,
+                )
+
             _dcfg = st.pills(
                 "Config", configs, selection_mode="single", format_func=_fav_lbl,
                 default=configs[0] if configs else None, key=f"fav_dbg_cfg_{sel_idx}",
@@ -2402,6 +2550,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 _tib = st.number_input("Instance de test (index)", min_value=0, max_value=99,
                                        value=0, step=1, key=f"fav_beast_ti_{sel_idx}")
                 _render_beast(instance, int(_tib), key=f"nodbg_{sel_idx}")
+                _big_valley_plot(instance, int(_tib), key=f"nodbg_{sel_idx}")
             else:
                 geno = dbg[gkey]                              # (nb_inst, A, N)
                 epo  = dbg[f"{instance}/epoch"]               # (nb_inst, A)
@@ -2449,6 +2598,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
                 # ── Génotype du meilleur trouvé par « the beast » (comparaison) ──
                 _render_beast(instance, ti, g=g, sco=sco, bi=_bi, key=str(sel_idx))
+                _big_valley_plot(instance, ti, g=g, sco=sco, bi=_bi, wi=_wi, key=str(sel_idx))
 
                 _hcol, _ecol = st.columns(2, gap="large")
                 with _hcol:
