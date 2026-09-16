@@ -47,6 +47,7 @@ def render_agent_dashboard(
     best_individual_history=None,
     attraction_agent_history=None,
     repulsion_agent_history=None,
+    agent_lambda_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -183,6 +184,10 @@ def render_agent_dashboard(
         if agent_fitness_history and num_agents > 0:
             extra_series_config["Fitness"] = dict(
                 history=agent_fitness_history, ylabel="Fitness", title="Agent Fitness Evolution"
+            )
+        if agent_lambda_history and num_agents > 0:
+            extra_series_config["Batch size"] = dict(
+                history=agent_lambda_history, ylabel="λa", title="Agent Batch Size Evolution"
             )
         extra_series_vars = {name: tk.IntVar(value=1) for name in extra_series_config}
 

@@ -14,6 +14,7 @@ from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.FR import FisherRaoKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.no_interact import NoInteractKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
+from eda_strategies.MultiAgentUnivariate.advantage.rank_weighted import PerAgentRankWeightedAdvantage
 
 
 class SVGD_EDA(Abstract_EDA, nn.Module):
@@ -58,10 +59,27 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         kl_beta_min=1e-4,      # plancher de β (mode kl adaptatif uniquement)
         trpo_kl_threshold=0.01,      # seuil max de KL_mean toléré par époque (mode trpo uniquement)
         trpo_backoff_max_tries=4,    # nb de tentatives de réduction du pas avant d'accepter tel quel (mode trpo)
+        # Batch adaptatif par agent (inner-product test, Bollapragada/Byrd/Nocedal 2018)
+        adaptive_batch=False,
+        lambda_init=3,
+        lambda_max=None,
+        ip_tol=0.4,
     ):
         self.M = M
         self.N = N
         self.lambda_per_agent = int(lambda_)
+        self.adaptive_batch_enabled = bool(adaptive_batch)
+        self.lambda_init = int(lambda_init)
+        self.ip_tol = float(ip_tol)
+        if self.adaptive_batch_enabled:
+            # lambda_per_agent devient le pire cas (lambda_max), utilisé par les
+            # environnements appelants pour pré-allouer leurs tenseurs (taille de
+            # population). Le vrai batch par agent est décidé dynamiquement par
+            # adaptive_iteration() à chaque itération, entre lambda_init et lambda_max.
+            self.lambda_max = int(lambda_max) if lambda_max is not None else self.lambda_per_agent
+            self.lambda_per_agent = self.lambda_max
+        else:
+            self.lambda_max = int(lambda_max) if lambda_max is not None else self.lambda_per_agent
         self.total_lambda = self.lambda_per_agent * self.M
         Abstract_EDA.__init__(self, N, self.total_lambda, device)
         nn.Module.__init__(self)
@@ -130,6 +148,13 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 if "problem" not in params:
                     params["problem"] = getattr(self, "problem_type", None)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg_local)
+        if self.adaptive_batch_enabled and not isinstance(self.advantage_strategy, PerAgentRankWeightedAdvantage):
+            raise ValueError(
+                "adaptive_batch=True n'est supporté que pour l'avantage "
+                "'peragentrankweighted' pour l'instant."
+            )
+        if self.adaptive_batch_enabled and self.ppo_active:
+            raise ValueError("adaptive_batch=True n'est supporté que pour REINFORCE (ppo_active=False) pour l'instant.")
         self.kernel_config = kernel_config_local
         self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
         self.kernel_params = {}
@@ -256,6 +281,189 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             return greedy.unsqueeze(-1).float()
         greedy = (probs >= 0.5).float()
         return greedy.unsqueeze(-1)
+
+    def _sample_from_probs(self, probs_m, count):
+        """
+        Tire `count` échantillons pour un agent, à partir de ses probs figées.
+        probs_m : (B, N) binaire ou (B, N, D) catégoriel. Retourne (B, count, N, 1).
+        """
+        B = probs_m.size(0)
+        if self.use_categorical:
+            D = probs_m.size(-1)
+            flat = probs_m.reshape(-1, D)
+            samples_flat = torch.multinomial(flat, num_samples=count, replacement=True)
+            samples = samples_flat.view(B, self.N, count).permute(0, 2, 1).unsqueeze(-1).float()
+            return samples
+        u = torch.rand((B, count, self.N), device=self.device)
+        return (u < probs_m.unsqueeze(1)).float().unsqueeze(-1)
+
+    def _score_function(self, indivduals, probs_m):
+        """
+        Forme close de ∇_theta log pi_theta(x) (Bernoulli/Categorical factorisés) :
+        x - p (binaire) ou onehot(x) - p (catégoriel).
+        indivduals : (B, lam, N). probs_m : (B, N) ou (B, N, D).
+        """
+        if self.use_categorical:
+            D = probs_m.size(-1)
+            onehot = torch.zeros(indivduals.shape + (D,), device=probs_m.device, dtype=probs_m.dtype)
+            onehot.scatter_(-1, indivduals.long().unsqueeze(-1), 1.0)
+            return onehot - probs_m.unsqueeze(1)
+        return indivduals - probs_m.unsqueeze(1)
+
+    def adaptive_iteration(self, evaluate_fn):
+        """
+        Une itération complète avec batch adaptatif par (instance, agent) — inner-product
+        test, cf. Bollapragada/Byrd/Nocedal 2018. Chaque (instance b, agent m) décide sa
+        propre taille de batch INDÉPENDAMMENT des autres instances : une instance au
+        signal fort s'arrête tôt, une instance difficile continue seule, sans jamais
+        imposer son rythme aux autres (cf. discussion : agréger sur B via un max faisait
+        que toute instance difficile plafonnait tout le groupe au lambda_max).
+
+        Pour garder un contrat externe inchangé (chaque agent occupe exactement
+        lambda_max colonnes dans le tenseur retourné, comme avant — donc zéro
+        changement requis dans les boucles appelantes), les instances arrêtées tôt
+        sont complétées jusqu'à lambda_max par duplication de LEURS PROPRES échantillons
+        déjà tirés et évalués (aucun appel oracle supplémentaire, aucune donnée
+        fabriquée) ; le gradient et le critère, eux, n'utilisent jamais ces doublons —
+        uniquement les échantillons réellement tirés pour cette instance.
+
+        `evaluate_fn` : callable (tensor_solution (n, pop, N, 1)) -> tensor_score (n, pop),
+        typiquement la même closure `_evaluate_population` que la boucle appelante
+        utilise pour le chemin non-adaptatif (n = nombre d'instances encore actives
+        ce tour-ci, pour ne jamais gaspiller d'évaluation sur une instance déjà satisfaite).
+
+        Retourne (tensor_solution, tensor_score) au même format que
+        sample_solutions() + evaluate_fn. updateDistribution est déjà appliqué en
+        interne (theta est mis à jour) : ne pas le rappeler.
+        """
+        B, M, N = self.nb_instances, self.M, self.N
+        self.probs = self.forward()
+
+        per_agent_samples = []
+        per_agent_fitness = []
+        per_agent_grad = []
+        per_agent_step_scale = []
+        effective_lambda_per_agent = []
+
+        for m in range(M):
+            probs_m = self.probs[:, m, ...].detach()
+
+            X = torch.zeros(B, self.lambda_max, N, 1, device=self.device)
+            F = torch.zeros(B, self.lambda_max, device=self.device)
+            lam_real = torch.zeros(B, dtype=torch.long, device=self.device)
+            active = torch.ones(B, dtype=torch.bool, device=self.device)
+
+            grad_shape = (B, N, self.max_dim) if self.use_categorical else (B, N)
+            g_hat_final = torch.zeros(grad_shape, device=self.device)
+            tr_sigma_final = torch.zeros(B, device=self.device)
+            g_norm2_corr_final = torch.zeros(B, device=self.device)
+            lam_req_final = torch.zeros(B, device=self.device)
+
+            lam = 0
+            while active.any():
+                # increment <= 0 dès que lam atteint lambda_max : c'est le seul garde-fou nécessaire.
+                increment = min(max(self.lambda_init, lam), self.lambda_max - lam)
+                if increment <= 0:
+                    break
+                idx_active = active.nonzero(as_tuple=True)[0]
+                new_indiv = self._sample_from_probs(probs_m[idx_active], increment)
+                new_fitness = evaluate_fn(new_indiv, idx_active)  # évalué UNIQUEMENT pour les instances encore actives
+                X[idx_active, lam:lam + increment] = new_indiv
+                F[idx_active, lam:lam + increment] = new_fitness
+                lam += increment
+
+                # critère calculé UNIQUEMENT à partir des données propres à chaque instance active
+                n_active = idx_active.numel()
+                sub_fitness = F[idx_active, :lam]
+                sub_indiv = X[idx_active, :lam].squeeze(-1)
+                sub_probs = probs_m[idx_active]
+
+                # a^(i) : poids PerAgentRankWeighted, reclassé sur l'ensemble accumulé de CETTE instance
+                advantage = self.advantage_strategy.compute(
+                    fitness=sub_fitness, nb_instances=n_active, num_agents=1,
+                ).detach()
+                score = self._score_function(sub_indiv, sub_probs)  # ∇_theta log pi_theta(x^(i)), forme close
+                z = advantage.reshape(n_active, lam, *([1] * (score.dim() - 2))) * score  # z^(i) = a^(i) * score^(i)
+
+                g_hat = z.mean(dim=1)  # ĝ = (1/λa) Σ z^(i) : estimateur du gradient
+                diff = z - g_hat.unsqueeze(1)
+                sq_norm_i = diff.flatten(start_dim=2).pow(2).sum(dim=2)
+                # tr̂Σ = (1/(λa-1)) Σ ‖z^(i) - ĝ‖² : dispersion totale (variance MC), toutes directions confondues
+                tr_sigma = sq_norm_i.sum(dim=1) / (lam - 1)
+
+                g_norm2 = g_hat.flatten(start_dim=1).pow(2).sum(dim=1)  # ‖ĝ‖² brut (gonflé par le bruit)
+                # ‖ĝ‖²_corr = max(‖ĝ‖² - tr̂Σ/λa, 0) : débiaisage de la norme (papier §3, "correction essentielle")
+                g_norm2_corr = torch.clamp(g_norm2 - tr_sigma / lam, min=0.0)
+
+                # ŝ^(i) = ⟨z^(i), ĝ⟩ / ‖ĝ‖² (norme BRUTE ici, cf. papier §3) : projection normalisée de
+                # chaque échantillon sur la direction ĝ (vaut 1 en moyenne si ĝ est fiable).
+                s_hat = (z * g_hat.unsqueeze(1)).flatten(start_dim=2).sum(dim=2) / g_norm2.clamp(min=1e-12).unsqueeze(1)
+                var_s = s_hat.var(dim=1, unbiased=True)  # Var(ŝ^(i)) : variance de cette projection
+                g_sigma_g = g_norm2.pow(2) * var_s  # ĝ^⊤Σĝ = ‖ĝ‖⁴ · Var(ŝ^(i)) : variance du gradient projetée sur ĝ
+
+                # λa,req = ĝ^⊤Σĝ / (ip_tol² · ‖ĝ‖²_corr²) : inner-product test — taille de batch requise pour
+                # que le signal (‖ĝ‖²_corr, débiaisé) domine le bruit projeté (ĝ^⊤Σĝ) avec la tolérance voulue.
+                # +inf si aucun signal détectable (plateau, ‖ĝ‖²_corr=0).
+                lam_req = torch.where(
+                    g_norm2_corr > 0,
+                    g_sigma_g / (self.ip_tol ** 2 * g_norm2_corr.clamp(min=1e-12).pow(2)),
+                    torch.full_like(g_norm2_corr, float("inf")),
+                )
+
+                # arrêt indépendant par instance (repeat-until) : chaque instance active qui satisfait
+                # SON PROPRE critère (ou atteint lambda_max) se fige ici, sans attendre les autres.
+                newly_done = (lam_req <= lam) | (lam >= self.lambda_max)
+                freeze_idx = idx_active[newly_done]
+                if freeze_idx.numel() > 0:
+                    g_hat_final[freeze_idx] = g_hat[newly_done]
+                    tr_sigma_final[freeze_idx] = tr_sigma[newly_done]
+                    g_norm2_corr_final[freeze_idx] = g_norm2_corr[newly_done]
+                    lam_req_final[freeze_idx] = lam_req[newly_done]
+                    lam_real[freeze_idx] = lam
+                    active[freeze_idx] = False
+
+            # Complétion à lambda_max par duplication (cyclique) des échantillons réels de
+            # chaque instance — aucun appel oracle, aucune donnée inventée, juste pour garder
+            # un bloc de taille fixe par agent (contrat externe inchangé pour les appelants).
+            pad_idx = torch.arange(self.lambda_max, device=self.device).unsqueeze(0) % lam_real.clamp(min=1).unsqueeze(1)
+            X_padded = torch.gather(X, 1, pad_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, N, 1))
+            F_padded = torch.gather(F, 1, pad_idx)
+
+            # capped/shrink : par instance, indépendamment — cf. discussion sur le besoin
+            # d'indépendance entre instances (plus d'agrégation par max sur B).
+            capped = (lam_real >= self.lambda_max) & (lam_req_final > lam_real)
+            shrink = g_norm2_corr_final / (g_norm2_corr_final + tr_sigma_final / lam_real.clamp(min=1) + 1e-12)
+            step_scale = torch.where(capped, shrink, torch.ones_like(shrink))
+
+            per_agent_samples.append(X_padded)
+            per_agent_fitness.append(F_padded)
+            per_agent_grad.append(g_hat_final)
+            per_agent_step_scale.append(step_scale)
+            effective_lambda_per_agent.append(float(lam_real.float().mean().item()))
+
+        tensor_solution = torch.cat(per_agent_samples, dim=1)
+        tensor_score = torch.cat(per_agent_fitness, dim=1)
+        # Contrat externe (slicing par bloc contigu dans les boucles appelantes) : chaque
+        # agent occupe toujours exactement lambda_max colonnes, donc agent_lambdas reste
+        # constant. La vraie taille par (instance, agent) est exposée séparément pour le
+        # dashboard, où elle est bien plus informative qu'une constante.
+        self.agent_lambdas = [self.lambda_max for _ in range(M)]
+        self.last_effective_lambda_per_agent = effective_lambda_per_agent
+
+        grad_theta = torch.stack(per_agent_grad, dim=1)  # (B, M, N[, D])
+        self.last_theta_grad = grad_theta.detach()
+        step_scale_full = torch.stack(per_agent_step_scale, dim=1)  # (B, M)
+        step_scale_full = step_scale_full.view(B, M, *([1] * (grad_theta.dim() - 2)))
+
+        with torch.no_grad():
+            self.baseline = torch.stack([f.mean(dim=1) for f in per_agent_fitness], dim=1)
+            self.latest_advantages = None  # ragged par instance : pas de vue plate simple ici
+
+        self._apply_svgd(step_scale=step_scale_full)
+        if self.enable_visualization:
+            self._record_theta()
+
+        return tensor_solution, tensor_score
 
     def updateDistribution(self, solutionList, scoreList):
         """Applique la mise à jour (REINFORCE ou PPO) suivie de SVGD entre agents."""
@@ -654,9 +862,21 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         return
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
+        self._apply_gamma_decay((current_iter + 1) / float(total_iters))
+
+    def decay_svgd_gamma_by_budget(self, evals_consumed: int, budget: int) -> None:
+        """
+        Variante de decay_svgd_gamma basée sur la fraction du budget d'évaluations
+        déjà consommée plutôt que sur l'index d'itération. Nécessaire dès que la
+        taille de batch varie d'une itération à l'autre (batch adaptatif) : dans ce
+        cas, "itération n / nb_iterations" ne correspond plus à une fraction fixe du
+        budget, alors que evals_consommés / budget conserve son sens.
+        """
+        self._apply_gamma_decay(float(evals_consumed) / float(budget) if budget else 0.0)
+
+    def _apply_gamma_decay(self, progress: float) -> None:
         if not self.decay_enabled or self.no_interact or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
             return
-        progress = (current_iter + 1) / float(total_iters)
         start = self.decay_start_ratio
         min_factor = self.decay_min_factor
 

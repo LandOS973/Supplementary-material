@@ -52,6 +52,14 @@ def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
     return cfg_dict
 
 
+def _load_inner_product_config(repo_root: str) -> dict:
+    path = Path(repo_root) / "config" / "inner_product.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"Config inner_product introuvable: {path}")
+    cfg = OmegaConf.load(str(path))
+    return OmegaConf.to_container(cfg, resolve=True) or {}
+
+
 def _load_ppo_config(ppo_name: str, repo_root: str) -> dict:
     ppo_dir = Path(repo_root) / "config" / "ppo"
     ppo_path = ppo_dir / f"{ppo_name}.yaml"
@@ -119,6 +127,16 @@ def main(cfg: DictConfig):
         enable_greedy_final = cfg.get("enable_greedy_final", True)
     enable_greedy_final = bool(enable_greedy_final)
     M = int(agent_val("M") or cfg.get("M") or 1)
+
+    adaptive_batch = bool(agent_val("adaptive_batch") or cfg.get("adaptive_batch") or False)
+    lambda_init = 3
+    lambda_max_ip = lambda_
+    ip_tol = 0.4
+    if adaptive_batch:
+        ip_cfg = _load_inner_product_config(repo_root)
+        lambda_init = int(ip_cfg.get("lambda_init", 3))
+        lambda_max_ip = int(ip_cfg.get("lambda_max", lambda_))
+        ip_tol = float(ip_cfg.get("ip_tol", 0.4))
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
@@ -221,6 +239,8 @@ def main(cfg: DictConfig):
     )
     if decay_enabled:
         print(f"Decay params: start_ratio={decay_start_ratio} min_factor={decay_min_factor}")
+    if adaptive_batch:
+        print(f"Adaptive batch: lambda_init={lambda_init} lambda_max={lambda_max_ip} ip_tol={ip_tol}")
 
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -259,7 +279,7 @@ def main(cfg: DictConfig):
         nk_path = os.path.join(script_dir, "instances", "nk" if type_problem_upper == "NK" else "nk3",
                                str(dim), str(type_instance)) + os.sep
         tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
-            nk_path, nb_instances_test, nb_restarts, lambda_ * M, dim, D, type_instance, device
+            nk_path, nb_instances_test, nb_restarts, max(lambda_, lambda_max_ip) * M, dim, D, type_instance, device
         )
     elif type_problem_upper == "BLOCK":
         block_size = type_instance
@@ -331,6 +351,10 @@ def main(cfg: DictConfig):
         kl_beta_min=kl_beta_min,
         trpo_kl_threshold=trpo_kl_threshold,
         trpo_backoff_max_tries=trpo_backoff_max_tries,
+        adaptive_batch=adaptive_batch,
+        lambda_init=lambda_init,
+        lambda_max=lambda_max_ip,
+        ip_tol=ip_tol,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None

@@ -50,6 +50,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     bestScore = torch.ones(total_cases).to(device) * (-99999)
 
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
+    adaptive_enabled = bool(getattr(strategy, "adaptive_batch_enabled", False))
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
     collect_summary_metrics = track_leader
     collect_pairwise_metrics = track_leader and bool(enable_visualization)
@@ -91,6 +92,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     score_p95_history = []
     score_p98_history = []
     agent_fitness_history = []
+    agent_lambda_history = []
     hamming_pairwise_history = []
     js_pairwise_history = []
     l2_pairwise_history = []
@@ -114,14 +116,39 @@ def get_Score_trajectoriesBLOCK_cuda(
         and num_agents == len(per_agent_lambdas)
         and sum(per_agent_lambdas) == size_pop
     )
-    sample_hamming_history = [] if (enable_visualization and valid_agent_partition and num_agents > 1) else None
-    sample_hamming_pairwise_history = [] if (enable_visualization and valid_agent_partition and num_agents > 1) else None
+    # Sous batch adaptatif, agent_lambdas varie a chaque iteration (per_agent_lambdas
+    # ci-dessus est figé a l'init) : le decoupage par bloc contigu ne serait plus valide.
+    sample_hamming_history = [] if (enable_visualization and valid_agent_partition and num_agents > 1 and not adaptive_enabled) else None
+    sample_hamming_pairwise_history = [] if (enable_visualization and valid_agent_partition and num_agents > 1 and not adaptive_enabled) else None
 
     use_tqdm = bool(verbose)
-    pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
+    evals_consumed = 0
+
+    def _epoch_iter():
+        epoch = 0
+        while evals_consumed < stochastic_budget:
+            yield epoch
+            epoch += 1
+
+    if adaptive_enabled:
+        pbar = tqdm(total=stochastic_budget) if use_tqdm else None
+        iterator = _epoch_iter()
+    else:
+        pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
+        iterator = pbar
 
     possible_solutions = ((torch.arange(2**num_blocks)[:, None] >> torch.arange(num_blocks)) & 1).flip(1).to(device)
     seen_solutions = torch.zeros((total_cases,2**num_blocks)).to(device)
+
+    def _evaluate_population(tensor_solution, instance_idx=None):
+        pop_size = tensor_solution.size(1)
+        n = tensor_solution.size(0)
+        tensor_binary = tensor_solution.squeeze(3)
+        tensor_blocks = tensor_binary.reshape(n, pop_size, num_blocks, block_size)
+        block_counts = tensor_blocks.sum(dim=3)
+        block_proportions = block_counts / float(block_size)
+        block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
+        return block_scores[:, :, :scoring_blocks].mean(dim=2)
 
     def _update_agent_best_overall(tensor_score, tensor_solution=None, epoch=None, greedy_one_per_agent=False):
         if not (track_leader and agent_best_overall is not None):
@@ -159,10 +186,18 @@ def get_Score_trajectoriesBLOCK_cuda(
 
     bestGlobalSolution = None
 
-    for epoch in pbar:
+    for epoch in iterator:
 
-        tensor_solution = strategy.sample_solutions()
-
+        if adaptive_enabled:
+            tensor_solution, tensor_score = strategy.adaptive_iteration(_evaluate_population)
+            n_evals = tensor_solution.size(1)
+            evals_consumed += n_evals
+            agent_lambdas = strategy.agent_lambdas
+            if use_tqdm and pbar is not None:
+                pbar.update(n_evals)
+        else:
+            tensor_solution = strategy.sample_solutions()
+            tensor_score = _evaluate_population(tensor_solution)
 
         if solutions_history is not None:
             try:
@@ -171,28 +206,17 @@ def get_Score_trajectoriesBLOCK_cuda(
                 sample_first = None
             solutions_history.append(sample_first)
 
+        pop_size = tensor_solution.size(1)
         tensor_binary = tensor_solution.squeeze(3)
-
-        tensor_blocks = tensor_binary.reshape(total_cases, size_pop, num_blocks, block_size)
-
-
+        tensor_blocks = tensor_binary.reshape(total_cases, pop_size, num_blocks, block_size)
         block_counts = tensor_blocks.sum(dim=3)
-
         block_proportions = block_counts / float(block_size)
-
 
         matches = (block_proportions[:, :, None, :] == possible_solutions[None, None, :, :]).all(dim=3)
 
         seen = matches.any(dim=1).int()
         seen_solutions = torch.max(seen_solutions,seen)
         pr_seen_solutions = seen_solutions.mean(1)
-
-
-
-        block_scores = torch.maximum(block_proportions, 1.0 - block_proportions)
-
-        tensor_score = block_scores[:, :, :scoring_blocks].mean(dim=2)
-
 
         sample_hamming_current = None
 
@@ -242,9 +266,12 @@ def get_Score_trajectoriesBLOCK_cuda(
             bestGlobalSolution = torch.where(tmp_current_score > tmp_bestScore, best_current_solution, bestGlobalSolution)
 
         bestScore = torch.where(current_score > bestScore, current_score, bestScore)
-        if hasattr(strategy, "decay_svgd_gamma"):
-            strategy.decay_svgd_gamma(epoch, nb_iterations)
-        strategy.updateDistribution(tensor_solution, tensor_score)
+        if adaptive_enabled:
+            strategy.decay_svgd_gamma_by_budget(evals_consumed, stochastic_budget)
+        else:
+            if hasattr(strategy, "decay_svgd_gamma"):
+                strategy.decay_svgd_gamma(epoch, nb_iterations)
+            strategy.updateDistribution(tensor_solution, tensor_score)
 
         scores_np = bestScore.detach().cpu().numpy()
         score_mean_history.append(float(np.mean(scores_np)))
@@ -263,7 +290,7 @@ def get_Score_trajectoriesBLOCK_cuda(
         global_current = metrics.compute_fitness(current_score)
         global_best = metrics.compute_fitness(bestScore)
         best_fitness_history.append(global_best)
-        runtime_steps.append((epoch + 1) * size_pop)
+        runtime_steps.append(evals_consumed if adaptive_enabled else (epoch + 1) * size_pop)
 
         leader_idx = None
         avg_hamming = None
@@ -325,6 +352,7 @@ def get_Score_trajectoriesBLOCK_cuda(
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
+            agent_lambda_history.append(list(getattr(strategy, "last_effective_lambda_per_agent", agent_lambdas)))
             kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
             kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
             if kernel_stats:
@@ -496,6 +524,7 @@ def get_Score_trajectoriesBLOCK_cuda(
             sample_hamming_history=sample_hamming_history,
             sample_hamming_pairwise_history=sample_hamming_pairwise_history,
             best_individual_history=best_individual_history,
+            agent_lambda_history=agent_lambda_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

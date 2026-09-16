@@ -38,6 +38,7 @@ def get_Score_trajectoriesQUBO_cuda(
     bestScore = torch.ones(total_cases).to(device) * (-99999)
 
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
+    adaptive_enabled = bool(getattr(strategy, "adaptive_batch_enabled", False))
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
     collect_summary_metrics = track_leader
     collect_debug_metrics = bool(enable_visualization) if collect_debug_metrics is None else bool(collect_debug_metrics)
@@ -78,6 +79,7 @@ def get_Score_trajectoriesQUBO_cuda(
     score_p95_history = []
     score_p98_history = []
     agent_fitness_history = []
+    agent_lambda_history = []
     attraction_agent_history = []
     repulsion_agent_history = []
     hamming_pairwise_history = []
@@ -91,13 +93,31 @@ def get_Score_trajectoriesQUBO_cuda(
     metrics = MetricsCalculator()
 
     use_tqdm = bool(verbose)
-    pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
+    evals_consumed = 0
+
+    def _epoch_iter():
+        epoch = 0
+        while evals_consumed < stochastic_budget:
+            yield epoch
+            epoch += 1
+
+    if adaptive_enabled:
+        pbar = tqdm(total=stochastic_budget) if use_tqdm else None
+        iterator = _epoch_iter()
+    else:
+        pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
+        iterator = pbar
     bestGlobalSolution = None
 
-    def _evaluate_population(tensor_solution):
+    def _evaluate_population(tensor_solution, instance_idx=None):
         pop_size = tensor_solution.size(1)
+        # trancher pop_size D'ABORD (vue, gratuite) puis indexer par instance seulement
+        # sur cette largeur reduite, pour ne pas copier tensor_Q en entier a chaque appel.
+        Q = tensor_Q[:, :pop_size, :, :]
+        if instance_idx is not None:
+            Q = Q[instance_idx]
         tensor_QUBO = tensor_solution * 2 - 1
-        Qx = tensor_Q[:, :pop_size, :, :] @ tensor_QUBO
+        Qx = Q @ tensor_QUBO
         return -(torch.transpose(Qx, 2, 3) @ tensor_QUBO).squeeze(2).squeeze(2)
 
     def _update_agent_best_overall(tensor_score, tensor_solution=None, epoch=None, greedy_one_per_agent=False):
@@ -146,9 +166,19 @@ def get_Score_trajectoriesQUBO_cuda(
 
 
     
-    for epoch in pbar:
+    for epoch in iterator:
 
-        tensor_solution = strategy.sample_solutions()
+        if adaptive_enabled:
+            tensor_solution, tensor_score = strategy.adaptive_iteration(_evaluate_population)
+            n_evals = tensor_solution.size(1)
+            evals_consumed += n_evals
+            agent_lambdas = strategy.agent_lambdas
+            if use_tqdm and pbar is not None:
+                pbar.update(n_evals)
+        else:
+            tensor_solution = strategy.sample_solutions()
+            tensor_score = _evaluate_population(tensor_solution)
+
         if solutions_history is not None:
             try:
                 sample_first = tensor_solution[0, :, :, 0].detach().cpu().numpy().astype(np.uint8)
@@ -158,11 +188,6 @@ def get_Score_trajectoriesQUBO_cuda(
 
         if epoch == 0:
             startSolution = tensor_solution[:,0,:,:].squeeze(2)
-        
-
-
-        tensor_score = _evaluate_population(tensor_solution)
-        
 
         current_score = torch.max(tensor_score, dim=1).values
 
@@ -185,9 +210,12 @@ def get_Score_trajectoriesQUBO_cuda(
             
             
         bestScore = torch.where(current_score > bestScore, current_score,  bestScore)
-        if hasattr(strategy, "decay_svgd_gamma"):
-            strategy.decay_svgd_gamma(epoch, nb_iterations)
-        strategy.updateDistribution(tensor_solution, tensor_score)
+        if adaptive_enabled:
+            strategy.decay_svgd_gamma_by_budget(evals_consumed, stochastic_budget)
+        else:
+            if hasattr(strategy, "decay_svgd_gamma"):
+                strategy.decay_svgd_gamma(epoch, nb_iterations)
+            strategy.updateDistribution(tensor_solution, tensor_score)
 
         scores_np = -bestScore.detach().cpu().numpy()
         score_mean_history.append(float(np.mean(scores_np)))
@@ -206,7 +234,7 @@ def get_Score_trajectoriesQUBO_cuda(
         global_current = metrics.compute_fitness(current_score)
         global_best = metrics.compute_fitness(bestScore)
         best_fitness_history.append(-global_best)
-        runtime_steps.append((epoch + 1) * size_pop)
+        runtime_steps.append(evals_consumed if adaptive_enabled else (epoch + 1) * size_pop)
 
         leader_idx = None
         avg_hamming = None
@@ -263,6 +291,7 @@ def get_Score_trajectoriesQUBO_cuda(
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
             agent_fitness_history.append([-score.item() for score in agent_mean_scores])
+            agent_lambda_history.append(list(getattr(strategy, "last_effective_lambda_per_agent", agent_lambdas)))
             force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
             force_stats = force_stats_fn() if callable(force_stats_fn) else None
             if force_stats:
@@ -430,6 +459,7 @@ def get_Score_trajectoriesQUBO_cuda(
             best_individual_history=best_individual_history,
             attraction_agent_history=attraction_agent_history,
             repulsion_agent_history=repulsion_agent_history,
+            agent_lambda_history=agent_lambda_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

@@ -135,6 +135,7 @@ def get_Score_trajectoriesNK_cuda(
 
     bestScore = torch.ones(nb_instances*nb_restarts).to(device)*(-99999)
     agent_lambdas = getattr(strategy, "agent_lambdas", None)
+    adaptive_enabled = bool(getattr(strategy, "adaptive_batch_enabled", False))
     track_leader = isinstance(agent_lambdas, (list, tuple)) and len(agent_lambdas) > 0
     collect_summary_metrics = track_leader
     collect_debug_metrics = bool(enable_visualization) if collect_debug_metrics is None else bool(collect_debug_metrics)
@@ -182,6 +183,7 @@ def get_Score_trajectoriesNK_cuda(
     score_p95_history = []
     score_p98_history = []
     agent_fitness_history = []
+    agent_lambda_history = []
     attraction_agent_history = []
     repulsion_agent_history = []
     hamming_pairwise_history = []
@@ -195,19 +197,39 @@ def get_Score_trajectoriesNK_cuda(
     metrics = MetricsCalculator(normalization_factor=N)
 
     use_tqdm = bool(verbose and enable_visualization)
-    pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
+    evals_consumed = 0
 
-    def _evaluate_population(tensor_solution):
+    def _epoch_iter():
+        epoch = 0
+        while evals_consumed < stochastic_budget:
+            yield epoch
+            epoch += 1
+
+    if adaptive_enabled:
+        pbar = tqdm(total=stochastic_budget) if use_tqdm else None
+        iterator = _epoch_iter()
+    else:
+        pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
+        iterator = pbar
+
+    def _evaluate_population(tensor_solution, instance_idx=None):
         pop_size = tensor_solution.size(1)
+        # trancher pop_size D'ABORD (vue, gratuite) puis indexer par instance seulement
+        # sur cette largeur reduite : indexer avant aurait copie tensor_matrix_locus en
+        # entier (largeur size_pop, potentiellement 10-100x plus grande que pop_size).
+        locus = tensor_matrix_locus[:, :pop_size, :, :]
+        if instance_idx is not None:
+            locus = locus[instance_idx]
+        contrib_full = tensor_matrix_contrib if instance_idx is None else tensor_matrix_contrib[instance_idx]
         tensor_solution_rep = torch.transpose(tensor_solution, 2, 3).repeat([1, 1, N, 1])
         tensor_solution_locus = torch.gather(
             input=tensor_solution_rep,
             dim=3,
-            index=tensor_matrix_locus[:, :pop_size, :, :],
+            index=locus,
         )
         tensor_solution_locus = tensor_solution_locus.float()
         index_th = torch.sum(tensor_solution_locus * vectorIndex, dim=3).type(torch.int64).unsqueeze(3)
-        contrib = tensor_matrix_contrib
+        contrib = contrib_full
         if contrib.dim() == 3:
             contrib = contrib.unsqueeze(1)
         if contrib.size(1) != pop_size:
@@ -254,12 +276,19 @@ def get_Score_trajectoriesNK_cuda(
 
         
 
-    for epoch in pbar:
+    for epoch in iterator:
 
+        if adaptive_enabled:
+            tensor_solution, tensor_score = strategy.adaptive_iteration(_evaluate_population)
+            n_evals = tensor_solution.size(1)
+            evals_consumed += n_evals
+            agent_lambdas = strategy.agent_lambdas
+            if use_tqdm and pbar is not None:
+                pbar.update(n_evals)
+        else:
+            tensor_solution = strategy.sample_solutions()
+            tensor_score = _evaluate_population(tensor_solution)
 
-
-
-        tensor_solution = strategy.sample_solutions()
         if solutions_history is not None:
             try:
                 sample_first = tensor_solution[0, :, :, 0].detach().cpu().numpy().astype(np.uint8)
@@ -267,15 +296,7 @@ def get_Score_trajectoriesNK_cuda(
                 sample_first = None
             solutions_history.append(sample_first)
 
-            
-            
-        
-        
 
-        tensor_score = _evaluate_population(tensor_solution)
-
-
-        
         
         
         
@@ -302,9 +323,12 @@ def get_Score_trajectoriesNK_cuda(
         bestScore = torch.where(current_score > bestScore, current_score,  bestScore)
 
 
-        if hasattr(strategy, "decay_svgd_gamma"):
-            strategy.decay_svgd_gamma(epoch, nb_iterations)
-        strategy.updateDistribution(tensor_solution, tensor_score)
+        if adaptive_enabled:
+            strategy.decay_svgd_gamma_by_budget(evals_consumed, stochastic_budget)
+        else:
+            if hasattr(strategy, "decay_svgd_gamma"):
+                strategy.decay_svgd_gamma(epoch, nb_iterations)
+            strategy.updateDistribution(tensor_solution, tensor_score)
 
         scores_np = bestScore.detach().cpu().numpy() / N
         score_mean_history.append(float(np.mean(scores_np)))
@@ -378,6 +402,7 @@ def get_Score_trajectoriesNK_cuda(
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
             agent_fitness_history.append([score.item() / N for score in agent_mean_scores])
+            agent_lambda_history.append(list(getattr(strategy, "last_effective_lambda_per_agent", agent_lambdas)))
             kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
             kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
             if kernel_stats:
@@ -392,7 +417,7 @@ def get_Score_trajectoriesNK_cuda(
                 attraction_agent_history.append(None)
                 repulsion_agent_history.append(None)
 
-        runtime_steps.append((epoch + 1) * size_pop)
+        runtime_steps.append(evals_consumed if adaptive_enabled else (epoch + 1) * size_pop)
         best_fitness_history.append(-global_best)
 
         if(use_tqdm):
@@ -560,6 +585,7 @@ def get_Score_trajectoriesNK_cuda(
             best_individual_history=best_individual_history,
             attraction_agent_history=attraction_agent_history,
             repulsion_agent_history=repulsion_agent_history,
+            agent_lambda_history=agent_lambda_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

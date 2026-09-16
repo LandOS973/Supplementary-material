@@ -40,6 +40,10 @@ class FactoryStrategyEA:
         kl_beta_min=1e-4,
         trpo_kl_threshold=0.01,
         trpo_backoff_max_tries=4,
+        adaptive_batch=False,
+        lambda_init=3,
+        lambda_max=None,
+        ip_tol=0.4,
     ):
         match typeStrategy:
             case "UMDA":
@@ -75,6 +79,10 @@ class FactoryStrategyEA:
                     kl_beta_min=kl_beta_min,
                     trpo_kl_threshold=trpo_kl_threshold,
                     trpo_backoff_max_tries=trpo_backoff_max_tries,
+                    adaptive_batch=adaptive_batch,
+                    lambda_init=lambda_init,
+                    lambda_max=lambda_max,
+                    ip_tol=ip_tol,
                 )
             case _:
                 raise ValueError(f"Unknown strategy type: {typeStrategy}")

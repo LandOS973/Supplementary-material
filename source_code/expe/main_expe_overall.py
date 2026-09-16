@@ -118,6 +118,8 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
     ]
     if params.get("bandwith_kernel") is not None:
         parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
+    if params.get("adaptive_batch"):
+        parts.append(f"ab1_li{_slugify(params['lambda_init'])}_lm{_slugify(params['lambda_max'])}_ip{_slugify(params['ip_tol'])}")
     if params.get("ppo_active"):
         mode = params["ppo_mode"]
         parts.append(f"ppo{_slugify(mode)}")
@@ -177,6 +179,10 @@ def _expand_grid(grid: dict):
                 "decay_start_ratio": float(cfg["decay_start_ratio"]),
                 "decay_min_factor": float(cfg["decay_min_factor"]),
                 "bandwith_kernel": cfg.get("bandwith_kernel"),
+                "adaptive_batch": bool(cfg.get("adaptive_batch", False)),
+                "lambda_init": int(cfg.get("lambda_init", 3)),
+                "lambda_max": cfg.get("lambda_max"),
+                "ip_tol": float(cfg.get("ip_tol", 0.4)),
             }
             for key, default in _PPO_INACTIVE.items():
                 params[key] = cfg.get(key, default)
@@ -193,8 +199,12 @@ def _expand_grid(grid: dict):
     decay_start_ratio = grid.get("decay_start_ratio", [0.8])
     decay_min_factor = grid.get("decay_min_factor", [0.1])
     bandwith_kernel = grid.get("bandwith_kernel", [None])
+    adaptive_batch_values = grid.get("adaptive_batch", [False])
+    lambda_init_values = grid.get("lambda_init", [3])
+    lambda_max_values = grid.get("lambda_max", [None])
+    ip_tol_values = grid.get("ip_tol", [0.4])
 
-    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw) in itertools.product(
+    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw, ab, li, lm, ipt) in itertools.product(
         kernels,
         advantages,
         M_values,
@@ -204,6 +214,10 @@ def _expand_grid(grid: dict):
         decay_start_ratio,
         decay_min_factor,
         bandwith_kernel,
+        adaptive_batch_values,
+        lambda_init_values,
+        lambda_max_values,
+        ip_tol_values,
     ):
         base_params = dict(
             kernel=str(kernel).lower(),
@@ -215,6 +229,10 @@ def _expand_grid(grid: dict):
             decay_start_ratio=float(ds),
             decay_min_factor=float(dm),
             bandwith_kernel=bw,
+            adaptive_batch=bool(ab),
+            lambda_init=int(li),
+            lambda_max=(int(lm) if lm is not None else None),
+            ip_tol=float(ipt),
         )
         for ppo in _expand_ppo_variants(grid):
             params = dict(base_params, **ppo)
@@ -425,6 +443,10 @@ def _run_once(
     device=None,
     nb_restarts=None,
     ppo_params=None,
+    adaptive_batch=False,
+    lambda_init=3,
+    lambda_max=None,
+    ip_tol=0.4,
 ):
     device = device or DEFAULTS["device"]
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
@@ -468,6 +490,10 @@ def _run_once(
         kernel_config=kernel_config,
         no_interact=False,
         is_nk3=(problem_ctx["type_problem"] == "NK3"),
+        adaptive_batch=adaptive_batch,
+        lambda_init=lambda_init,
+        lambda_max=lambda_max,
+        ip_tol=ip_tol,
         **ppo_kwargs,
     ).to(device)
 
@@ -1099,6 +1125,10 @@ def main():
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                             ppo_params=params,
+                            adaptive_batch=params.get("adaptive_batch", False),
+                            lambda_init=params.get("lambda_init", 3),
+                            lambda_max=params.get("lambda_max"),
+                            ip_tol=params.get("ip_tol", 0.4),
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
@@ -1160,6 +1190,10 @@ def main():
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                             ppo_params=params,
+                            adaptive_batch=params.get("adaptive_batch", False),
+                            lambda_init=params.get("lambda_init", 3),
+                            lambda_max=params.get("lambda_max"),
+                            ip_tol=params.get("ip_tol", 0.4),
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
@@ -1221,6 +1255,10 @@ def main():
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                             ppo_params=params,
+                            adaptive_batch=params.get("adaptive_batch", False),
+                            lambda_init=params.get("lambda_init", 3),
+                            lambda_max=params.get("lambda_max"),
+                            ip_tol=params.get("ip_tol", 0.4),
                         )
                         success = True
                     except (torch.OutOfMemoryError, RuntimeError) as exc:
