@@ -80,6 +80,7 @@ def get_Score_trajectoriesQUBO_cuda(
     score_p98_history = []
     agent_fitness_history = []
     agent_lambda_history = []
+    instance_lambda_history = []
     attraction_agent_history = []
     repulsion_agent_history = []
     hamming_pairwise_history = []
@@ -292,6 +293,10 @@ def get_Score_trajectoriesQUBO_cuda(
                 entropy_agent_history.append(None)
             agent_fitness_history.append([-score.item() for score in agent_mean_scores])
             agent_lambda_history.append(list(getattr(strategy, "last_effective_lambda_per_agent", agent_lambdas)))
+            per_instance_lambda = getattr(strategy, "last_lambda_per_instance", None)
+            instance_lambda_history.append(
+                per_instance_lambda.detach().cpu().numpy() if per_instance_lambda is not None else None
+            )
             force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
             force_stats = force_stats_fn() if callable(force_stats_fn) else None
             if force_stats:
@@ -460,6 +465,7 @@ def get_Score_trajectoriesQUBO_cuda(
             attraction_agent_history=attraction_agent_history,
             repulsion_agent_history=repulsion_agent_history,
             agent_lambda_history=agent_lambda_history,
+            instance_lambda_history=instance_lambda_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

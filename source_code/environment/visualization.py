@@ -48,6 +48,7 @@ def render_agent_dashboard(
     attraction_agent_history=None,
     repulsion_agent_history=None,
     agent_lambda_history=None,
+    instance_lambda_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")
@@ -200,7 +201,8 @@ def render_agent_dashboard(
 
         best_individual_hamming = best_individual_history.get("hamming") if best_individual_history else None
         best_individual_available = best_individual_hamming is not None and getattr(best_individual_hamming, "size", 0) > 0
-        show_instance_column = theta_available or best_individual_available
+        instance_lambda_available = bool(instance_lambda_history) and any(a is not None for a in instance_lambda_history)
+        show_instance_column = theta_available or best_individual_available or instance_lambda_available
         theta_var = tk.IntVar(value=1 if show_instance_column else 0)
         theta_panel = None
         theta_pack_info = None
@@ -220,6 +222,9 @@ def render_agent_dashboard(
                     first_agent.detach().cpu().numpy() if hasattr(first_agent, "detach") else np.asarray(first_agent)
                 )
                 shared_num_instances = int(first_arr.shape[0]) if first_arr.ndim >= 1 else 0
+            elif instance_lambda_available:
+                first_valid = next(a for a in instance_lambda_history if a is not None)
+                shared_num_instances = int(first_valid.shape[0])
 
             shared_instance_var = tk.IntVar(value=0)
             shared_average_var = tk.IntVar(value=0)
@@ -243,6 +248,10 @@ def render_agent_dashboard(
             if theta_available:
                 theta_panel = _build_probs_heatmap_panel(
                     theta_container, root, theta_history, num_agents, shared_instance_var, shared_average_var
+                )
+            if instance_lambda_available:
+                _build_instance_batch_curve_panel(
+                    theta_container, instance_lambda_history, iterations, num_agents, shared_instance_var
                 )
             if theta_panel:
                 theta_pack_info = theta_panel.pack_info()
@@ -507,7 +516,7 @@ def render_agent_dashboard(
         agent_menu = tk.OptionMenu(agent_frame, selected_agent, *agent_options, command=lambda *_: update_overlays())
         agent_menu.pack(side="left")
 
-        hidden_defaults = {"Entropy", "JS"}
+        hidden_defaults = {"Entropy", "JS", "Score", "L1"}
         if metrics_order:
             default_selection = [name for name in metrics_order if name not in hidden_defaults]
             if not default_selection:
@@ -803,6 +812,11 @@ def _compute_agent_hamming_evolution(history):
     # stacked: (T, M, B, N) binaire, ou (T, M, B, N, D) categoriel
     if stacked.ndim not in (4, 5):
         return None, 0
+    # Moins de 2 steps enregistrés (record_full_theta_history=False par défaut, un seul
+    # snapshot conservé) : aucune évolution à montrer, une seule courbe à un point est
+    # invisible. Le panneau ne s'active alors pas du tout (cf. hamming_evo_available).
+    if stacked.shape[0] < 2:
+        return None, 0
     M = stacked.shape[1]
     num_instances = stacked.shape[2]
     if num_instances <= 0 or M < 2:
@@ -926,26 +940,90 @@ def _build_probs_heatmap_panel(container, root_window, history, num_agents, inst
         status_var.set(f"Epoch {epoch_idx + 1}/{len(values)} – {instance_label}")
         canvas.draw_idle()
 
-    slider = tk.Scale(
-        panel,
-        from_=0,
-        to=len(values) - 1,
-        orient="horizontal",
-        length=450,
-        command=lambda val: (epoch_var.set(int(float(val))), update_plot()),
-        label="Epoch",
-    )
-    slider.pack(fill="x", padx=12, pady=6)
+    # Par défaut, seul le dernier snapshot est conservé (record_full_theta_history=False) :
+    # un slider n'aurait qu'une seule position, donc inutile. Ne l'afficher que si
+    # l'historique complet a été activé (plusieurs steps réellement disponibles).
+    if len(values) > 1:
+        slider = tk.Scale(
+            panel,
+            from_=0,
+            to=len(values) - 1,
+            orient="horizontal",
+            length=450,
+            command=lambda val: (epoch_var.set(int(float(val))), update_plot()),
+            label="Epoch",
+        )
+        slider.pack(fill="x", padx=12, pady=6)
 
-    def step_epoch(delta):
-        new_idx = max(0, min(len(values) - 1, epoch_var.get() + delta))
-        slider.set(new_idx)
+        def step_epoch(delta):
+            new_idx = max(0, min(len(values) - 1, epoch_var.get() + delta))
+            slider.set(new_idx)
 
-    root_window.bind("<Left>", lambda event: step_epoch(-1))
-    root_window.bind("<Right>", lambda event: step_epoch(1))
+        root_window.bind("<Left>", lambda event: step_epoch(-1))
+        root_window.bind("<Right>", lambda event: step_epoch(1))
 
     instance_var.trace_add("write", update_plot)
     average_var.trace_add("write", update_plot)
     update_plot()
 
+    return panel
+
+
+def _build_instance_batch_curve_panel(container, instance_lambda_history, iterations, num_agents, instance_var):
+    """
+    Courbe (une par agent) de la taille de batch réellement utilisée (λa) au fil des
+    itérations, pour l'instance sélectionnée (réutilise `instance_var`, partagé avec
+    les autres panneaux d'instance). Uniquement peuplé en mode batch adaptatif —
+    `agent_lambda_history`/le panneau "Batch size" existant ne montre que la moyenne
+    sur toutes les instances, ce panneau-ci isole une instance donnée.
+    """
+    if not instance_lambda_history or num_agents == 0:
+        return None
+    paired = [(it, arr) for it, arr in zip(iterations, instance_lambda_history) if arr is not None]
+    if not paired:
+        return None
+    num_instances = paired[0][1].shape[0]
+    if num_instances <= 0:
+        return None
+
+    panel = tk.LabelFrame(container, text="Batch Size per Instance")
+    panel.pack(side="bottom", fill="both", expand=True, padx=10, pady=6)
+    panel.pack_propagate(False)
+
+    fig = plt.figure(figsize=(6, 3))
+    canvas = FigureCanvasTkAgg(fig, master=panel)
+    canvas.draw()
+    canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    status_var = tk.StringVar()
+    tk.Label(panel, textvariable=status_var).pack(pady=2)
+
+    def clamp_instance():
+        try:
+            val = int(instance_var.get())
+        except (tk.TclError, ValueError):
+            val = 0
+        return max(0, min(num_instances - 1, val))
+
+    def update_plot(*_):
+        instance_idx = clamp_instance()
+        xs = [it for it, _ in paired]
+
+        fig.clear()
+        ax = fig.add_subplot(111)
+        color_map = plt.cm.get_cmap("tab10", max(num_agents, 1))
+        for m in range(num_agents):
+            ys = [arr[instance_idx, m] for _, arr in paired]
+            ax.plot(xs, ys, label=f"Agent {m}", color=color_map(m))
+        ax.set_xlabel("Évaluations")
+        ax.set_ylabel("λa")
+        ax.set_title(f"Taille de batch réelle – Instance {instance_idx}")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.legend(fontsize="x-small", ncol=2)
+        fig.tight_layout()
+        status_var.set(f"Instance {instance_idx}")
+        canvas.draw_idle()
+
+    instance_var.trace_add("write", update_plot)
+    update_plot()
     return panel

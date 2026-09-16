@@ -93,6 +93,7 @@ def get_Score_trajectoriesBLOCK_cuda(
     score_p98_history = []
     agent_fitness_history = []
     agent_lambda_history = []
+    instance_lambda_history = []
     hamming_pairwise_history = []
     js_pairwise_history = []
     l2_pairwise_history = []
@@ -353,6 +354,10 @@ def get_Score_trajectoriesBLOCK_cuda(
                 entropy_agent_history.append(None)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
             agent_lambda_history.append(list(getattr(strategy, "last_effective_lambda_per_agent", agent_lambdas)))
+            per_instance_lambda = getattr(strategy, "last_lambda_per_instance", None)
+            instance_lambda_history.append(
+                per_instance_lambda.detach().cpu().numpy() if per_instance_lambda is not None else None
+            )
             kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
             kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
             if kernel_stats:
@@ -525,6 +530,7 @@ def get_Score_trajectoriesBLOCK_cuda(
             sample_hamming_pairwise_history=sample_hamming_pairwise_history,
             best_individual_history=best_individual_history,
             agent_lambda_history=agent_lambda_history,
+            instance_lambda_history=instance_lambda_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

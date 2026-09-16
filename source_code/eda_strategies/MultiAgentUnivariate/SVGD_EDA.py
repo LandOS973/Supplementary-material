@@ -344,6 +344,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         per_agent_grad = []
         per_agent_step_scale = []
         effective_lambda_per_agent = []
+        per_agent_lambda_real = []
 
         for m in range(M):
             probs_m = self.probs[:, m, ...].detach()
@@ -440,6 +441,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             per_agent_grad.append(g_hat_final)
             per_agent_step_scale.append(step_scale)
             effective_lambda_per_agent.append(float(lam_real.float().mean().item()))
+            per_agent_lambda_real.append(lam_real.detach().clone())
 
         tensor_solution = torch.cat(per_agent_samples, dim=1)
         tensor_score = torch.cat(per_agent_fitness, dim=1)
@@ -449,6 +451,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # dashboard, où elle est bien plus informative qu'une constante.
         self.agent_lambdas = [self.lambda_max for _ in range(M)]
         self.last_effective_lambda_per_agent = effective_lambda_per_agent
+        # (B, M) : vraie taille de batch par (instance, agent), pour le suivi dashboard
+        # par instance (last_effective_lambda_per_agent n'expose que la moyenne sur B).
+        self.last_lambda_per_instance = torch.stack(per_agent_lambda_real, dim=1)
 
         grad_theta = torch.stack(per_agent_grad, dim=1)  # (B, M, N[, D])
         self.last_theta_grad = grad_theta.detach()
