@@ -1,0 +1,190 @@
+\documentclass{article}
+\usepackage[french]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{Batch adaptatif par inner-product test sur SVGD-EDA — bilan}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Objectif}
+
+Tester si le critère inner-product test (Bollapragada, Byrd \& Nocedal, 2018) peut piloter
+dynamiquement la taille de batch Monte-Carlo ($\lambda_a$) par agent SVGD-EDA, plutôt qu'un
+$\lambda_a$ fixe.
+
+Critère, recalculé à chaque tour de doubling sur les $\lambda_a$ échantillons déjà tirés :
+
+\begin{itemize}
+  \item $z^{(i)} = a^{(i)} \cdot \nabla_\theta \log \pi_\theta(x^{(i)})$ — contribution par
+    échantillon ($a^{(i)}$ : avantage rang/fitness ; score en forme close $x-p$ ou
+    $\mathrm{onehot}(x)-p$).
+  \item $\hat g = \frac{1}{\lambda_a}\sum_i z^{(i)}$ — gradient estimé.
+  \item $\widehat{\mathrm{tr}\Sigma} = \frac{1}{\lambda_a-1}\sum_i \|z^{(i)}-\hat g\|^2$ —
+    dispersion (bruit Monte-Carlo).
+  \item $\|\hat g\|^2_{\mathrm{corr}} = \max(\|\hat g\|^2 - \widehat{\mathrm{tr}\Sigma}/\lambda_a,\,0)$
+    — norme débiaisée du bruit.
+  \item $\hat g^\top \Sigma \hat g = \|\hat g\|^4 \cdot \mathrm{Var}(\hat s^{(i)})$, avec
+    $\hat s^{(i)} = \langle z^{(i)}, \hat g\rangle/\|\hat g\|^2$ — variance projetée.
+  \item $\lambda_{a,\mathrm{req}} = \hat g^\top \Sigma \hat g / (\mathrm{ip\_tol}^2 \cdot
+    \|\hat g\|^4_{\mathrm{corr}})$ — taille requise ; $+\infty$ si $\|\hat g\|^2_{\mathrm{corr}}=0$.
+\end{itemize}
+
+Doubling ($\lambda_{a,\mathrm{init}} \to 2\times \to \dots \to \lambda_{a,\max}$) jusqu'à
+$\lambda_a \geq \lambda_{a,\mathrm{req}}$ ou $\lambda_{a,\max}$. Si plafonné : shrinkage du pas
+SVGD, $\eta \leftarrow \eta \cdot \|\hat g\|^2_{\mathrm{corr}} /
+(\|\hat g\|^2_{\mathrm{corr}} + \widehat{\mathrm{tr}\Sigma}/\lambda_a)$.
+
+\section{Implémentation}
+
+\begin{itemize}
+  \item Décision indépendante par (instance, agent) — pas d'agrégation sur le batch.
+  \item $\lambda_{a,\mathrm{init}}=10$ par défaut (cf. §\ref{sec:lambdainit} pour la
+    sensibilité), $\lambda_{a,\max}$ modeste (24-48).
+  \item Contrat externe inchangé : \texttt{agent\_lambdas} reste constant à $\lambda_{a,\max}$,
+    instances arrêtées tôt complétées par duplication de leurs échantillons réels.
+\end{itemize}
+
+\section{Résultats — NK (rugosité contrôlée par K)}
+
+\subsection{Score final vs baseline $\lambda_a=10$ fixe}
+
+Budget=50000, 10 instances $\times$ 10 restarts.
+
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & K=2 & K=4 & K=8 \\
+\midrule
+\textbf{baseline} & \textbf{0.7477} & \textbf{0.7608} & \textbf{0.7542} \\
+meilleur adaptatif & 0.7466 (ip5/lmax24) & 0.7575 (ip5/lmax48) & 0.7408 (ip5/lmax48) \\
+écart & $-0.15\%$ & $-0.4\%$ & $\mathbf{-1.8\%}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+L'écart au baseline grandit avec K, de façon monotone.
+
+\subsection{Fraction plafonnée et shrinkage sur un run complet}
+
+Run complet (50000 évaluations, $\lambda_{a,\mathrm{init}}=10$, $\lambda_{a,\max}=48$), mesuré
+sur toutes les itérations cumulées. Colonnes : \%capped / shrink médian.
+
+\begin{center}
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+dim & K & ip\_tol=0.4 & ip\_tol=5 & ip\_tol=20 & ip\_tol=100 \\
+\midrule
+64  & 1 & 89.0\% / 0.262   & 10.1\% / 0.0045 & 9.7\% / 0.0044  & 6.7\% / 0.0028 \\
+64  & 2 & 92.5\% / 0.221   & 12.5\% / 0.0039 & 9.7\% / 0.0042  & 7.8\% / 0.0027 \\
+64  & 4 & 98.9\% / 0.099   & 7.7\% / 0.0000  & 8.6\% / 0.0032  & 4.1\% / 0.0000 \\
+64  & 8 & 99.8\% / 0.0013  & 14.2\% / 0.0000 & 8.9\% / 0.0000  & 7.8\% / 0.0000 \\
+256 & 8 & 100.0\% / 0.0000 & 31.9\% / 0.0000 & 17.9\% / 0.0000 & 14.5\% / 0.0000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+  \item Rendements décroissants sur ip\_tol : chute nette entre 0.4 et 5, puis effet marginal
+    ($5\to20\to100$), car ip\_tol n'intervient que si $\|\hat g\|^2_{\mathrm{corr}}>0$.
+  \item Résidu incompressible qui empire avec la dimension : même à ip\_tol=100, 6-8\% restent
+    plafonnées à dim=64 et \textbf{14.5\%} à dim=256 (K=8), avec shrink médian quasi nul.
+\end{itemize}
+
+\subsection{Effet de la dimension : NK N=256, K=8}
+
+Même protocole, problème 4$\times$ plus grand (256 au lieu de 64) :
+
+\begin{center}
+\begin{tabular}{@{}lc@{}}
+\toprule
+config & score \\
+\midrule
+\textbf{baseline rang, $\lambda_a=10$} & \textbf{0.7235} \\
+adaptatif ip5, lmax48  & 0.6162 \\
+adaptatif ip20, lmax48 & 0.6401 \\
+adaptatif ip50, lmax48 & 0.6423 \\
+\textbf{écart (meilleur cas)} & \textbf{$-11.5\%$} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Dégradation bien plus forte qu'à N=64 K=8 ($-1.8\%$) alors que le \%capped n'augmente que
+modérément — la rugosité (K) et la dimension (N) semblent se cumuler plutôt que jouer
+indépendamment.
+
+\subsection{Sensibilité à $\lambda_{a,\mathrm{init}}$ (QUBO, rang, $\lambda_{a,\max}=48$)}
+\label{sec:lambdainit}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+$\lambda_{a,\mathrm{init}}$ & ip\_tol=5 & ip\_tol=20 \\
+\midrule
+\textbf{10} & $-301.60$ & $-295.00$ \\
+3           & $-299.20$ & $-291.60$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$\lambda_{a,\mathrm{init}}=3$ fait systématiquement moins bien que $10$ : redescendre sous le
+$\lambda_a$ connu-bon coûte plus qu'il ne rapporte en économie de budget.
+
+\section{Résultats — QUBO (dim=64, instance t=5)}
+
+Même reward des deux côtés (rang) — nb\_instances\_test=5, nb\_restarts=2, budget=50000 ;
+\textbf{plus bas = meilleur} :
+
+\begin{center}
+\begin{tabular}{@{}lc@{}}
+\toprule
+config & score \\
+\midrule
+\textbf{baseline rang, $\lambda_a=10$} & \textbf{$-304.80$} \\
+adaptatif ip5, lmax24  & $-304.20$ \\
+adaptatif ip5, lmax48  & $-301.60$ \\
+adaptatif ip20, lmax24 & $-298.80$ \\
+adaptatif ip20, lmax48 & $-295.00$ \\
+adaptatif ip50, lmax24 & $-304.00$ \\
+adaptatif ip50, lmax48 & $-300.60$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Meilleur cas quasi identique au baseline (bruit d'un seul run) ; aucun cas ne le bat.
+
+\textit{Note} : un premier essai avait suggéré un gain massif, dû à un facteur confondu (reward
+différent entre adaptatif et baseline) ; une fois égalisé, le gain disparaît.
+
+\section{Diagnostic}
+
+\begin{enumerate}
+  \item Paysage combinatoire intrinsèquement rugueux (surtout K élevé) : $\|\hat
+    g\|^2_{\mathrm{corr}}$ reste souvent sous le bruit même avec beaucoup d'échantillons —
+    régime courant, pas un cas rare de fin de convergence comme suppose le papier.
+  \item Doubling multiplicatif : phénomène tout-ou-rien, $\lambda_a$ explose vite au plafond.
+  \item Shrinkage quasi total sur les instances plafonnées, gelant une fraction croissante de
+    la population à mesure que K augmente.
+  \item SVGD-EDA tire sa force du nombre d'itérations (répulsion, moyennisation du bruit dans
+    le temps), pas de la fiabilité de chaque pas — philosophie opposée à l'inner-product test.
+\end{enumerate}
+
+\section{Conclusion}
+
+Une fois isolé de tout facteur confondu, le batch adaptatif \textbf{n'égale jamais un
+$\lambda_a$ fixe bien réglé} : quasi neutre sur les paysages peu rugueux et petits (NK K=1-2,
+QUBO), nettement dégradé sur les paysages rugueux et/ou grands (NK K=8, jusqu'à $-11.5\%$ à
+N=256). La dégradation s'aggrave avec la rugosité (K) \textbf{et} la dimension (N), et ces deux
+effets se cumulent. Le mécanisme fonctionne comme prévu par sa propre logique (plus de budget
+là où le signal est faible), mais cette logique ne s'aligne pas avec les besoins d'un
+optimiseur multi-agents itératif.
+
+\end{document}

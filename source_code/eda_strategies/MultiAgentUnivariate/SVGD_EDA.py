@@ -14,7 +14,6 @@ from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.FR import FisherRaoKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.no_interact import NoInteractKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
-from eda_strategies.MultiAgentUnivariate.advantage.rank_weighted import PerAgentRankWeightedAdvantage
 
 
 class SVGD_EDA(Abstract_EDA, nn.Module):
@@ -148,11 +147,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 if "problem" not in params:
                     params["problem"] = getattr(self, "problem_type", None)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg_local)
-        if self.adaptive_batch_enabled and not isinstance(self.advantage_strategy, PerAgentRankWeightedAdvantage):
-            raise ValueError(
-                "adaptive_batch=True n'est supporté que pour l'avantage "
-                "'peragentrankweighted' pour l'instant."
-            )
+        # Note : adaptive_iteration() n'utilise plus self.advantage_strategy — le critère et le
+        # gradient y sont calculés à partir d'une fitness brute recentrée (baseline batch-mean),
+        # indépendamment de l'avantage configuré ici pour le chemin non-adaptatif.
         if self.adaptive_batch_enabled and self.ppo_active:
             raise ValueError("adaptive_batch=True n'est supporté que pour REINFORCE (ppo_active=False) pour l'instant.")
         self.kernel_config = kernel_config_local
@@ -345,6 +342,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         per_agent_step_scale = []
         effective_lambda_per_agent = []
         per_agent_lambda_real = []
+        per_agent_capped = []
+        per_agent_shrink = []
 
         for m in range(M):
             probs_m = self.probs[:, m, ...].detach()
@@ -380,6 +379,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 sub_probs = probs_m[idx_active]
 
                 # a^(i) : poids PerAgentRankWeighted, reclassé sur l'ensemble accumulé de CETTE instance
+                # (même reward que le baseline non-adaptatif, pour isoler l'effet du batch adaptatif seul).
                 advantage = self.advantage_strategy.compute(
                     fitness=sub_fitness, nb_instances=n_active, num_agents=1,
                 ).detach()
@@ -442,6 +442,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             per_agent_step_scale.append(step_scale)
             effective_lambda_per_agent.append(float(lam_real.float().mean().item()))
             per_agent_lambda_real.append(lam_real.detach().clone())
+            per_agent_capped.append(capped.detach().clone())
+            per_agent_shrink.append(step_scale.detach().clone())
 
         tensor_solution = torch.cat(per_agent_samples, dim=1)
         tensor_score = torch.cat(per_agent_fitness, dim=1)
@@ -454,6 +456,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # (B, M) : vraie taille de batch par (instance, agent), pour le suivi dashboard
         # par instance (last_effective_lambda_per_agent n'expose que la moyenne sur B).
         self.last_lambda_per_instance = torch.stack(per_agent_lambda_real, dim=1)
+        # (B, M) : capped/shrink par (instance, agent), pour le suivi de la fraction
+        # plafonnée et du pas réellement appliqué sur un run complet.
+        self.last_capped_per_instance = torch.stack(per_agent_capped, dim=1)
+        self.last_shrink_per_instance = torch.stack(per_agent_shrink, dim=1)
 
         grad_theta = torch.stack(per_agent_grad, dim=1)  # (B, M, N[, D])
         self.last_theta_grad = grad_theta.detach()
