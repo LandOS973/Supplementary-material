@@ -631,16 +631,25 @@ def _save_raw_scores_csv(out_dir, scores_array):
             f.write(f"{float(val)}\n")
 
 
-def _mode_over_restarts(geno, nb_restarts):
-    """geno (I, A, N) uint8 instance-major -> (nb_inst, A, N) vote majoritaire sur les restarts."""
+def _best_over_restarts(geno, sc, nb_restarts):
+    """geno (I, A, N) uint8, sc (I, A) float, instance-major sur les restarts.
+
+    -> genotype (nb_inst, A, N), score (nb_inst, A) : pour chaque (instance, agent),
+    le génotype et le score proviennent du MÊME restart (celui de score max), pour
+    rester cohérents entre eux. Un vote majoritaire bit à bit sur les restarts est
+    trompeur dès que les restarts divergent vers des optima différents (paysages
+    rugueux / K élevé) : il recombine des bits d'optima incompatibles en un génotype
+    qui n'a jamais été évalué et dont la vraie fitness peut être très inférieure à
+    celle de n'importe quel restart individuel."""
     I, A, N = geno.shape
     nb_inst = max(1, I // max(1, nb_restarts))
-    g = geno[: nb_inst * nb_restarts].reshape(nb_inst, nb_restarts, A, N)
-    V = int(g.max()) + 1 if g.size else 1
-    if V <= 1:
-        return g[:, 0].astype(np.uint8)
-    onehot = (g[..., None] == np.arange(V)).astype(np.int16)      # (nb_inst, R, A, N, V)
-    return onehot.sum(axis=1).argmax(axis=-1).astype(np.uint8)     # (nb_inst, A, N)
+    n = nb_inst * nb_restarts
+    g = geno[:n].reshape(nb_inst, nb_restarts, A, N)
+    s = sc[:n].reshape(nb_inst, nb_restarts, A)
+    best_r = np.argmax(s, axis=1)                                             # (nb_inst, A)
+    best_geno = np.take_along_axis(g, best_r[:, None, :, None], axis=1).squeeze(1)
+    best_score = np.take_along_axis(s, best_r[:, None, :], axis=1).squeeze(1)
+    return best_geno.astype(np.uint8), best_score, best_r
 
 
 def _save_agent_debug_npz(config_dir, entries):
@@ -666,11 +675,12 @@ def _save_agent_debug_npz(config_dir, entries):
         nb_restarts = max(1, int(nb_restarts))
         nb_inst = max(1, I // nb_restarts)
         n = nb_inst * nb_restarts
-        data[f"{inst_name}/genotype"] = _mode_over_restarts(geno, nb_restarts)
-        data[f"{inst_name}/epoch"] = np.median(
-            ep[:n].reshape(nb_inst, nb_restarts, A), axis=1
-        )                                                             # (nb_inst, A)
-        data[f"{inst_name}/score"] = sc[:n].reshape(nb_inst, nb_restarts, A).mean(axis=1)
+        best_geno, best_score, best_r = _best_over_restarts(geno, sc, nb_restarts)
+        data[f"{inst_name}/genotype"] = best_geno
+        data[f"{inst_name}/score"] = best_score
+        data[f"{inst_name}/epoch"] = np.take_along_axis(
+            ep[:n].reshape(nb_inst, nb_restarts, A), best_r[:, None, :], axis=1
+        ).squeeze(1)                                                  # (nb_inst, A)
         data[f"{inst_name}/meta"] = np.array(
             [nb_inst, nb_restarts, size_pop, N, A], dtype=np.int64
         )
