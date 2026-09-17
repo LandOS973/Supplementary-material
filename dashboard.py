@@ -414,6 +414,86 @@ def _load_beast_optima_cached(problem: str, fp: str, sp: str):
         return None
 
 
+INSTANCES_DIR = ROOT / "source_code" / "instances"
+
+
+def _parse_nk_instance_file(path: Path, N: int, K: int, D: int):
+    """Reparse un fichier d'instance nk_*.txt (même format que getTensorInstances_NK,
+    mais en numpy pur, sans torch) -> (matrix_locus (N,K+1) int, matrix_contrib
+    (N, D**(K+1)) float, vector_index (K+1,) float)."""
+    lignes = path.read_text().splitlines()
+    matrix_locus = np.zeros((N, K + 1), dtype=np.int64)
+    matrix_contrib = np.zeros((N, D ** (K + 1)), dtype=np.float64)
+    for n in range(N):
+        for k in range(K + 1):
+            matrix_locus[n, k] = int(lignes[1 + n * (K + 1) + k])
+        for k in range(D ** (K + 1)):
+            matrix_contrib[n, k] = float(lignes[1 + N * (K + 1) + n * (D ** (K + 1)) + k])
+    vector_index = np.array([D ** (K - i) for i in range(K + 1)], dtype=np.float64)
+    return matrix_locus, matrix_contrib, vector_index
+
+
+@st.cache_data(show_spinner=False)
+def _load_nk_arrays_cached(problem: str, dim: int, t: int, ti: int):
+    D = 2 if problem == "NK" else 3
+    subdir = "nk" if problem == "NK" else "nk3"
+    fname = f"nk_{dim}_{t}_{ti}.txt" if D <= 2 else f"nk_{dim}_{t}_{D}_{ti}.txt"
+    path = INSTANCES_DIR / subdir / str(dim) / str(t) / fname
+    if not path.exists():
+        return None
+    try:
+        return _parse_nk_instance_file(path, dim, t, D)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _load_qubo_Q_cached(dim: int, t: int, ti: int):
+    qdir = INSTANCES_DIR / "QUBO"
+    prefix = f"puboi_evo_n_{dim}_t_{t}_i_"
+    try:
+        files = sorted(
+            (f for f in qdir.iterdir() if f.name.startswith(prefix) and f.name.endswith(".json")),
+            key=lambda f: int(f.name[len(prefix):-5]),
+        )
+        if ti >= len(files):
+            return None
+        import sys as _sys_local
+        if str(INSTANCES_DIR.parent / "utils") not in _sys_local.path:
+            _sys_local.path.insert(0, str(INSTANCES_DIR.parent / "utils"))
+        from walsh_expansion import WalshExpansion
+        w = WalshExpansion()
+        w.load(str(files[ti]))
+        return w.to_symmetric_Q()
+    except Exception:
+        return None
+
+
+def recompute_fitness(problem: str, dim: int, t: int, ti: int, genotype) -> float | None:
+    """Fitness brute recalculée directement depuis le fichier d'instance pour un
+    génotype donné — déterministe et rapide (formule tabulée / -sᵀQs, pas de
+    ré-entraînement). Sert à vérifier qu'un génotype affiché et le score affiché à
+    côté correspondent bien à la même chose (agrégation par vote majoritaire sur les
+    restarts comprise : le score recalculé est celui du génotype réellement montré,
+    pas la moyenne des scores des restarts individuels)."""
+    genotype = np.asarray(genotype)
+    if problem in ("NK", "NK3"):
+        arrs = _load_nk_arrays_cached(problem, dim, t, ti)
+        if arrs is None:
+            return None
+        matrix_locus, matrix_contrib, vector_index = arrs
+        N = matrix_locus.shape[0]
+        idx = (genotype[matrix_locus] * vector_index).sum(axis=1).astype(np.int64)
+        return float(matrix_contrib[np.arange(N), idx].sum()) / N
+    if problem == "QUBO":
+        Q = _load_qubo_Q_cached(dim, t, ti)
+        if Q is None:
+            return None
+        s = genotype.astype(np.float64) * 2 - 1
+        return float(-(s @ Q @ s))
+    return None
+
+
 @st.cache_data(show_spinner=False)
 def load_agent_debug(config: str) -> dict | None:
     """agent_debug.npz d'une config : clés '<instance>/genotype|epoch|score|meta'."""
@@ -2564,13 +2644,35 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                         selection_mode="single", default=0,
                         format_func=lambda x: f"#{x}",
                         key=f"fav_dbg_ti_{sel_idx}",
-                        help=f"agrégé sur {nb_r2} restarts (vote majoritaire)",
+                        help=f"meilleur restart (score max) parmi {nb_r2}",
                     )
                     if ti is None:
                         ti = 0
 
                 g = geno[ti]                                  # (A, N)
                 agents = [f"A{a}" for a in range(g.shape[0])]
+
+                # Le score stocké est la moyenne des scores réels des restarts, pas la
+                # fitness du génotype affiché (qui peut être un agrégat par vote
+                # majoritaire) : on la recalcule directement depuis le fichier
+                # d'instance pour que génotype affiché et score affiché correspondent
+                # vraiment à la même chose (cf. Hamming pairwise).
+                _im = INSTANCE_RE.match(instance)
+                _fit_recomputed = False
+                if _im is not None:
+                    _true_fit = [
+                        recompute_fitness(_im.group("problem"), int(_im.group("dim")),
+                                          int(_im.group("t")), ti, g[a])
+                        for a in range(g.shape[0])
+                    ]
+                    if all(v is not None for v in _true_fit):
+                        sco = np.array(sco, dtype=float, copy=True)
+                        sco[ti] = _true_fit
+                        _fit_recomputed = True
+                if not _fit_recomputed:
+                    st.caption("⚠️ Fitness recalculée indisponible (fichier d'instance "
+                               "introuvable) — les scores affichés restent la moyenne "
+                               "des restarts, pas la fitness du génotype montré.")
 
                 _sc = np.abs(np.asarray(sco[ti], float))
                 _bi = int(np.argmax(_sc)) if _sc.size else 0
