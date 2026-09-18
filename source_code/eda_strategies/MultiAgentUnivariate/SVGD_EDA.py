@@ -339,11 +339,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         per_agent_samples = []
         per_agent_fitness = []
         per_agent_grad = []
-        per_agent_step_scale = []
         effective_lambda_per_agent = []
         per_agent_lambda_real = []
         per_agent_capped = []
-        per_agent_shrink = []
 
         for m in range(M):
             probs_m = self.probs[:, m, ...].detach()
@@ -355,8 +353,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
             grad_shape = (B, N, self.max_dim) if self.use_categorical else (B, N)
             g_hat_final = torch.zeros(grad_shape, device=self.device)
-            tr_sigma_final = torch.zeros(B, device=self.device)
-            g_norm2_corr_final = torch.zeros(B, device=self.device)
             lam_req_final = torch.zeros(B, device=self.device)
 
             lam = 0
@@ -417,8 +413,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 freeze_idx = idx_active[newly_done]
                 if freeze_idx.numel() > 0:
                     g_hat_final[freeze_idx] = g_hat[newly_done]
-                    tr_sigma_final[freeze_idx] = tr_sigma[newly_done]
-                    g_norm2_corr_final[freeze_idx] = g_norm2_corr[newly_done]
                     lam_req_final[freeze_idx] = lam_req[newly_done]
                     lam_real[freeze_idx] = lam
                     active[freeze_idx] = False
@@ -430,20 +424,17 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             X_padded = torch.gather(X, 1, pad_idx.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, N, 1))
             F_padded = torch.gather(F, 1, pad_idx)
 
-            # capped/shrink : par instance, indépendamment — cf. discussion sur le besoin
-            # d'indépendance entre instances (plus d'agrégation par max sur B).
+            # capped : par instance, indépendamment — cf. discussion sur le besoin
+            # d'indépendance entre instances (plus d'agrégation par max sur B). Plus de
+            # réduction de pas dans ce cas : on garde le même pas, capped ou non.
             capped = (lam_real >= self.lambda_max) & (lam_req_final > lam_real)
-            shrink = g_norm2_corr_final / (g_norm2_corr_final + tr_sigma_final / lam_real.clamp(min=1) + 1e-12)
-            step_scale = torch.where(capped, shrink, torch.ones_like(shrink))
 
             per_agent_samples.append(X_padded)
             per_agent_fitness.append(F_padded)
             per_agent_grad.append(g_hat_final)
-            per_agent_step_scale.append(step_scale)
             effective_lambda_per_agent.append(float(lam_real.float().mean().item()))
             per_agent_lambda_real.append(lam_real.detach().clone())
             per_agent_capped.append(capped.detach().clone())
-            per_agent_shrink.append(step_scale.detach().clone())
 
         tensor_solution = torch.cat(per_agent_samples, dim=1)
         tensor_score = torch.cat(per_agent_fitness, dim=1)
@@ -456,21 +447,18 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # (B, M) : vraie taille de batch par (instance, agent), pour le suivi dashboard
         # par instance (last_effective_lambda_per_agent n'expose que la moyenne sur B).
         self.last_lambda_per_instance = torch.stack(per_agent_lambda_real, dim=1)
-        # (B, M) : capped/shrink par (instance, agent), pour le suivi de la fraction
-        # plafonnée et du pas réellement appliqué sur un run complet.
+        # (B, M) : capped par (instance, agent), pour le suivi de la fraction plafonnée
+        # sur un run complet.
         self.last_capped_per_instance = torch.stack(per_agent_capped, dim=1)
-        self.last_shrink_per_instance = torch.stack(per_agent_shrink, dim=1)
 
         grad_theta = torch.stack(per_agent_grad, dim=1)  # (B, M, N[, D])
         self.last_theta_grad = grad_theta.detach()
-        step_scale_full = torch.stack(per_agent_step_scale, dim=1)  # (B, M)
-        step_scale_full = step_scale_full.view(B, M, *([1] * (grad_theta.dim() - 2)))
 
         with torch.no_grad():
             self.baseline = torch.stack([f.mean(dim=1) for f in per_agent_fitness], dim=1)
             self.latest_advantages = None  # ragged par instance : pas de vue plate simple ici
 
-        self._apply_svgd(step_scale=step_scale_full)
+        self._apply_svgd()
         if self.enable_visualization:
             self._record_theta()
 
