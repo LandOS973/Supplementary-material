@@ -1,7 +1,7 @@
 """
 Compare SVGD-EDA vs a Nevergrad baseline on a ViennaRNA target.
 
-Reads all parameters from config_viennarna.yaml (problem + agent sections).
+Reads all parameters from config.yaml (problem + agent sections).
 Appends one row per run to results/viennarna_comparison.csv:
   target_name, budget, score_svgd, nevergrad_algo, score_nevergrad, gap, time_svgd_s, time_nevergrad_s
 """
@@ -206,7 +206,7 @@ def _run_one_target(
     print(f"Saved to     : {CSV_PATH}")
 
 
-@hydra.main(config_path="../config", config_name="config_viennarna", version_base=None)
+@hydra.main(config_path="../config", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     if RNA is None:
         raise RuntimeError("Install ViennaRNA Python bindings.")
