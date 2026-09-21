@@ -329,9 +329,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         last_surrogate_mean = None
         adv_exp = advantages.unsqueeze(-1)  # (BM, λa, 1) — précalculé hors boucle
 
-        for _ in range(self.ppo_epochs):
-            # Recalcul de π_θ depuis le theta courant (potentiellement mis à jour par SVGD)
-            self.probs = self.forward()
+        for epoch in range(self.ppo_epochs):
+            if epoch > 0:
+                self.probs = self.forward()
 
             # Ratio par position : r_n = π_θ_new(x_n) / π_θ_old(x_n)
             pi_new_per_pos = self._compute_pi_per_pos(indivduals)  # (BM, λa, N)
@@ -365,19 +365,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if self.last_theta_grad is None:
             return
 
-        theta = self.theta
-        score = self.last_theta_grad.detach()
-
-        with torch.enable_grad():
-            # Recompute fresh probs so the kernel always has a valid graph
-            # (the PPO/REINFORCE backward may have freed the previous one)
-            probs = self.forward()
-            phi = self.svgd.phi(theta, score, probs=probs)
+        with torch.no_grad():
+            phi = self.svgd.phi(self.theta, self.last_theta_grad.detach())
             kernel_stats = self.svgd.get_last_kernel_stats()
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
-
-        with torch.no_grad():
             self.theta += self.epsilon_svgd * phi
             self.probs = None
 
@@ -398,7 +390,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.svgd.gamma = float(target_gamma)
 
     def _record_theta(self):
-        """Ne conserve que le dernier snapshot (fin de budget)."""
         if self.theta is None or self.nb_instances <= 0:
             return
         with torch.no_grad():
@@ -406,7 +397,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         probs_final = [probs[:, m, :] for m in range(self.M)]
         if not probs_final:
             return
-        self.theta_history = [probs_final]
+        self.theta_history.append(probs_final)
 
     def get_theta_history(self):
         return {"values": self.theta_history}
