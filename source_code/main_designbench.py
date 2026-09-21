@@ -25,21 +25,6 @@ from problems.designbench import (
 )
 
 
-def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
-    kernel_dir = Path(repo_root) / "config" / "kernel"
-    kernel_path = kernel_dir / f"{kernel_name}.yaml"
-    if not kernel_path.exists():
-        available = ", ".join(sorted(p.stem for p in kernel_dir.glob("*.yaml"))) if kernel_dir.exists() else "none"
-        raise FileNotFoundError(
-            f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. Kernels disponibles: {available}"
-        )
-    cfg = OmegaConf.load(str(kernel_path))
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True) or {}
-    if "name" not in cfg_dict:
-        cfg_dict["name"] = kernel_name
-    return cfg_dict
-
-
 def _slugify(value) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
@@ -145,12 +130,10 @@ def main(cfg: DictConfig):
     M = int(agent_val("M") or cfg.get("M") or 1)
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
-    kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    kernel_cfg["debug_svgd"] = True
-    kernel_cfg["debug_every"] = 1
+    kernel_cfg = {"name": kernel_name, "debug_svgd": True, "debug_every": 1}
 
-    epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or kernel_cfg.get("epsilon_svgd") or 0.1)
-    svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or kernel_cfg.get("gamma") or 0.01)
+    epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or 0.1)
+    svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or 0.01)
     advantage_cfg = agent_val("advantage") or cfg.get("advantage") or "globalrankweighted"
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)

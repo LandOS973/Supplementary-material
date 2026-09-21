@@ -34,21 +34,6 @@ def _load_yaml(path: Path) -> dict:
     return OmegaConf.to_container(cfg, resolve=True) or {}
 
 
-def _load_kernel_config(kernel_name: str) -> dict:
-    kernel_dir = CONFIG_DIR / "kernel"
-    kernel_path = kernel_dir / f"{kernel_name}.yaml"
-    if not kernel_path.exists():
-        available = ", ".join(sorted(p.stem for p in kernel_dir.glob("*.yaml")))
-        raise FileNotFoundError(
-            f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. "
-            f"Kernels disponibles: {available}"
-        )
-    cfg = _load_yaml(kernel_path)
-    if "name" not in cfg:
-        cfg["name"] = kernel_name
-    return cfg
-
-
 def _parse_float_token(raw: str) -> float:
     txt = raw.strip().lower()
     if "p" in txt and "." not in txt:
@@ -362,10 +347,10 @@ def main() -> None:
     print("Le temps inclut le chargement des instances et l'execution complete du budget.")
 
     base_cfg = _load_yaml(CONFIG_DIR / "config.yaml")
-    agent_cfg = _load_yaml(CONFIG_DIR / "agent" / "reinforce.yaml")
+    agent_cfg = _load_yaml(CONFIG_DIR / "agent" / "agents.yaml")
 
     defaults = {
-        "kernel": str(agent_cfg.get("kernel", "hk")).lower(),
+        "kernel": str(agent_cfg.get("kernel", "rbf")).lower(),
         "advantage": agent_cfg.get("advantage", "baseline"),
         "M": int(agent_cfg.get("M", 1)),
         "lambda": int(agent_cfg.get("lambda", 10)),
@@ -387,17 +372,14 @@ def main() -> None:
     cfg = _parse_config_string(config_str, defaults)
 
     kernel_name = str(cfg["kernel"]).lower()
-    kernel_cfg = _load_kernel_config(kernel_name)
     epsilon_svgd = float(
         cfg.get("epsilon_svgd")
         or base_cfg.get("epsilon_svgd")
-        or kernel_cfg.get("epsilon_svgd")
         or 0.5
     )
     svgd_gamma = float(
         cfg.get("gamma")
         or base_cfg.get("gamma")
-        or kernel_cfg.get("gamma")
         or 10.0
     )
     cfg["epsilon_svgd"] = epsilon_svgd

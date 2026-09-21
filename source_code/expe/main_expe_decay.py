@@ -51,21 +51,6 @@ DEFAULTS = dict(
 )
 
 
-def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
-    kernel_dir = Path(repo_root) / "config" / "kernel"
-    kernel_path = kernel_dir / f"{kernel_name}.yaml"
-    if not kernel_path.exists():
-        available = ", ".join(sorted(p.stem for p in kernel_dir.glob("*.yaml"))) if kernel_dir.exists() else "none"
-        raise FileNotFoundError(
-            f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. Kernels disponibles: {available}"
-        )
-    cfg = OmegaConf.load(str(kernel_path))
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True) or {}
-    if "name" not in cfg_dict:
-        cfg_dict["name"] = kernel_name
-    return cfg_dict
-
-
 def _parse_summary_config(summary_path: Path) -> dict:
     cfg = {}
     try:
@@ -520,20 +505,12 @@ def _load_existing_best(out_dir, problem_name, dim, type_instance, kernel_name):
         return None
 
 
-def _resolve_best_config(best_cfg, kernel_name, repo_root):
-    try:
-        kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    except Exception:
-        kernel_cfg = {}
+def _resolve_best_config(best_cfg, kernel_name):
     epsilon_svgd = best_cfg.get("epsilon_svgd")
-    if epsilon_svgd is None:
-        epsilon_svgd = kernel_cfg.get("epsilon_svgd")
     if epsilon_svgd is None:
         epsilon_svgd = 0.01
         print(f"[WARN] epsilon_svgd manquant, fallback a {epsilon_svgd}")
     gamma = best_cfg.get("gamma")
-    if gamma is None:
-        gamma = kernel_cfg.get("gamma")
     if gamma is None:
         gamma = 0.001
         print(f"[WARN] gamma manquant, fallback a {gamma}")
@@ -592,7 +569,7 @@ def main():
             print(f"[WARN] Aucun resume valide dans {summary_dir}. Skip.")
             continue
 
-        best_params = _resolve_best_config(best_cfg, best_kernel, repo_root)
+        best_params = _resolve_best_config(best_cfg, best_kernel)
         existing = _load_existing_best(
             outdir,
             problem_ctx["type_problem"],

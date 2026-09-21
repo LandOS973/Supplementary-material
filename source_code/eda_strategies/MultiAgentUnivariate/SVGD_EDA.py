@@ -7,11 +7,6 @@ from types import SimpleNamespace
 from eda_strategies.Abstract_EDA import Abstract_EDA
 from eda_strategies.MultiAgentUnivariate.SVGD.SVGD import SVGD
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.rbf import RBF
-from eda_strategies.MultiAgentUnivariate.SVGD.kernels.ppk import PPK
-from eda_strategies.MultiAgentUnivariate.SVGD.kernels.JSD import JSD
-from eda_strategies.MultiAgentUnivariate.SVGD.kernels.PK import ProbabilityKernel
-from eda_strategies.MultiAgentUnivariate.SVGD.kernels.HK import HammingKernel
-from eda_strategies.MultiAgentUnivariate.SVGD.kernels.FR import FisherRaoKernel
 from eda_strategies.MultiAgentUnivariate.SVGD.kernels.no_interact import NoInteractKernel
 from eda_strategies.MultiAgentUnivariate.advantage import AdvantageFactory
 
@@ -131,7 +126,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                     params["problem"] = getattr(self, "problem_type", None)
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg_local)
         self.kernel_config = kernel_config_local
-        self.kernel_name = str(self.kernel_config.get("name", "hk")).lower()
+        self.kernel_name = str(self.kernel_config.get("name", "rbf")).lower()
         self.kernel_params = {}
         self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
         self.debug_svgd = bool(self.kernel_config.get("debug_svgd", True))
@@ -707,20 +702,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         kernel = kernel_name.lower()
         if self.no_interact or kernel in ("no_interact", "no-interact", "identity", "none"):
             return NoInteractKernel()
-        if kernel in ("hk", "hamming", "hammingkernel"):
-            return HammingKernel()
-        if kernel == "ppk":
-            return PPK()
         if kernel == "rbf":
             return RBF()
-        if kernel == "pk":
-            return ProbabilityKernel()
-        if kernel == "jsd":
-            return JSD()
-        if kernel in ("fr", "fisherrao", "fisher_rao", "fisher-rao"):
-            return FisherRaoKernel()
         raise ValueError(
-            f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk, jsd, fr, no_interact."
+            f"Unsupported kernel '{kernel_name}'. Available kernels: rbf, no_interact."
         )
 
     def initialize_from_dataset(self, x_data, max_samples: int = 50000, noise_std: float = 0.01) -> bool:

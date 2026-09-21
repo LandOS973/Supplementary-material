@@ -29,20 +29,6 @@ except Exception:
     ng = None
 
 
-def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
-    kernel_dir = Path(repo_root) / "config" / "kernel"
-    kernel_path = kernel_dir / f"{kernel_name}.yaml"
-    if not kernel_path.exists():
-        available = ", ".join(sorted(p.stem for p in kernel_dir.glob("*.yaml"))) if kernel_dir.exists() else "none"
-        raise FileNotFoundError(
-            f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. Kernels disponibles: {available}"
-        )
-    cfg = OmegaConf.load(str(kernel_path))
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True) or {}
-    if "name" not in cfg_dict:
-        cfg_dict["name"] = kernel_name
-    return cfg_dict
-
 def _run_nevergrad_maxcut(
     adjacency_matrix: torch.Tensor,
     budget: int,
@@ -162,8 +148,8 @@ def main(cfg: DictConfig):
     if enable_greedy_final is None:
         enable_greedy_final = cfg.get("enable_greedy_final", True)
     enable_greedy_final = bool(enable_greedy_final)
-    kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
-    kernel_cfg = _load_kernel_config(kernel_name, repo_root)
+    kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
+    kernel_cfg = {"name": kernel_name}
     prob_eps_override = agent_val("prob_eps_clamp") or cfg.get("prob_eps_clamp")
     if prob_eps_override is not None:
         kernel_cfg["prob_eps_clamp"] = float(prob_eps_override)
@@ -175,10 +161,8 @@ def main(cfg: DictConfig):
         debug_svgd_override = cfg.get("debug_svgd", False)
     kernel_cfg["debug_svgd"] = bool(debug_svgd_override)
 
-    kernel_lr = kernel_cfg.get("epsilon_svgd")
-    kernel_gamma = kernel_cfg.get("gamma")
-    epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or kernel_lr or 0.5)
-    svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or kernel_gamma or 10.0)
+    epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or 0.5)
+    svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or 10.0)
 
     decay_default_start_ratio = 0.0 if decay_enabled else 0.8
     decay_default_min_factor = 0.05 if decay_enabled else 0.1

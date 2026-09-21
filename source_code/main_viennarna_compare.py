@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import csv
 import multiprocessing as mp
-import os
 import random
 import time
 from pathlib import Path
@@ -22,10 +21,7 @@ from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
-from main_viennarna import (
-    _load_kernel_config,
-    get_Score_trajectories_viennarna_cuda,
-)
+from main_viennarna import get_Score_trajectories_viennarna_cuda
 from main_nevergrad_viennarna import _run_restart
 from problems.viennarna import (
     ETERNA100_TSV_URL,
@@ -221,9 +217,6 @@ def main(cfg: DictConfig) -> None:
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     print(f"device: {device}")
 
-    script_dir = os.path.abspath(os.path.dirname(__file__))
-    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
-
     def agent_val(key):
         try:
             return OmegaConf.select(cfg, f"agent.{key}")
@@ -250,10 +243,9 @@ def main(cfg: DictConfig) -> None:
     lambda_ = int(agent_val("lambda") or cfg.get("lambda") or cfg.get("lambda_") or 10)
     M = int(agent_val("M") or cfg.get("M") or 1)
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
-    kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    kernel_cfg["debug_svgd"] = False
-    epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or kernel_cfg.get("epsilon_svgd") or 0.1)
-    svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or kernel_cfg.get("gamma") or 0.01)
+    kernel_cfg = {"name": kernel_name, "debug_svgd": False}
+    epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or 0.1)
+    svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or 0.01)
     advantage_cfg = agent_val("advantage") or cfg.get("advantage") or "globalrankweighted"
     if isinstance(advantage_cfg, DictConfig):
         advantage_cfg = OmegaConf.to_container(advantage_cfg, resolve=True)

@@ -37,21 +37,6 @@ from problems.viennarna import ETERNA100_TSV_URL, load_target_from_eterna100, no
 from utils.main_utils import build_global_ranking_lines
 
 
-def _load_kernel_config(kernel_name: str, repo_root: str) -> dict:
-    kernel_dir = Path(repo_root) / "config" / "kernel"
-    kernel_path = kernel_dir / f"{kernel_name}.yaml"
-    if not kernel_path.exists():
-        available = ", ".join(sorted(p.stem for p in kernel_dir.glob("*.yaml"))) if kernel_dir.exists() else "none"
-        raise FileNotFoundError(
-            f"Kernel config '{kernel_name}' introuvable dans {kernel_dir}. Kernels disponibles: {available}"
-        )
-    cfg = OmegaConf.load(str(kernel_path))
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True) or {}
-    if "name" not in cfg_dict:
-        cfg_dict["name"] = kernel_name
-    return cfg_dict
-
-
 def _load_ppo_config(ppo_name: str, repo_root: str) -> dict:
     ppo_dir = Path(repo_root) / "config" / "ppo"
     ppo_path = ppo_dir / f"{ppo_name}.yaml"
@@ -120,26 +105,22 @@ def main(cfg: DictConfig):
     enable_greedy_final = bool(enable_greedy_final)
     M = int(agent_val("M") or cfg.get("M") or 1)
 
-    kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "hk").lower()
-    kernel_cfg = _load_kernel_config(kernel_name, repo_root)
+    kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
+    kernel_cfg = {"name": kernel_name}
     prob_eps_override = agent_val("prob_eps_clamp") or cfg.get("prob_eps_clamp")
     if prob_eps_override is not None:
         kernel_cfg["prob_eps_clamp"] = float(prob_eps_override)
     natural_grad_override = agent_val("natural_grad") or cfg.get("natural_grad")
     if natural_grad_override is not None:
         kernel_cfg["natural_grad"] = bool(natural_grad_override)
-    kernel_lr = kernel_cfg.get("epsilon_svgd")
-    kernel_gamma = kernel_cfg.get("gamma")
     epsilon_svgd = float(
         agent_val("epsilon_svgd")
         or cfg.get("epsilon_svgd")
-        or kernel_lr
         or 0.5
     )
     svgd_gamma = float(
         agent_val("gamma")
         or cfg.get("gamma")
-        or kernel_gamma
         or 10.0
     )
 
