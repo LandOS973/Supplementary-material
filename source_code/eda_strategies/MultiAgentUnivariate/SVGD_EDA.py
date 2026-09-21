@@ -236,15 +236,15 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             )  # (BM, N)
         return kl.sum(dim=-1).sum()
 
-    def _updateDistribution_REINFORCE(self, solutionList, scoreList):
+    def _prepare_step(self, solutionList, scoreList):
         """
-        Mise à jour REINFORCE pure : ∇_θ E[A · log π_θ(x)].
-        Identique au comportement de la branche main (ppo_active=False).
-        _apply_svgd() est appelé par updateDistribution après ce retour.
+        Reshape (solutions, scores) en (BM, λa, N), calcule les avantages Ŝ
+        (fixes, sans gradient) et met à jour la baseline. Partagé par REINFORCE
+        et PPO, qui n'en diffèrent qu'après ce point.
         """
         B, M, N = self.nb_instances, self.M, self.N
-        λa = self.lambda_per_agent
         BM = B * M
+        λa = self.lambda_per_agent
 
         indivduals = solutionList.view(BM, λa, N)
         fitness = scoreList.view(BM, λa)
@@ -253,32 +253,36 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if self.use_categorical:
             D = self.probs.size(-1)
             theta_flat = self.theta.view(BM, N, D)
-            all_Pi_Theta = self.probs.view(BM, N, D)
-            all_Pi_Theta_exp = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)
-            log_probs = torch.log(all_Pi_Theta_exp + 1e-10)
-            indices = indivduals.long().unsqueeze(-1)
-            log_Pi = log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)  # (BM, λa)
+            probs_exp = self.probs.view(BM, N, D).unsqueeze(1).expand(-1, λa, -1, -1)
         else:
             theta_flat = self.theta.view(BM, N)
-            all_Pi_Theta = self.probs.view(BM, N)
-            all_Pi_Theta_exp = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)
-            Pi_selected = torch.where(indivduals == 1.0, all_Pi_Theta_exp, 1.0 - all_Pi_Theta_exp)
-            log_Pi = torch.log(Pi_selected + 1e-10).sum(dim=2)  # (BM, λa)
+            probs_exp = self.probs.view(BM, N).unsqueeze(1).expand(-1, λa, -1)
 
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
             baseline=baseline,
             theta=theta_flat,
             indivduals=indivduals,
-            probs=all_Pi_Theta_exp,
+            probs=probs_exp,
             nb_instances=B,
             num_agents=M,
         ).detach()
 
-        loss = torch.mean(advantages * log_Pi, dim=1).sum()
-
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1).view(B, M)
+
+        return indivduals, advantages
+
+    def _updateDistribution_REINFORCE(self, solutionList, scoreList):
+        """
+        Mise à jour REINFORCE pure : ∇_θ E[A · log π_θ(x)].
+        Identique au comportement de la branche main (ppo_active=False).
+        _apply_svgd() est appelé par updateDistribution après ce retour.
+        """
+        indivduals, advantages = self._prepare_step(solutionList, scoreList)
+        log_Pi = torch.log(self._compute_pi_per_pos(indivduals) + 1e-10).sum(dim=2)  # (BM, λa)
+
+        loss = torch.mean(advantages * log_Pi, dim=1).sum()
 
         (grad_theta,) = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
         self.last_theta_grad = grad_theta.detach().clone()
@@ -312,44 +316,14 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
               objective = E[r_jl · Ŝ] - beta · KL(π_old ‖ π_new)
               θ_i += ε · SVGD_phi(θ, ∇objective)
         """
-        B, M, N = self.nb_instances, self.M, self.N
-        λa = self.lambda_per_agent
-        BM = B * M
-
-        indivduals = solutionList.view(BM, λa, N)
-        fitness = scoreList.view(BM, λa)
-        baseline = self.baseline.view(BM) if self.baseline.numel() > 0 else torch.zeros(BM, device=self.device)
-
-        # --- Avantages Ŝ : calculés une fois, fixes pour les K époques ---
-        if self.use_categorical:
-            D = self.probs.size(-1)
-            theta_flat = self.theta.view(BM, N, D)
-            all_Pi_Theta = self.probs.view(BM, N, D)
-            all_Pi_Theta_exp = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1, -1)
-        else:
-            theta_flat = self.theta.view(BM, N)
-            all_Pi_Theta = self.probs.view(BM, N)
-            all_Pi_Theta_exp = all_Pi_Theta.unsqueeze(1).expand(-1, λa, -1)
-
-        advantages = self.advantage_strategy.compute(
-            fitness=fitness,
-            baseline=baseline,
-            theta=theta_flat,
-            indivduals=indivduals,
-            probs=all_Pi_Theta_exp,
-            nb_instances=B,
-            num_agents=M,
-        ).detach()  # coefficient fixe, pas de gradient nécessaire
+        indivduals, advantages = self._prepare_step(solutionList, scoreList)
+        BM, _, N = indivduals.shape
 
         # --- π_θ_old figées pour les K époques (ratio + KL) ---
         with torch.no_grad():
             pi_old_per_pos = self._compute_pi_per_pos(indivduals).detach()  # (BM, λa, N)
             pi_old_full = self.probs.view(BM, N, -1).detach() if self.use_categorical \
                 else self.probs.view(BM, N).detach()
-
-        # --- Mise à jour de la baseline ---
-        with torch.no_grad():
-            self.baseline = fitness.mean(dim=1).view(B, M)
 
         # --- Boucle K époques PPO avec SVGD intra-boucle ---
         last_surrogate_mean = None
@@ -424,18 +398,15 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.svgd.gamma = float(target_gamma)
 
     def _record_theta(self):
+        """Ne conserve que le dernier snapshot (fin de budget)."""
         if self.theta is None or self.nb_instances <= 0:
-            return []
+            return
         with torch.no_grad():
             probs = self.probs if self.probs is not None else self.forward()
         probs_final = [probs[:, m, :] for m in range(self.M)]
         if not probs_final:
             return
-        if getattr(self, "record_full_theta_history", True):
-            self.theta_history.append(probs_final)
-        else:
-            # Panneau : seul le dernier snapshot (fin de budget) est conservé.
-            self.theta_history = [probs_final]
+        self.theta_history = [probs_final]
 
     def get_theta_history(self):
         return {"values": self.theta_history}

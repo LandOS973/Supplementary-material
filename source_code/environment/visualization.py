@@ -237,7 +237,7 @@ def render_agent_dashboard(
                 )
             if theta_available:
                 theta_panel = _build_probs_heatmap_panel(
-                    theta_container, root, theta_history, num_agents, shared_instance_var, shared_average_var
+                    theta_container, theta_history, num_agents, shared_instance_var, shared_average_var
                 )
             if theta_panel:
                 theta_pack_info = theta_panel.pack_info()
@@ -816,13 +816,13 @@ def _compute_agent_hamming_evolution(history):
     return per_agent_all, num_instances
 
 
-def _build_probs_heatmap_panel(container, root_window, history, num_agents, instance_var, average_var):
+def _build_probs_heatmap_panel(container, history, num_agents, instance_var, average_var):
     """
-    Heatmap M agents x N dimensions des probabilités (sigmoid/softmax de theta),
-    avec un slider sur les steps enregistrés. `instance_var`/`average_var` sont
-    partagés avec les autres panels d'instance (ex: table Hamming) pour rester
-    synchronisés. Quand `average_var` est actif, affiche la moyenne des probas
-    sur toutes les instances plutôt que l'instance sélectionnée.
+    Heatmap M agents x N dimensions des probabilités (sigmoid/softmax de theta)
+    du dernier état enregistré. `instance_var`/`average_var` sont partagés avec
+    les autres panels d'instance (ex: table Hamming) pour rester synchronisés.
+    Quand `average_var` est actif, affiche la moyenne des probas sur toutes les
+    instances plutôt que l'instance sélectionnée.
     """
     values = history.get("values") or []
     if not values or num_agents == 0:
@@ -859,7 +859,6 @@ def _build_probs_heatmap_panel(container, root_window, history, num_agents, inst
     canvas.draw()
     canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    epoch_var = tk.IntVar(value=0)
     status_var = tk.StringVar()
     tk.Label(panel, textvariable=status_var).pack(pady=2)
 
@@ -874,7 +873,7 @@ def _build_probs_heatmap_panel(container, root_window, history, num_agents, inst
         return val
 
     def update_plot(*_):
-        epoch_idx = clamp(epoch_var, len(values) - 1)
+        epoch_idx = len(values) - 1
         if average_var.get():
             instance_idx = None
             instance_label = f"Moyenne sur {num_instances} instances"
@@ -916,28 +915,10 @@ def _build_probs_heatmap_panel(container, root_window, history, num_agents, inst
         for row in range(1, num_rows):
             ax.axhline(row - 0.5, color="white", linewidth=1.2)
         ax.set_xlabel("Dimension")
-        ax.set_title(f"{instance_label} – Epoch {epoch_idx + 1}/{len(values)}")
+        ax.set_title(f"{instance_label} – dernier état")
         fig.tight_layout()
-        status_var.set(f"Epoch {epoch_idx + 1}/{len(values)} – {instance_label}")
+        status_var.set(instance_label)
         canvas.draw_idle()
-
-    slider = tk.Scale(
-        panel,
-        from_=0,
-        to=len(values) - 1,
-        orient="horizontal",
-        length=450,
-        command=lambda val: (epoch_var.set(int(float(val))), update_plot()),
-        label="Epoch",
-    )
-    slider.pack(fill="x", padx=12, pady=6)
-
-    def step_epoch(delta):
-        new_idx = max(0, min(len(values) - 1, epoch_var.get() + delta))
-        slider.set(new_idx)
-
-    root_window.bind("<Left>", lambda event: step_epoch(-1))
-    root_window.bind("<Right>", lambda event: step_epoch(1))
 
     instance_var.trace_add("write", update_plot)
     average_var.trace_add("write", update_plot)
