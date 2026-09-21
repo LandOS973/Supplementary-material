@@ -357,8 +357,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
             lam = 0
             while active.any():
-                # increment <= 0 dès que lam atteint lambda_max : c'est le seul garde-fou nécessaire.
-                increment = min(max(self.lambda_init, lam), self.lambda_max - lam)
+                # premier palier : lambda_init (degrés de liberté minimaux pour une première
+                # estimation de variance) ; paliers suivants : +2 seulement (pas de doublement,
+                # pour ne pas dépasser trop largement lambda_req une fois la zone atteinte).
+                step = self.lambda_init if lam == 0 else 2
+                increment = min(step, self.lambda_max - lam)
                 if increment <= 0:
                     break
                 idx_active = active.nonzero(as_tuple=True)[0]
