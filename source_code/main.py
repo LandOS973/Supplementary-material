@@ -8,7 +8,6 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import random
-from pathlib import Path
 
 import hydra
 import numpy as np
@@ -27,18 +26,6 @@ from main_viennarna import (
 )
 from problems.viennarna import ETERNA100_TSV_URL, load_target_from_eterna100, normalize_target_struct
 from utils.main_utils import build_global_ranking_lines
-
-
-def _load_ppo_config(ppo_name: str, repo_root: str) -> dict:
-    ppo_dir = Path(repo_root) / "config" / "ppo"
-    ppo_path = ppo_dir / f"{ppo_name}.yaml"
-    if not ppo_path.exists():
-        available = ", ".join(sorted(p.stem for p in ppo_dir.glob("*.yaml"))) if ppo_dir.exists() else "none"
-        raise FileNotFoundError(
-            f"PPO config '{ppo_name}' introuvable dans {ppo_dir}. Configs disponibles: {available}"
-        )
-    cfg = OmegaConf.load(str(ppo_path))
-    return OmegaConf.to_container(cfg, resolve=True) or {}
 
 
 def print_global_ranking(repo_root: str, type_problem: str, dim: int, type_instance: int, avg_score: float) -> None:
@@ -135,11 +122,8 @@ def main(cfg: DictConfig):
     kl_beta = 1.0
 
     if ppo_active:
-        ppo_name = str(agent_val("ppo") or cfg.get("ppo") or "ppo")
-        ppo_cfg = _load_ppo_config(ppo_name, repo_root)
-        ppo_epochs = int(ppo_cfg.get("ppo_epochs", 4))
-        kl_cfg = ppo_cfg.get("kl") or {}
-        kl_beta = float(kl_cfg.get("beta", 1.0))
+        ppo_epochs = int(agent_val("ppo.ppo_epochs") or 4)
+        kl_beta = float(agent_val("ppo.beta") or 1.0)
     else:
         ppo_epochs = 1
 

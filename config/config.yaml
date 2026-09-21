@@ -20,6 +20,9 @@ agent:
   min_factor: 0.1
   decay: false
   ppo_active: true
+  ppo:
+    ppo_epochs: 4
+    beta: 0.01
 
 problem_name: qubo
 
