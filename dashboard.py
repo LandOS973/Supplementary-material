@@ -23,13 +23,12 @@ SKIP_ALGOS = {"ppo-eda", "tabu", "svgd-eda"}
 
 # Ordre important : les préfixes les plus spécifiques d'abord (le 1er match gagne).
 # "kt" (seuil KL TRPO) doit passer avant "k" (kernel), sinon "kt0p01" écrase le kernel.
-# "bw"/"bo" doivent passer avant "b" (kl_beta).
+# "bo" doit passer avant "b" (kl_beta).
 PARSERS = [
     ("adv", "advantage", str),
     ("eps", "epsilon_svgd", float),
     ("ds",  "decay_start_ratio", float),
     ("dm",  "decay_min_factor", float),
-    ("bw",  "bandwith_kernel", float),
     ("bo",  "trpo_backoff", int),
     ("ks",  "ppo_epochs", int),
     ("pe",  "ppo_epochs", int),   # legacy (anciens résultats)
@@ -780,7 +779,6 @@ _DIFF_LABEL_PARAMS = [
     ("clip_eps",        "ce"),
     ("epsilon_svgd",    "eps"),
     ("gamma",           "g"),
-    ("bandwith_kernel", "bw"),
 ]
 
 

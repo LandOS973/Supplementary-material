@@ -116,8 +116,6 @@ def _build_config_name(prefix: str | None, params: dict) -> str:
         f"ds{_slugify(params['decay_start_ratio'])}",
         f"dm{_slugify(params['decay_min_factor'])}",
     ]
-    if params.get("bandwith_kernel") is not None:
-        parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
     if params.get("ppo_active"):
         mode = params["ppo_mode"]
         parts.append(f"ppo{_slugify(mode)}")
@@ -176,7 +174,6 @@ def _expand_grid(grid: dict):
                 "gamma": float(cfg["gamma"]),
                 "decay_start_ratio": float(cfg["decay_start_ratio"]),
                 "decay_min_factor": float(cfg["decay_min_factor"]),
-                "bandwith_kernel": cfg.get("bandwith_kernel"),
             }
             for key, default in _PPO_INACTIVE.items():
                 params[key] = cfg.get(key, default)
@@ -192,9 +189,8 @@ def _expand_grid(grid: dict):
     gamma = grid.get("gamma", [0.001])
     decay_start_ratio = grid.get("decay_start_ratio", [0.8])
     decay_min_factor = grid.get("decay_min_factor", [0.1])
-    bandwith_kernel = grid.get("bandwith_kernel", [None])
 
-    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw) in itertools.product(
+    for (kernel, advantage, M, lambda_, eps, gam, ds, dm) in itertools.product(
         kernels,
         advantages,
         M_values,
@@ -203,7 +199,6 @@ def _expand_grid(grid: dict):
         gamma,
         decay_start_ratio,
         decay_min_factor,
-        bandwith_kernel,
     ):
         base_params = dict(
             kernel=str(kernel).lower(),
@@ -214,7 +209,6 @@ def _expand_grid(grid: dict):
             gamma=float(gam),
             decay_start_ratio=float(ds),
             decay_min_factor=float(dm),
-            bandwith_kernel=bw,
         )
         for ppo in _expand_ppo_variants(grid):
             params = dict(base_params, **ppo)
@@ -421,7 +415,6 @@ def _run_once(
     gamma,
     decay_start_ratio,
     decay_min_factor,
-    bandwith_kernel,
     device=None,
     nb_restarts=None,
     ppo_params=None,
@@ -430,8 +423,6 @@ def _run_once(
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
 
     kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
-    if kernel_name in ("rbf", "pk") and bandwith_kernel is not None:
-        kernel_config["bandwith_kernel"] = bandwith_kernel
 
     ppo_params = ppo_params or {}
     ppo_kwargs = {}
@@ -548,7 +539,6 @@ def _run_once(
         gamma=gamma,
         decay_start_ratio=decay_start_ratio,
         decay_min_factor=decay_min_factor,
-        bandwith_kernel=bandwith_kernel,
         ppo_active=bool(ppo_params.get("ppo_active", False)),
         ppo_mode=ppo_params.get("ppo_mode"),
         ppo_epochs=ppo_params.get("ppo_epochs"),
@@ -1105,7 +1095,6 @@ def main():
                             params["gamma"],
                             params["decay_start_ratio"],
                             params["decay_min_factor"],
-                            params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                             ppo_params=params,
@@ -1166,7 +1155,6 @@ def main():
                             params["gamma"],
                             params["decay_start_ratio"],
                             params["decay_min_factor"],
-                            params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                             ppo_params=params,
@@ -1227,7 +1215,6 @@ def main():
                             params["gamma"],
                             params["decay_start_ratio"],
                             params["decay_min_factor"],
-                            params.get("bandwith_kernel"),
                             device=DEFAULTS["device"],
                             nb_restarts=nb_restarts,
                             ppo_params=params,

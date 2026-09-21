@@ -78,8 +78,6 @@ def _build_config_name(params: dict) -> str:
         f"ds{_slugify(params['decay_start_ratio'])}",
         f"dm{_slugify(params['decay_min_factor'])}",
     ]
-    if params.get("bandwith_kernel") is not None:
-        parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
     return "__".join(parts)
 
 
@@ -92,9 +90,8 @@ def _expand_grid(grid: dict):
     gamma = grid.get("gamma", [0.001])
     decay_start_ratio = grid.get("decay_start_ratio", [0.8])
     decay_min_factor = grid.get("decay_min_factor", [0.1])
-    bandwith_kernel = grid.get("bandwith_kernel", [None])
 
-    for (kernel, advantage, M, lambda_, eps, gam, ds, dm, bw) in itertools.product(
+    for (kernel, advantage, M, lambda_, eps, gam, ds, dm) in itertools.product(
         kernels,
         advantages,
         M_values,
@@ -103,7 +100,6 @@ def _expand_grid(grid: dict):
         gamma,
         decay_start_ratio,
         decay_min_factor,
-        bandwith_kernel,
     ):
         params = dict(
             kernel=str(kernel).lower(),
@@ -114,7 +110,6 @@ def _expand_grid(grid: dict):
             gamma=float(gam),
             decay_start_ratio=float(ds),
             decay_min_factor=float(dm),
-            bandwith_kernel=bw,
         )
         cfg_name = _build_config_name(params)
         yield cfg_name, params
@@ -238,8 +233,6 @@ def main():
                 "epsilon_svgd": params["epsilon_svgd"],
                 "gamma": params["gamma"],
             }
-            if params.get("bandwith_kernel") is not None:
-                kernel_cfg["bandwith_kernel"] = params["bandwith_kernel"]
 
             strategy = factory.createStrategyEA(
                 "PPO-EDA",

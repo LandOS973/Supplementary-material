@@ -251,9 +251,6 @@ def main(cfg: DictConfig) -> None:
     M = int(agent_val("M") or cfg.get("M") or 1)
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    bandwith_override = agent_val("bandwith_kernel") or cfg.get("bandwith_kernel")
-    if bandwith_override is not None:
-        kernel_cfg["bandwith_kernel"] = bandwith_override
     kernel_cfg["debug_svgd"] = False
     epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or kernel_cfg.get("epsilon_svgd") or 0.1)
     svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or kernel_cfg.get("gamma") or 0.01)

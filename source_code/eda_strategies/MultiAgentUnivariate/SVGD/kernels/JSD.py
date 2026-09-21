@@ -4,9 +4,8 @@ import torch.nn as nn
 from .utils import adaptative_bandwith
 
 class JSD(nn.Module):
-    def __init__(self, bandwith_kernel=None, tau=10000.0):
+    def __init__(self, tau=10000.0):
         super().__init__()
-        self.bandwith_kernel = bandwith_kernel
         self.tau = float(tau)
 
     def forward(self, Thetas, probs=None):
@@ -48,10 +47,7 @@ class JSD(nn.Module):
             jsd = 0.5 * (kl_pm + kl_qm)                                        
             dist = jsd.sum(dim=-1) / float(N)                                         
 
-        if self.bandwith_kernel is None:
-            gamma = adaptative_bandwith(dist, eps=1e-3)
-        else:
-            gamma = self.bandwith_kernel
+        gamma = adaptative_bandwith(dist, eps=1e-3)
 
         tau2 = self.tau ** 2
         if Thetas.dim() == 4:

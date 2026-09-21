@@ -128,10 +128,6 @@ def main(cfg: DictConfig):
     natural_grad_override = agent_val("natural_grad") or cfg.get("natural_grad")
     if natural_grad_override is not None:
         kernel_cfg["natural_grad"] = bool(natural_grad_override)
-    bandwith_override = agent_val("bandwith_kernel") or cfg.get("bandwith_kernel")
-    if bandwith_override is not None:
-        kernel_cfg["bandwith_kernel"] = bandwith_override
-
     kernel_lr = kernel_cfg.get("epsilon_svgd")
     kernel_gamma = kernel_cfg.get("gamma")
     epsilon_svgd = float(

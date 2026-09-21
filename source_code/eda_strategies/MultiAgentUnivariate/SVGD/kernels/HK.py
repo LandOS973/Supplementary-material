@@ -15,9 +15,8 @@ class HammingKernel(nn.Module):
         D_{i, j} = Σ_k (p_{i,k} + p_{j,k} - 2 p_{i,k} p_{j,k})
     """
 
-    def __init__(self, bandwith_kernel=None):
+    def __init__(self):
         super().__init__()
-        self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas, probs=None):
         """
@@ -43,10 +42,7 @@ class HammingKernel(nn.Module):
             Dm = hamming.sum(dim=-1)             
             dist = (N - Dm) / float(N)             
 
-        if self.bandwith_kernel is None:
-            bandwith_kernel = adaptative_bandwith(dist, eps=1e-8)
-        else:
-            bandwith_kernel = self.bandwith_kernel
+        bandwith_kernel = adaptative_bandwith(dist, eps=1e-8)
 
         K = torch.exp(-bandwith_kernel * dist)
 

@@ -38,7 +38,6 @@ from expe.main_expe_overall import (
 KERNEL = "jsd"
 ADVANTAGE = "peragentrankweighted"
 GAMMA = 0.0005
-BANDWITH_KERNEL = None
 
 M_VALUES = [3, 4, 5, 6]
 LAMBDA_VALUES = [20, 24, 30]
@@ -81,7 +80,6 @@ def _config_params_from_trial(trial: optuna.Trial) -> dict:
         gamma=GAMMA,
         decay_start_ratio=trial.suggest_categorical("decay_start_ratio", DECAY_START_VALUES),
         decay_min_factor=trial.suggest_categorical("decay_min_factor", DECAY_MIN_VALUES),
-        bandwith_kernel=BANDWITH_KERNEL,
     )
 
 
@@ -168,7 +166,6 @@ def main():
                         params["gamma"],
                         params["decay_start_ratio"],
                         params["decay_min_factor"],
-                        params.get("bandwith_kernel"),
                         device=DEFAULTS["device"],
                         nb_restarts=nb_restarts,
                     )

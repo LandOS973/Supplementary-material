@@ -270,14 +270,11 @@ def _run_once(
     gamma,
     decay_start_ratio,
     decay_min_factor,
-    bandwith_kernel,
     no_interact,
 ):
     device = DEFAULTS["device"]
 
     kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
-    if kernel_name in ("rbf", "pk") and bandwith_kernel is not None:
-        kernel_config["bandwith_kernel"] = bandwith_kernel
 
     factory = FactoryStrategyEA()
     strategy = factory.createStrategyEA(
@@ -387,7 +384,6 @@ def _run_once(
         gamma=gamma,
         decay_start_ratio=decay_start_ratio,
         decay_min_factor=decay_min_factor,
-        bandwith_kernel=bandwith_kernel,
         no_interact=no_interact,
         avg_score=avg_score,
         median_score=median_score,
@@ -464,7 +460,6 @@ def _save_history_csv(out_dir, problem_name, kernel_name, entry, ranking=None):
         f.write(f"gamma: {meta['gamma']}\n")
         f.write(f"decay_start_ratio: {meta['decay_start_ratio']}\n")
         f.write(f"decay_min_factor: {meta['decay_min_factor']}\n")
-        f.write(f"bandwith_kernel: {meta['bandwith_kernel']}\n")
         f.write(f"no_interact: {meta['no_interact']}\n")
         f.write(f"avg_score: {meta['avg_score']}\n")
         f.write(f"median_score: {meta['median_score']}\n")
@@ -542,9 +537,6 @@ def _resolve_best_config(best_cfg, kernel_name, repo_root):
     if gamma is None:
         gamma = 0.001
         print(f"[WARN] gamma manquant, fallback a {gamma}")
-    bandwith_kernel = best_cfg.get("bandwith_kernel")
-    if bandwith_kernel is None:
-        bandwith_kernel = kernel_cfg.get("bandwith_kernel") or (kernel_cfg.get("params") or {}).get("bandwith_kernel")
     advantage = best_cfg.get("advantage") or "peragentrankweighted"
     M = int(best_cfg.get("m") or best_cfg.get("M") or 1)
     lambda_ = int(best_cfg.get("lambda") or best_cfg.get("lambda_") or 1)
@@ -559,7 +551,6 @@ def _resolve_best_config(best_cfg, kernel_name, repo_root):
         lambda_=lambda_,
         epsilon_svgd=float(epsilon_svgd),
         gamma=float(gamma),
-        bandwith_kernel=bandwith_kernel,
         no_interact=no_interact,
     )
 
@@ -636,7 +627,6 @@ def main():
                 best_params["gamma"],
                 decay_start_ratio,
                 decay_min_factor,
-                best_params["bandwith_kernel"],
                 best_params["no_interact"],
             )
             dt = time.time() - t0

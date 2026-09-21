@@ -64,7 +64,6 @@ def _infer_params_from_name(config_name: str) -> dict:
         "gamma": None,
         "decay_start_ratio": None,
         "decay_min_factor": None,
-        "bandwith_kernel": None,
     }
     def parse_float(token: str):
         token = token.replace("p", ".").replace("m", "-")
@@ -95,8 +94,6 @@ def _infer_params_from_name(config_name: str) -> dict:
             out["decay_start_ratio"] = parse_float(p[2:])
         elif p.startswith("dm"):
             out["decay_min_factor"] = parse_float(p[2:])
-        elif p.startswith("bw"):
-            out["bandwith_kernel"] = parse_float(p[2:])
     return out
 
 

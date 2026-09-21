@@ -177,7 +177,6 @@ def _run_once_no_interact(problem_ctx, params: dict, budget: int, device=None, n
         gamma=params["gamma"],
         decay_start_ratio=params["decay_start_ratio"],
         decay_min_factor=params["decay_min_factor"],
-        bandwith_kernel=None,
         no_interact=True,
         avg_score=avg_score,
         median_score=median_score,

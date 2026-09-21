@@ -712,17 +712,13 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if kernel == "ppk":
             return PPK()
         if kernel == "rbf":
-            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
-            return RBF(bandwith_kernel=bandwith_kernel)
+            return RBF()
         if kernel == "pk":
-            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
-            return ProbabilityKernel(bandwith_kernel=bandwith_kernel)
+            return ProbabilityKernel()
         if kernel == "jsd":
-            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
-            return JSD(bandwith_kernel=bandwith_kernel)
+            return JSD()
         if kernel in ("fr", "fisherrao", "fisher_rao", "fisher-rao"):
-            bandwith_kernel = self.kernel_config.get("bandwith_kernel")
-            return FisherRaoKernel(bandwith_kernel=bandwith_kernel)
+            return FisherRaoKernel()
         raise ValueError(
             f"Unsupported kernel '{kernel_name}'. Available kernels: hk, ppk, rbf, pk, jsd, fr, no_interact."
         )

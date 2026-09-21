@@ -14,9 +14,8 @@ class ProbabilityKernel(nn.Module):
     où p(X) = sigmoid(X) est le vecteur des probabilités associées à l'agent X.
     """
 
-    def __init__(self, bandwith_kernel=1.0):
+    def __init__(self):
         super().__init__()
-        self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas, probs=None):
         """
@@ -37,10 +36,7 @@ class ProbabilityKernel(nn.Module):
             probs_j = probs.unsqueeze(1)                
             dnorm2 = ((probs_i - probs_j.detach()) ** 2).sum(dim=-1)             
 
-        if self.bandwith_kernel is None:
-            bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
-        else:
-            bandwith_kernel = self.bandwith_kernel
+        bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
 
         K = torch.exp(-bandwith_kernel * dnorm2)
 

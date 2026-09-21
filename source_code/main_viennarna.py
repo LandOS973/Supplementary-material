@@ -102,8 +102,6 @@ def _build_config_name(params: dict) -> str:
         f"target{_slugify(params['target_name'])}",
         f"n{_slugify(params['dim'])}",
     ]
-    if params.get("bandwith_kernel") is not None:
-        parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
     return "__".join(parts)
 
 
@@ -563,9 +561,6 @@ def main(cfg: DictConfig):
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    bandwith_override = agent_val("bandwith_kernel") or cfg.get("bandwith_kernel")
-    if bandwith_override is not None:
-        kernel_cfg["bandwith_kernel"] = bandwith_override
     kernel_cfg["debug_svgd"] = bool(OmegaConf.select(cfg, "debug_svgd") or cfg.get("debug_svgd", False))
     kernel_cfg["debug_every"] = int(OmegaConf.select(cfg, "debug_every") or cfg.get("debug_every") or 25)
 
@@ -613,7 +608,6 @@ def main(cfg: DictConfig):
         gamma=svgd_gamma,
         decay_start_ratio=decay_start_ratio,
         decay_min_factor=decay_min_factor,
-        bandwith_kernel=kernel_cfg.get("bandwith_kernel"),
         target_name=target_resolved_name,
         dim=dim,
     )

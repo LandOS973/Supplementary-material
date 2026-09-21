@@ -65,8 +65,6 @@ def _build_config_name(params: dict) -> str:
         f"ds{_slugify(params['decay_start_ratio'])}",
         f"dm{_slugify(params['decay_min_factor'])}",
     ]
-    if params.get("bandwith_kernel") is not None:
-        parts.append(f"bw{_slugify(params['bandwith_kernel'])}")
     return "__".join(parts)
 
 
@@ -148,9 +146,6 @@ def main(cfg: DictConfig):
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
     kernel_cfg = _load_kernel_config(kernel_name, repo_root)
-    bandwith_override = agent_val("bandwith_kernel") or cfg.get("bandwith_kernel")
-    if bandwith_override is not None:
-        kernel_cfg["bandwith_kernel"] = bandwith_override
     kernel_cfg["debug_svgd"] = True
     kernel_cfg["debug_every"] = 1
 
@@ -215,7 +210,6 @@ def main(cfg: DictConfig):
         gamma=svgd_gamma,
         decay_start_ratio=decay_start_ratio,
         decay_min_factor=decay_min_factor,
-        bandwith_kernel=kernel_cfg.get("bandwith_kernel"),
     )
     config_name = _build_config_name(params)
     out_dir = os.path.join(repo_root, "results", "config", config_name, "designbench", task_name)

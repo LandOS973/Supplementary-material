@@ -112,7 +112,6 @@ def _parse_config_name(config_name: str) -> dict:
         "gamma": None,
         "decay_start_ratio": None,
         "decay_min_factor": None,
-        "bandwith_kernel": None,
     }
 
     def parse_float(token: str):
@@ -145,8 +144,6 @@ def _parse_config_name(config_name: str) -> dict:
             out["decay_start_ratio"] = parse_float(p[2:])
         elif p.startswith("dm"):
             out["decay_min_factor"] = parse_float(p[2:])
-        elif p.startswith("bw"):
-            out["bandwith_kernel"] = parse_float(p[2:])
     return out
 
 
@@ -160,7 +157,6 @@ def _run_once_no_repulsion(
     gamma,
     decay_start_ratio,
     decay_min_factor,
-    bandwith_kernel,
     device=None,
     nb_restarts=None,
 ):
@@ -168,8 +164,6 @@ def _run_once_no_repulsion(
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
 
     kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
-    if kernel_name in ("rbf", "pk") and bandwith_kernel is not None:
-        kernel_config["bandwith_kernel"] = bandwith_kernel
 
     factory = FactoryStrategyEA()
     strategy = factory.createStrategyEA(
@@ -266,7 +260,6 @@ def _run_once_no_repulsion(
         gamma=gamma,
         decay_start_ratio=decay_start_ratio,
         decay_min_factor=decay_min_factor,
-        bandwith_kernel=bandwith_kernel,
         no_interact=False,
         no_repulsion=True,
         avg_score=avg_score,
@@ -509,7 +502,7 @@ def main():
         or DEFAULT_CONFIG_NAME
     )
     params = _parse_config_name(config_name)
-    missing = [k for k, v in params.items() if v is None and k != "bandwith_kernel"]
+    missing = [k for k, v in params.items() if v is None]
     if missing:
         raise SystemExit(f"Invalid config_name, missing: {', '.join(missing)}")
 
@@ -575,7 +568,6 @@ def main():
                     params["gamma"],
                     params["decay_start_ratio"],
                     params["decay_min_factor"],
-                    params.get("bandwith_kernel"),
                     device=DEFAULTS["device"],
                     nb_restarts=nb_restarts,
                 )

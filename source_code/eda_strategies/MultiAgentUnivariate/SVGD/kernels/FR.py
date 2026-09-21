@@ -19,9 +19,8 @@ class FisherRaoKernel(nn.Module):
         g(x) = exp( -1 / (tau^2 * x * (1 - x)) + 4 / tau^2 )
     """
 
-    def __init__(self, bandwith_kernel=None, tau=10000.0):
+    def __init__(self, tau=10000.0):
         super().__init__()
-        self.bandwith_kernel = bandwith_kernel
         self.tau = float(tau)
 
     def forward(self, Thetas, probs=None):
@@ -60,10 +59,7 @@ class FisherRaoKernel(nn.Module):
             sq_sum = ((angles_i - angles_j) ** 2).sum(dim=-1)             
             d_fr = 2.0 * torch.sqrt(sq_sum)
 
-        if self.bandwith_kernel is None:
-            gamma = adaptative_bandwith(d_fr,  eps=1e-8)
-        else:
-            gamma = self.bandwith_kernel
+        gamma = adaptative_bandwith(d_fr, eps=1e-8)
 
         if Thetas.dim() == 4:
             tau2 = self.tau ** 2

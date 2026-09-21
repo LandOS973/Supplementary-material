@@ -16,9 +16,8 @@ class RBF(nn.Module):
 
     """
 
-    def __init__(self, bandwith_kernel):
+    def __init__(self):
         super().__init__()
-        self.bandwith_kernel = bandwith_kernel
 
     def forward(self, Thetas, probs=None, support_thetas=None, support_probs=None):
         """
@@ -53,10 +52,7 @@ class RBF(nn.Module):
             dnorm2 = ((theta_i - theta_j.detach()) ** 2).sum(dim=-1)
 
 
-        if self.bandwith_kernel is None:
-            bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
-        else:
-            bandwith_kernel = self.bandwith_kernel
+        bandwith_kernel = adaptative_bandwith(dnorm2, eps=1e-8)
 
         K = torch.exp(-bandwith_kernel * dnorm2)
 
@@ -100,18 +96,15 @@ class RBF(nn.Module):
         else:
             dnorm2 = (diff ** 2).sum(dim=-1)               # [B, L, M]
 
-        if self.bandwith_kernel is None:
-            M_sup = support_thetas.size(2)
-            vals = dnorm2.detach().flatten()
-            median_val = torch.median(vals)
-            denom = 2.0 * torch.log(
-                torch.tensor(float(M_sup + 1), device=dnorm2.device, dtype=dnorm2.dtype)
-            )
-            h = median_val / denom
-            sigma = torch.sqrt(h.clamp(min=1e-8))
-            bandwith_kernel = 1.0 / (1e-8 + 2.0 * sigma ** 2)
-        else:
-            bandwith_kernel = self.bandwith_kernel
+        M_sup = support_thetas.size(2)
+        vals = dnorm2.detach().flatten()
+        median_val = torch.median(vals)
+        denom = 2.0 * torch.log(
+            torch.tensor(float(M_sup + 1), device=dnorm2.device, dtype=dnorm2.dtype)
+        )
+        h = median_val / denom
+        sigma = torch.sqrt(h.clamp(min=1e-8))
+        bandwith_kernel = 1.0 / (1e-8 + 2.0 * sigma ** 2)
 
         K = torch.exp(-bandwith_kernel * dnorm2)  # [B, L, M]
 
