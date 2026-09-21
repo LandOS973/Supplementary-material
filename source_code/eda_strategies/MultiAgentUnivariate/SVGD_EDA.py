@@ -1,4 +1,3 @@
-import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -29,12 +28,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         dim_variables,
         M,
         device,
-        learning_rate,
         epsilon_svgd=None,
         enable_visualization=False,
         no_interact=False,
         no_repulsion=False,
-        sigma=None,
         svgd_gamma=10.0,
         decay_start_ratio=0.8,
         decay_min_factor=0.1,
@@ -45,14 +42,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # PPO hyperparameters
         ppo_active=False,      # True => PPO (K époques), False => REINFORCE pur
         ppo_epochs=1,          # K : nombre d'époques internes (ignoré si ppo_active=False)
-        ppo_mode='clip',       # 'clip' | 'kl' | 'trpo'
-        clip_eps=0.2,          # ε_clip  (mode clip uniquement)
-        kl_beta=1.0,           # β : pénalité KL  (mode kl uniquement)
-        kl_target_kl=None,     # KL cible (float) => β adaptatif ; None => β fixe
-        kl_beta_max=100.0,     # plafond de β (mode kl adaptatif uniquement)
-        kl_beta_min=1e-4,      # plancher de β (mode kl adaptatif uniquement)
-        trpo_kl_threshold=0.01,      # seuil max de KL_mean toléré par époque (mode trpo uniquement)
-        trpo_backoff_max_tries=4,    # nb de tentatives de réduction du pas avant d'accepter tel quel (mode trpo)
+        kl_beta=1.0,           # β : pénalité KL, fixe
     ):
         self.M = M
         self.N = N
@@ -63,7 +53,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         self.lambda_ = self.total_lambda
         self.device = device
-        self.learning_rate = learning_rate
         self.epsilon_svgd = epsilon_svgd
         self.enable_visualization = bool(enable_visualization)
         self.no_interact = bool(no_interact)
@@ -77,37 +66,23 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 raise ValueError(
                     f"dim_variables length ({len(self.dim_variables)}) must match N={self.N}."
                 )
-            self.max_dim = int(max(self.dim_variables)) if self.dim_variables else None
-            if self.max_dim is None or self.max_dim < 2:
+            if len(set(self.dim_variables)) != 1:
+                raise ValueError(
+                    "SVGD_EDA ne supporte que des variables categorielles de meme cardinalite "
+                    f"(dim_variables={self.dim_variables})."
+                )
+            self.max_dim = int(self.dim_variables[0])
+            if self.max_dim < 2:
                 raise ValueError(f"Invalid categorical max_dim: {self.max_dim}")
-            mask = torch.ones(self.N, self.max_dim)
-            for idx, dim in enumerate(self.dim_variables):
-                if dim < self.max_dim:
-                    mask[idx, dim:] = 0.0
-            self.register_buffer(
-                "mask",
-                mask.unsqueeze(0).unsqueeze(0),
-                persistent=False,
-            )
-        else:
-            self.mask = None
         self.svgd_gamma = float(svgd_gamma)
         self.decay_start_ratio = float(decay_start_ratio)
         self.decay_min_factor = float(decay_min_factor)
         self.decay_enabled = bool(decay_enabled)
 
-        # PPO
+        # PPO (mode KL, beta fixe)
         self.ppo_active = bool(ppo_active)
         self.ppo_epochs = int(ppo_epochs)
-        self.ppo_mode = str(ppo_mode)
-        self.clip_eps = float(clip_eps)
-        self.kl_beta_init = float(kl_beta)
-        self.kl_target_kl = float(kl_target_kl) if kl_target_kl is not None else None
-        self.kl_beta_max = float(kl_beta_max)
-        self.kl_beta_min = float(kl_beta_min)
-        self.kl_beta = self.kl_beta_init  # mutable, adapté si kl_target_kl est défini
-        self.trpo_kl_threshold = float(trpo_kl_threshold)
-        self.trpo_backoff_max_tries = int(trpo_backoff_max_tries)
+        self.kl_beta = float(kl_beta)
 
         kernel_config_local = kernel_config or {}
         advantage_cfg_local = advantage_cfg
@@ -127,27 +102,18 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg_local)
         self.kernel_config = kernel_config_local
         self.kernel_name = str(self.kernel_config.get("name", "rbf")).lower()
-        self.kernel_params = {}
         self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
-        self.debug_svgd = bool(self.kernel_config.get("debug_svgd", True))
-        self.debug_every = int(self.kernel_config.get("debug_every", 10))
-        self._debug_step = 0
-        self._last_debug_stats = None
-        self._last_phi_stats = None
 
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
         self.agents = []
 
-        kernel_impl = self._build_svgd_kernel(self.kernel_name, self.kernel_params)
-        if self.mask is not None:
-            setattr(kernel_impl, "mask", self.mask)
+        kernel_impl = self._build_svgd_kernel(self.kernel_name)
         self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma, no_repulsion=self.no_repulsion)
         self.theta_history = []
         self.kernel_metric_history = []
 
         self.theta = None
         self.nb_instances = 0
-        self.latest_advantages = None
         self.probs = None
 
         self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
@@ -161,22 +127,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         if self.theta is None:
             raise RuntimeError("reset_learned_parameters doit être appelé avant forward().")
         if self.use_categorical:
-            logits = self.theta
-            if self.mask is not None:
-                logits = logits.masked_fill(self.mask == 0, float("-inf"))
-            probs = torch.softmax(logits, dim=-1)
+            probs = torch.softmax(self.theta, dim=-1)
             probs = torch.nan_to_num(probs, nan=1.0 / float(probs.size(-1)))
-            if self.mask is not None:
-                probs = probs * self.mask
-                denom = probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
-                probs = probs / denom
             probs = torch.clamp(probs, self.prob_eps_clamp, 1.0 - self.prob_eps_clamp)
-            if self.mask is not None:
-                probs = probs * self.mask
-                denom = probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
-                probs = probs / denom
-            else:
-                probs = probs / probs.sum(dim=-1, keepdim=True)
+            probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
             self.probs = probs
             return probs
         probs = torch.sigmoid(self.theta)
@@ -200,13 +154,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         self.baseline.resize_(nb_instances, self.M).zero_()
 
-        self.kl_beta = self.kl_beta_init  # reset β adaptatif à chaque nouvelle instance
         self.theta_history = []
         self.kernel_metric_history = []
         self.last_theta_grad = None
         if self.enable_visualization:
             self._record_theta()
-        self.latest_advantages = None
         self.probs = None
 
     def sample_solutions(self):
@@ -254,7 +206,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
     def updateDistribution(self, solutionList, scoreList):
         """Applique la mise à jour (REINFORCE ou PPO) suivie de SVGD entre agents."""
-        self._debug_step += 1
         if self.ppo_active:
             total_loss = self._updateDistribution_PPO(solutionList, scoreList)
         else:
@@ -262,21 +213,14 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             self._apply_svgd()
         if self.enable_visualization:
             self._record_theta()
-        if self._should_debug():
-            self._print_debug()
         return total_loss
 
     def _compute_kl(self, pi_old_full, pi_new_full):
         """
-        KL(π_old || π_new) par (instance×agent, variable).
+        KL(π_old || π_new) par (instance×agent, variable), sommée sur N puis sur BM
+        (même échelle que `surrogate`, pour l'objectif PPO pénalisé par -beta*KL).
         binary:       pi (BM, N)      — probabilité de x=1
         categorical:  pi (BM, N, D)   — distribution sur les D catégories
-
-        Retourne (kl_sum, kl_mean) :
-        - kl_sum  : KL jointe (somme sur N, comme `surrogate`) — utilisée dans l'objectif,
-          pour rester à la même échelle que le terme de récompense.
-        - kl_mean : KL moyenne par position (BM×N) — utilisée uniquement pour comparer à
-          `kl_target_kl`, qui garde une sémantique "KL moyenne par variable".
         """
         if self.use_categorical:
             from torch.distributions import Categorical, kl_divergence
@@ -290,9 +234,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 Bernoulli(probs=pi_old_full),
                 Bernoulli(probs=pi_new_full),
             )  # (BM, N)
-        kl_sum = kl.sum(dim=-1).sum()
-        kl_mean = kl.mean()
-        return kl_sum, kl_mean
+        return kl.sum(dim=-1).sum()
 
     def _updateDistribution_REINFORCE(self, solutionList, scoreList):
         """
@@ -337,34 +279,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1).view(B, M)
-            self.latest_advantages = advantages.view(B, M, λa).reshape(B, self.lambda_).cpu()
 
         (grad_theta,) = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
         self.last_theta_grad = grad_theta.detach().clone()
-
-        if self.debug_svgd:
-            with torch.no_grad():
-                self._last_debug_stats = {
-                    "loss_mean": float(loss.item()),
-                    "adv_mean": float(advantages.mean().item()),
-                    "adv_std": float(advantages.std().item()),
-                    "adv_min": float(advantages.min().item()),
-                    "adv_max": float(advantages.max().item()),
-                    "fit_mean": float(fitness.mean().item()),
-                    "fit_std": float(fitness.std().item()),
-                    "fit_min": float(fitness.min().item()),
-                    "fit_max": float(fitness.max().item()),
-                    "baseline_mean": float(baseline.mean().item()) if baseline.numel() else float("nan"),
-                    "baseline_std": float(baseline.std().item()) if baseline.numel() > 1 else 0.0,
-                    "logpi_mean": float(log_Pi.mean().item()),
-                    "logpi_min": float(log_Pi.min().item()),
-                    "logpi_max": float(log_Pi.max().item()),
-                    "prob_mean": float(all_Pi_Theta.mean().item()),
-                    "prob_min": float(all_Pi_Theta.min().item()),
-                    "prob_max": float(all_Pi_Theta.max().item()),
-                    "adv_nan": bool(torch.isnan(advantages).any().item()),
-                    "prob_nan": bool(torch.isnan(all_Pi_Theta).any().item()),
-                }
 
         return loss
 
@@ -386,34 +303,14 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             probs_exp = probs.unsqueeze(1).expand(-1, λa, -1)           # (BM, λa, N)
             return torch.where(indivduals == 1.0, probs_exp, 1.0 - probs_exp)  # (BM, λa, N)
 
-    def _compute_log_pi(self, indivduals):
-        """
-        Calcule log π_θ(x) pour chaque échantillon sous self.probs (politique courante).
-        indivduals : (BM, λa, N)
-        Retourne   : log_Pi (BM, λa)
-        """
-        BM, λa, N = indivduals.shape
-        if self.use_categorical:
-            D = self.probs.size(-1)
-            probs = self.probs.view(BM, N, D)
-            probs_exp = probs.unsqueeze(1).expand(-1, λa, -1, -1)       # (BM, λa, N, D)
-            log_probs = torch.log(probs_exp + 1e-10)
-            indices = indivduals.long().unsqueeze(-1)                    # (BM, λa, N, 1)
-            return log_probs.gather(-1, indices).squeeze(-1).sum(dim=2)  # (BM, λa)
-        else:
-            probs = self.probs.view(BM, N)
-            probs_exp = probs.unsqueeze(1).expand(-1, λa, -1)           # (BM, λa, N)
-            Pi_sel = torch.where(indivduals == 1.0, probs_exp, 1.0 - probs_exp)
-            return torch.log(Pi_sel + 1e-10).sum(dim=2)                 # (BM, λa)
-
     def _updateDistribution_PPO(self, solutionList, scoreList):
         """
-        Implémente SVGD-EDA-PPO :
+        Implémente SVGD-EDA-PPO (mode KL, beta fixe) :
           θ_old ← θ
           for k = 1..K :
               r_jl = exp(log π_θ - log π_θ_old)
-              g_j  = (1/λγ) Σ_l ∇ min(r_jl·Ŝ, clip(r_jl, 1-ε, 1+ε)·Ŝ)
-              θ_i += ε · SVGD_phi(θ, g)
+              objective = E[r_jl · Ŝ] - beta · KL(π_old ‖ π_new)
+              θ_i += ε · SVGD_phi(θ, ∇objective)
         """
         B, M, N = self.nb_instances, self.M, self.N
         λa = self.lambda_per_agent
@@ -447,54 +344,30 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         # --- π_θ_old figées pour les K époques (ratio + KL) ---
         with torch.no_grad():
             pi_old_per_pos = self._compute_pi_per_pos(indivduals).detach()  # (BM, λa, N)
-            if self.ppo_mode in ('kl', 'trpo'):
-                pi_old_full = self.probs.view(BM, N, -1).detach() if self.use_categorical \
-                    else self.probs.view(BM, N).detach()
+            pi_old_full = self.probs.view(BM, N, -1).detach() if self.use_categorical \
+                else self.probs.view(BM, N).detach()
 
-        # --- Mise à jour de la baseline et stockage des avantages ---
+        # --- Mise à jour de la baseline ---
         with torch.no_grad():
             self.baseline = fitness.mean(dim=1).view(B, M)
-            self.latest_advantages = advantages.view(B, M, λa).reshape(B, self.lambda_).cpu()
 
         # --- Boucle K époques PPO avec SVGD intra-boucle ---
         last_surrogate_mean = None
         adv_exp = advantages.unsqueeze(-1)  # (BM, λa, 1) — précalculé hors boucle
 
-        for k in range(self.ppo_epochs):
+        for _ in range(self.ppo_epochs):
             # Recalcul de π_θ depuis le theta courant (potentiellement mis à jour par SVGD)
             self.probs = self.forward()
 
             # Ratio par position : r_n = π_θ_new(x_n) / π_θ_old(x_n)
             pi_new_per_pos = self._compute_pi_per_pos(indivduals)  # (BM, λa, N)
             ratio = pi_new_per_pos / pi_old_per_pos                # (BM, λa, N)
-            surr1 = ratio * adv_exp                                # (BM, λa, N)
+            surrogate = (ratio * adv_exp).sum(dim=-1)              # (BM, λa) — pas de clipping
 
-            if self.ppo_mode == 'clip':
-                surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * adv_exp
-                surrogate = torch.min(surr1, surr2).sum(dim=-1)   # (BM, λa)
-                objective = surrogate.mean(dim=1).sum()
-
-            else:  # 'kl' | 'trpo'
-                surrogate = surr1.sum(dim=-1)                      # (BM, λa) — pas de clipping
-                pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \
-                    else self.probs.view(BM, N)
-                kl_sum, kl_mean = self._compute_kl(pi_old_full, pi_new_full)
-
-                if self.ppo_mode == 'trpo':
-                    # Pas de pénalité -beta*KL : la contrainte est appliquée sur le PAS SVGD lui-même
-                    # (backoff façon line-search TRPO), cf. _apply_svgd_with_kl_constraint.
-                    objective = surrogate.mean(dim=1).sum()
-                else:  # 'kl'
-                    objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl_sum
-
-                    # Adaptation de β à la dernière epoch seulement (KL moyenne par position après K steps)
-                    if self.kl_target_kl is not None and k == self.ppo_epochs - 1:
-                        with torch.no_grad():
-                            kl_val = float(kl_mean.detach().item())
-                            if kl_val > 1.5 * self.kl_target_kl:
-                                self.kl_beta = min(self.kl_beta * 1.5, self.kl_beta_max)
-                            elif kl_val < self.kl_target_kl / 1.5:
-                                self.kl_beta = max(self.kl_beta / 1.5, self.kl_beta_min)
+            pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \
+                else self.probs.view(BM, N)
+            kl_sum = self._compute_kl(pi_old_full, pi_new_full)
+            objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl_sum
 
             # retain_graph=False : le graph est reconstruit à chaque epoch via forward()
             (grad_theta,) = torch.autograd.grad(
@@ -502,61 +375,18 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             )
             self.last_theta_grad = grad_theta.detach().clone()
 
-            if self.debug_svgd and self._last_debug_stats is not None:
-                with torch.no_grad():
-                    self._last_debug_stats["theta_grad_norm"] = float(grad_theta.norm().item())
-
             # Pas SVGD : θ_i += ε · φ(θ)  — à l'intérieur de la boucle K
-            if self.ppo_mode == 'trpo':
-                self._apply_svgd_with_kl_constraint(pi_old_full, BM, N)
-            else:
-                self._apply_svgd()
+            self._apply_svgd()
 
             last_surrogate_mean = float(surrogate.detach().mean(dim=1).mean().item())
-
-        # --- Stats de debug (dernière époque) ---
-        if self.debug_svgd:
-            with torch.no_grad():
-                self.probs = self.forward()
-                log_Pi = self._compute_log_pi(indivduals)
-                self._last_debug_stats = {
-                    "loss_mean": float(last_surrogate_mean) if last_surrogate_mean is not None else float("nan"),
-                    "adv_mean": float(advantages.mean().item()),
-                    "adv_std": float(advantages.std().item()),
-                    "adv_min": float(advantages.min().item()),
-                    "adv_max": float(advantages.max().item()),
-                    "fit_mean": float(fitness.mean().item()),
-                    "fit_std": float(fitness.std().item()),
-                    "fit_min": float(fitness.min().item()),
-                    "fit_max": float(fitness.max().item()),
-                    "baseline_mean": float(baseline.mean().item()) if baseline.numel() else float("nan"),
-                    "baseline_std": float(baseline.std().item()) if baseline.numel() > 1 else 0.0,
-                    "logpi_mean": float(log_Pi.mean().item()),
-                    "logpi_min": float(log_Pi.min().item()),
-                    "logpi_max": float(log_Pi.max().item()),
-                    "prob_mean": float(all_Pi_Theta.mean().item()),
-                    "prob_min": float(all_Pi_Theta.min().item()),
-                    "prob_max": float(all_Pi_Theta.max().item()),
-                    "adv_nan": bool(torch.isnan(advantages).any().item()),
-                    "prob_nan": bool(torch.isnan(all_Pi_Theta).any().item()),
-                }
 
         val = last_surrogate_mean if last_surrogate_mean is not None else 0.0
         return torch.tensor(val, device=self.device)
 
-    def get_latest_advantages(self):
-        if self.latest_advantages is None:
-            return None
-        return self.latest_advantages.detach().cpu()
-
-    def toString(self):
-        return f"MultiAgent_Collaborative_M{self.M}_lambdaPerAgent{self.lambda_per_agent}"
-
-    def _apply_svgd(self, step_scale=1.0):
+    def _apply_svgd(self):
         """
         Applique un pas SVGD instance par instance en se basant sur les directions RL observées.
         Utilise self.last_theta_grad comme direction RL : (B, M, N)
-        `step_scale` permet de réduire le pas (backoff façon line-search, cf. contrainte KL dure).
         """
         if self.last_theta_grad is None:
             return
@@ -572,81 +402,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             kernel_stats = self.svgd.get_last_kernel_stats()
             if kernel_stats:
                 self.kernel_metric_history.append(kernel_stats)
-            if self.debug_svgd:
-                with torch.no_grad():
-                    self._last_phi_stats = {
-                        "phi_mean": float(phi.mean().item()),
-                        "phi_std": float(phi.std().item()),
-                        "phi_norm": float(phi.norm().item()),
-                        "phi_max_abs": float(phi.abs().max().item()),
-                        "phi_nan": bool(torch.isnan(phi).any().item()),
-                    }
 
         with torch.no_grad():
-            self.theta += step_scale * self.epsilon_svgd * phi
+            self.theta += self.epsilon_svgd * phi
             self.probs = None
-
-    def _apply_svgd_with_kl_constraint(self, pi_old_full, BM, N):
-        """
-        Mode 'trpo' : applique le pas SVGD sous contrainte dure de KL, façon line-search TRPO,
-        au lieu d'une pénalité -beta*KL dans l'objectif.
-
-        Le nombre d'époques K (`ppo_epochs`) n'est pas affecté : cette méthode gère uniquement
-        CE QUI SE PASSE À L'INTÉRIEUR d'une époque donnée (le pas SVGD de cette époque), la boucle
-        `for k in range(self.ppo_epochs)` dans `_updateDistribution_PPO` reste inchangée — on fait
-        toujours K époques, chacune avec son propre essai (et éventuel backoff) de pas SVGD.
-
-        Si la KL_mean mesurée APRES le pas dépasse trpo_kl_threshold, on annule le pas et on
-        retente avec un pas réduit de moitié (jusqu'à trpo_backoff_max_tries tentatives). Si même
-        la plus petite tentative dépasse encore le seuil, on la garde quand même (on n'annule pas
-        totalement le pas de cette époque) : sinon, si epsilon_svgd est mal calibré, l'entraînement
-        pourrait ne plus jamais bouger pour cette époque (0 mise à jour), ce qui bloquerait tout.
-        """
-        if self.last_theta_grad is None:
-            return
-
-        theta_before = self.theta.detach().clone()
-        step_scale = 1.0
-        kl_mean_after = None
-        for attempt in range(self.trpo_backoff_max_tries):
-            self._apply_svgd(step_scale=step_scale)
-            with torch.no_grad():
-                probs_after = self.forward()
-                pi_after_full = probs_after.view(BM, N, -1) if self.use_categorical \
-                    else probs_after.view(BM, N)
-                _, kl_mean_after = self._compute_kl(pi_old_full, pi_after_full)
-            kl_val = float(kl_mean_after)
-            ok = kl_val <= self.trpo_kl_threshold
-            if ok:
-                break
-            if attempt < self.trpo_backoff_max_tries - 1:
-                self.theta.data.copy_(theta_before)
-                self.probs = None
-                step_scale *= 0.5
-
-    def _should_debug(self) -> bool:
-        if not self.debug_svgd:
-            return False
-        if self.debug_every < 1:
-            return False
-        if self._debug_step == 1:
-            return True
-        return (self._debug_step % self.debug_every) == 0
-
-    @staticmethod
-    def _fmt(val) -> str:
-        if val is None:
-            return "na"
-        if isinstance(val, bool):
-            return "1" if val else "0"
-        if isinstance(val, (int, float)):
-            if isinstance(val, float) and not math.isfinite(val):
-                return str(val)
-            return f"{float(val):.4g}"
-        return str(val)
-
-    def _print_debug(self) -> None:
-        return
 
     def decay_svgd_gamma(self, current_iter: int, total_iters: int) -> None:
         if not self.decay_enabled or self.no_interact or self.decay_start_ratio >= 1.0 or self.decay_min_factor >= 1.0:
@@ -698,7 +457,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             return
         self.agents = [SimpleNamespace(theta=self.theta[:, idx, :]) for idx in range(self.M)]
 
-    def _build_svgd_kernel(self, kernel_name, kernel_params):
+    def _build_svgd_kernel(self, kernel_name):
         kernel = kernel_name.lower()
         if self.no_interact or kernel in ("no_interact", "no-interact", "identity", "none"):
             return NoInteractKernel()

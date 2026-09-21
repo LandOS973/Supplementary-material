@@ -241,7 +241,6 @@ def main():
                 device,
                 dim_variables,
                 params["M"],
-                learning_rate=params["epsilon_svgd"],
                 epsilon_svgd=params["epsilon_svgd"],
                 enable_visualization=False,
                 svgd_gamma=params["gamma"],

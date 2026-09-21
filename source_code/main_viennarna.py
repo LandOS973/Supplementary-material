@@ -609,7 +609,6 @@ def main(cfg: DictConfig):
         device,
         dim_variables,
         M,
-        learning_rate=epsilon_svgd,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
         svgd_gamma=svgd_gamma,

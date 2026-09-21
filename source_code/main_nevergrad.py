@@ -173,10 +173,7 @@ for idx_run in range(nb_instances):
 
     print("instance : " + str(idx_run))
 
-    if(type_problem == "nasbench"):
-        score = get_Score_Problem(list_algos[idx_run], objective, type_problem, idx_run)
-    else:
-        score = get_Score_Problem(list_algos[idx_run], list_problem[idx_run], type_problem, idx_run)
+    score = get_Score_Problem(list_algos[idx_run], list_problem[idx_run], type_problem, idx_run)
 
     list_best_scores.append(score)
 

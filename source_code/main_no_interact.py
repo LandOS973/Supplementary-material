@@ -91,7 +91,6 @@ def _run_once_no_interact(problem_ctx, params: dict, budget: int, device=None, n
         device,
         problem_ctx["dim_variables"],
         params["M"],
-        learning_rate=params["epsilon_svgd"],
         epsilon_svgd=params["epsilon_svgd"],
         enable_visualization=DEFAULTS["visualization"],
         svgd_gamma=params["gamma"],

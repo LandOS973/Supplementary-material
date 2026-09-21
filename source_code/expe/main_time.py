@@ -100,7 +100,6 @@ def _prepare_strategy(
         device,
         dim_variables,
         m_agents,
-        learning_rate=epsilon_svgd,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=False,
         svgd_gamma=svgd_gamma,

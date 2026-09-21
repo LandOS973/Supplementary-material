@@ -133,7 +133,6 @@ def _run_one_target(
         device,
         [4] * dim,
         M,
-        learning_rate=epsilon_svgd,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=False,
         svgd_gamma=svgd_gamma,

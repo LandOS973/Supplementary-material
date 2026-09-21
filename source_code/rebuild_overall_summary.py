@@ -21,7 +21,6 @@ SUMMARY_HEADERS = [
     "gamma",
     "decay_start_ratio",
     "decay_min_factor",
-    "nasbench_avg_score",
     "mean_rank",
     "median_rank",
     "std_percent",
@@ -99,24 +98,6 @@ def _infer_params_from_name(config_name: str) -> dict:
 
 def _has_raw_score(cfg_dir: Path) -> int:
     return 1 if any(cfg_dir.rglob("raw_scores.csv")) else 0
-
-
-def _nasbench_avg_score(cfg_dir: Path):
-    metrics_path = cfg_dir / "nasbench" / "best_metrics.csv"
-    if not metrics_path.is_file():
-        return None
-    try:
-        with metrics_path.open(newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = [row for row in reader if row]
-        if not rows:
-            return None
-        last = rows[-1]
-        for col in ("mean", "median", "best_fitness"):
-            if col in last and last[col] not in (None, ""):
-                return float(last[col])
-    except Exception:
-        return None
 
 
 def _global_ranking_path(repo_root: Path, problem: str, dim: int, t: int) -> Path:
@@ -315,7 +296,6 @@ def main():
         if not params.get("kernel") or params.get("M") is None or params.get("lambda_") is None:
             continue
         stats = _collect_config_stats_from_csv(cfg_dir, config_name, params, repo_root)
-        stats["nasbench_avg_score"] = _nasbench_avg_score(cfg_dir)
         stats["hasRawScore"] = _has_raw_score(cfg_dir)
         rows.append(stats)
 

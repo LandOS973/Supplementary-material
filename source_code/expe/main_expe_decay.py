@@ -269,7 +269,6 @@ def _run_once(
         device,
         problem_ctx["dim_variables"],
         M,
-        learning_rate=epsilon_svgd,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=DEFAULTS["visualization"],
         svgd_gamma=gamma,

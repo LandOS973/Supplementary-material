@@ -153,9 +153,6 @@ def main(cfg: DictConfig):
     prob_eps_override = agent_val("prob_eps_clamp") or cfg.get("prob_eps_clamp")
     if prob_eps_override is not None:
         kernel_cfg["prob_eps_clamp"] = float(prob_eps_override)
-    natural_grad_override = agent_val("natural_grad") or cfg.get("natural_grad")
-    if natural_grad_override is not None:
-        kernel_cfg["natural_grad"] = bool(natural_grad_override)
     debug_svgd_override = agent_val("debug_svgd")
     if debug_svgd_override is None:
         debug_svgd_override = cfg.get("debug_svgd", False)
@@ -209,7 +206,6 @@ def main(cfg: DictConfig):
         device,
         dim_variables=None,
         M=M,
-        learning_rate=epsilon_svgd,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
         svgd_gamma=svgd_gamma,

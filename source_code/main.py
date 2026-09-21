@@ -17,7 +17,6 @@ from omegaconf import DictConfig, OmegaConf
 
 from eda_strategies.FactoryStrategyEA import FactoryStrategyEA
 from environment.blockwise import get_Score_trajectoriesBLOCK_cuda
-from environment.nasbench import get_Score_trajectories_nasbench_cuda
 from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 from environment.qubo import getTensorInstances_QUBO, get_Score_trajectoriesQUBO_cuda
 from main_viennarna import (
@@ -25,13 +24,6 @@ from main_viennarna import (
     DEFAULT_TARGET_STRUCT,
     RNA as VIENNA_RNA,
     get_Score_trajectories_viennarna_cuda,
-)
-from problems.nasbench import (
-    NASBENCH_DIM,
-    NASBENCH_DIM_VARIABLES,
-    is_nasbench_problem,
-    load_nasbench_objective,
-    resolve_nasbench_data_file,
 )
 from problems.viennarna import ETERNA100_TSV_URL, load_target_from_eterna100, normalize_target_struct
 from utils.main_utils import build_global_ranking_lines
@@ -110,9 +102,6 @@ def main(cfg: DictConfig):
     prob_eps_override = agent_val("prob_eps_clamp") or cfg.get("prob_eps_clamp")
     if prob_eps_override is not None:
         kernel_cfg["prob_eps_clamp"] = float(prob_eps_override)
-    natural_grad_override = agent_val("natural_grad") or cfg.get("natural_grad")
-    if natural_grad_override is not None:
-        kernel_cfg["natural_grad"] = bool(natural_grad_override)
     epsilon_svgd = float(
         agent_val("epsilon_svgd")
         or cfg.get("epsilon_svgd")
@@ -143,52 +132,21 @@ def main(cfg: DictConfig):
         ppo_active_val = cfg.get("ppo_active")
     ppo_active = bool(ppo_active_val) if ppo_active_val is not None else False
 
-    ppo_mode = 'clip'
-    clip_eps = 0.2
     kl_beta = 1.0
-    kl_target_kl = None
-    kl_beta_max = 100.0
-    kl_beta_min = 1e-4
-    trpo_kl_threshold = 0.01
-    trpo_backoff_max_tries = 4
 
     if ppo_active:
         ppo_name = str(agent_val("ppo") or cfg.get("ppo") or "ppo")
         ppo_cfg = _load_ppo_config(ppo_name, repo_root)
         ppo_epochs = int(ppo_cfg.get("ppo_epochs", 4))
-        ppo_mode = str(ppo_cfg.get("mode", "clip"))
-
-        if ppo_mode == "clip":
-            clip_cfg = ppo_cfg.get("clip") or {}
-            clip_eps = float(clip_cfg.get("clip_eps", 0.2))
-        elif ppo_mode == "kl":
-            kl_cfg = ppo_cfg.get("kl") or {}
-            kl_beta = float(kl_cfg.get("beta", 1.0))
-            kl_target_kl_val = kl_cfg.get("target_kl")
-            kl_target_kl = float(kl_target_kl_val) if kl_target_kl_val is not None else None
-            kl_beta_max = float(kl_cfg.get("beta_max", 100.0))
-            kl_beta_min = float(kl_cfg.get("beta_min", 1e-4))
-        elif ppo_mode == "trpo":
-            trpo_cfg = ppo_cfg.get("trpo") or {}
-            trpo_kl_threshold = float(trpo_cfg.get("kl_threshold", 0.01))
-            trpo_backoff_max_tries = int(trpo_cfg.get("backoff_max_tries", 4))
-        else:
-            raise ValueError(f"Mode PPO inconnu : '{ppo_mode}'. Valeurs valides : clip, kl, trpo")
+        kl_cfg = ppo_cfg.get("kl") or {}
+        kl_beta = float(kl_cfg.get("beta", 1.0))
     else:
         ppo_epochs = 1
 
     if not ppo_active:
         ppo_info = "ppo_active=False"
-    elif ppo_mode == "clip":
-        ppo_info = f"ppo_active=True mode=clip ppo_epochs={ppo_epochs} clip_eps={clip_eps}"
-    elif ppo_mode == "trpo":
-        ppo_info = (
-            f"ppo_active=True mode=trpo ppo_epochs={ppo_epochs} "
-            f"kl_threshold={trpo_kl_threshold} backoff_max_tries={trpo_backoff_max_tries}"
-        )
     else:
-        kl_adapt_str = f" target_kl={kl_target_kl} beta_range=[{kl_beta_min},{kl_beta_max}]" if kl_target_kl is not None else " beta=fixed"
-        ppo_info = f"ppo_active=True mode=kl ppo_epochs={ppo_epochs} beta={kl_beta}{kl_adapt_str}"
+        ppo_info = f"ppo_active=True mode=kl ppo_epochs={ppo_epochs} beta={kl_beta}"
     print(
         f"Config: problem={type_problem} dim={dim} type_instance={type_instance} | "
         f"M={M} lambda={lambda_} eps={epsilon_svgd} gamma={svgd_gamma} | "
@@ -210,7 +168,6 @@ def main(cfg: DictConfig):
     block_size = None
     dummy_blocks = int(cfg.problem.dummy_blocks) if "problem" in cfg and "dummy_blocks" in cfg.problem else 0
 
-    is_nasbench = is_nasbench_problem(type_problem)
     target_struct = None
     num_workers = None
 
@@ -244,11 +201,6 @@ def main(cfg: DictConfig):
             raise ValueError(f"block_size must be positive, got {block_size}")
         if dim % block_size != 0:
             raise ValueError(f"dim={dim} must be divisible by block_size={block_size}")
-    elif is_nasbench:
-        if dim != NASBENCH_DIM:
-            print(f"[WARN] nasbench uses dim={NASBENCH_DIM}, overriding dim={dim} -> {NASBENCH_DIM}")
-            dim = NASBENCH_DIM
-        dim_variables = list(NASBENCH_DIM_VARIABLES)
     elif type_problem_upper == "VIENNARNA":
         if VIENNA_RNA is None:
             raise RuntimeError(
@@ -286,7 +238,6 @@ def main(cfg: DictConfig):
         device,
         dim_variables,
         M,
-        learning_rate=epsilon_svgd,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
         svgd_gamma=svgd_gamma,
@@ -300,14 +251,7 @@ def main(cfg: DictConfig):
         is_nk3=(type_problem_upper == "NK3"),
         ppo_active=ppo_active,
         ppo_epochs=ppo_epochs,
-        ppo_mode=ppo_mode,
-        clip_eps=clip_eps,
         kl_beta=kl_beta,
-        kl_target_kl=kl_target_kl,
-        kl_beta_max=kl_beta_max,
-        kl_beta_min=kl_beta_min,
-        trpo_kl_threshold=trpo_kl_threshold,
-        trpo_backoff_max_tries=trpo_backoff_max_tries,
     ).to(device)
     if not enable_greedy_final:
         strategy.sample_greedy_agent_solutions = None
@@ -350,28 +294,6 @@ def main(cfg: DictConfig):
             verbose,
             enable_visualization=visualization_enabled,
             return_history=False,
-        )
-        list_scores = result
-    elif is_nasbench:
-        raw_data_file = None
-        if "problem" in cfg and "data_file" in cfg.problem:
-            raw_data_file = str(cfg.problem.data_file)
-        if raw_data_file is None:
-            raw_data_file = str(cfg.get("nasbench_file", "")) or None
-        nasbench_file = resolve_nasbench_data_file(script_dir, raw_data_file)
-        objective = load_nasbench_objective(nasbench_file)
-        if nb_restarts != 1:
-            print(f"[WARN] nasbench ignores nb_restarts (got {nb_restarts}).")
-        result = get_Score_trajectories_nasbench_cuda(
-            objective,
-            strategy,
-            nb_instances_test,
-            budget,
-            lambda_,
-            device,
-            verbose,
-            name_file=None,
-            enable_visualization=visualization_enabled,
         )
         list_scores = result
     elif type_problem_upper == "VIENNARNA":
