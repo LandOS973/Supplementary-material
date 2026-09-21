@@ -346,7 +346,7 @@ def main() -> None:
     print("Le temps inclut le chargement des instances et l'execution complete du budget.")
 
     base_cfg = _load_yaml(CONFIG_DIR / "config.yaml")
-    agent_cfg = _load_yaml(CONFIG_DIR / "agent" / "agents.yaml")
+    agent_cfg = base_cfg.get("agent", {})
 
     defaults = {
         "kernel": str(agent_cfg.get("kernel", "rbf")).lower(),
@@ -407,7 +407,7 @@ def main() -> None:
     qubo_pairs = _discover_qubo_pairs(REPO_ROOT / "source_code" / "instances" / "QUBO")
     nk_pairs = _discover_nk_pairs(REPO_ROOT / "source_code" / "instances" / "nk", d=2)
     nk3_pairs = _discover_nk_pairs(REPO_ROOT / "source_code" / "instances" / "nk3", d=3)
-    block_cfg = _load_yaml(CONFIG_DIR / "problem" / "blockwise.yaml")
+    block_cfg = base_cfg.get("problems", {}).get("blockwise", {})
 
     out_dir = REPO_ROOT / "results" / "timing"
     out_dir.mkdir(parents=True, exist_ok=True)

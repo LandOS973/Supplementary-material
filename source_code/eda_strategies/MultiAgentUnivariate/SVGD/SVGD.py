@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 class SVGD:
     def __init__(self, kernel, gamma=10.0, no_repulsion=False):

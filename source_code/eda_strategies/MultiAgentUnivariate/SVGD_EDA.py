@@ -223,17 +223,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         categorical:  pi (BM, N, D)   — distribution sur les D catégories
         """
         if self.use_categorical:
-            from torch.distributions import Categorical, kl_divergence
-            kl = kl_divergence(
-                Categorical(probs=pi_old_full),
-                Categorical(probs=pi_new_full),
-            )  # (BM, N)
+            kl = (pi_old_full * torch.log(pi_old_full / pi_new_full)).sum(dim=-1)  # (BM, N)
         else:
-            from torch.distributions import Bernoulli, kl_divergence
-            kl = kl_divergence(
-                Bernoulli(probs=pi_old_full),
-                Bernoulli(probs=pi_new_full),
-            )  # (BM, N)
+            kl = pi_old_full * torch.log(pi_old_full / pi_new_full) + \
+                (1.0 - pi_old_full) * torch.log((1.0 - pi_old_full) / (1.0 - pi_new_full))  # (BM, N)
         return kl.sum(dim=-1).sum()
 
     def _prepare_step(self, solutionList, scoreList):
