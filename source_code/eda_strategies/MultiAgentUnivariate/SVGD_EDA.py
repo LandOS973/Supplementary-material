@@ -91,18 +91,16 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         -theta (B, M, N) -> sigmoid -> probs (B, M, N) ] 0,1 [
         -theta (B, M, N, D) -> softmax -> probs (B, M, N, D)
         """
-        if self.theta is None:
-            raise RuntimeError("reset_learned_parameters doit être appelé avant forward().")
         if self.use_categorical:
             probs = torch.softmax(self.theta, dim=-1)
             probs = torch.nan_to_num(probs, nan=1.0 / float(probs.size(-1)))
             probs = torch.clamp(probs, self.prob_eps_clamp, 1.0 - self.prob_eps_clamp)
-            probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-12)
-            self.probs = probs
-            return probs
-        probs = torch.sigmoid(self.theta)
-        self.probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), self.prob_eps_clamp, 1 - self.prob_eps_clamp)
-        return probs
+            probs = probs / probs.sum(dim=-1, keepdim=True).clamp(min=1e-12) # normalisation
+        else:
+            probs = torch.sigmoid(self.theta)
+            probs = torch.clamp(torch.nan_to_num(probs, nan=0.5), self.prob_eps_clamp, 1 - self.prob_eps_clamp)
+        self.probs = probs
+        return self.probs
 
     def reset_learned_parameters(self, nb_instances):
         self.nb_instances = nb_instances
@@ -139,7 +137,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         λa = self.lambda_per_agent
         λ_total = self.total_lambda
 
-        self.probs = self.forward()
+        self.forward()
 
         if self.use_categorical:
             probs = self.probs
