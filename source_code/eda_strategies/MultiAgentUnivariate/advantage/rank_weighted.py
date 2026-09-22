@@ -308,5 +308,4 @@ class BaselineRescaledAdvantage(AdvantageStrategy):
             f = f / float(self.dim)
         device, dtype = fitness.device, fitness.dtype
         b_t = torch.tensor(b, device=device, dtype=dtype)
-        print("FITNESS DES 5 PREMIER ", f[:5])
         return f - b_t

@@ -209,20 +209,9 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         fitness = scoreList.view(BM, λa)
         baseline = self.baseline.view(BM) if self.baseline.numel() > 0 else torch.zeros(BM, device=self.device)
 
-        if self.use_categorical:
-            D = self.probs.size(-1)
-            theta_flat = self.theta.view(BM, N, D)
-            probs_exp = self.probs.view(BM, N, D).unsqueeze(1).expand(-1, λa, -1, -1)
-        else:
-            theta_flat = self.theta.view(BM, N)
-            probs_exp = self.probs.view(BM, N).unsqueeze(1).expand(-1, λa, -1)
-
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
             baseline=baseline,
-            theta=theta_flat,
-            indivduals=indivduals,
-            probs=probs_exp,
             nb_instances=B,
             num_agents=M,
         ).detach()
