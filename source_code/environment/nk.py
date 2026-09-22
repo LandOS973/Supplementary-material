@@ -383,8 +383,10 @@ def get_Score_trajectoriesNK_cuda(
             if kernel_stats:
                 avg_kernel_value_history.append(kernel_stats.get("avg_kernel_value", 0.0))
                 avg_kernel_grad_history.append(kernel_stats.get("avg_kernel_grad", 0.0))
-            force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
-            force_stats = force_stats_fn() if callable(force_stats_fn) else None
+            force_stats = None
+            if enable_visualization:
+                force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
+                force_stats = force_stats_fn() if callable(force_stats_fn) else None
             if force_stats:
                 attraction_agent_history.append(force_stats.get("attraction_per_agent"))
                 repulsion_agent_history.append(force_stats.get("repulsion_per_agent"))

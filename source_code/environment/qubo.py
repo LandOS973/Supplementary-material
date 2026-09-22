@@ -263,8 +263,10 @@ def get_Score_trajectoriesQUBO_cuda(
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
             agent_fitness_history.append([-score.item() for score in agent_mean_scores])
-            force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
-            force_stats = force_stats_fn() if callable(force_stats_fn) else None
+            force_stats = None
+            if enable_visualization:
+                force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
+                force_stats = force_stats_fn() if callable(force_stats_fn) else None
             if force_stats:
                 attraction_agent_history.append(force_stats.get("attraction_per_agent"))
                 repulsion_agent_history.append(force_stats.get("repulsion_per_agent"))
