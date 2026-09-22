@@ -7,7 +7,7 @@ class AdvantageStrategy(ABC):
     """
 
     def __init__(self, **kwargs):
-        self.extra_kwargs = kwargs
+        pass
 
     @abstractmethod
     def compute(self, fitness, baseline, **context):
@@ -15,7 +15,7 @@ class AdvantageStrategy(ABC):
         Args:
             fitness: Tensor (BM, λa)
             baseline: Tensor (BM,)
-            context: Informations optionnelles (theta, indivduals, etc.)
+            context: Informations optionnelles (nb_instances, num_agents, etc.)
         Returns:
             Tensor (BM, λa)
         """

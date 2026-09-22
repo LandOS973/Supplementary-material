@@ -199,7 +199,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         """
         Reshape (solutions, scores) en (BM, λa, N), calcule les avantages Ŝ
         (fixes, sans gradient) et met à jour la baseline. Partagé par REINFORCE
-        et PPO, qui n'en diffèrent qu'après ce point.
+        et PPO
         """
         B, M, N = self.nb_instances, self.M, self.N
         BM = B * M
