@@ -77,8 +77,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.theta = None
         self.nb_instances = 0
         self.probs = None
-
-        self.register_buffer("baseline", torch.empty(0, dtype=torch.float32), persistent=False)
         self.last_theta_grad = None
 
     def forward(self):
@@ -110,8 +108,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         self.theta = nn.Parameter(init_theta)
         self._refresh_agent_views()
-
-        self.baseline.resize_(nb_instances, self.M).zero_()
 
         self.theta_history = []
         self.last_theta_grad = None
@@ -178,9 +174,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
     def _prepare_step(self, solutionList, scoreList):
         """
-        Reshape (solutions, scores) en (BM, λa, N), calcule les avantages Ŝ
-        (fixes, sans gradient) et met à jour la baseline. Partagé par REINFORCE
-        et PPO
+        Reshape (solutions, scores) en (BM, λa, N) et calcule les avantages Ŝ
+        (fixes, sans gradient). Partagé par REINFORCE et PPO.
         """
         B, M, N = self.nb_instances, self.M, self.N
         BM = B * M
@@ -188,17 +183,12 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         indivduals = solutionList.view(BM, λa, N)
         fitness = scoreList.view(BM, λa)
-        baseline = self.baseline.view(BM) if self.baseline.numel() > 0 else torch.zeros(BM, device=self.device)
 
         advantages = self.advantage_strategy.compute(
             fitness=fitness,
-            baseline=baseline,
             nb_instances=B,
             num_agents=M,
         ).detach()
-
-        with torch.no_grad():
-            self.baseline = fitness.mean(dim=1).view(B, M)
 
         return indivduals, advantages
 
@@ -240,7 +230,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         indivduals, advantages = self._prepare_step(solutionList, scoreList)
         log_Pi = torch.log(self._compute_pi_per_pos(indivduals)).sum(dim=2)  # (BM, λa)
         loss = torch.mean(advantages * log_Pi, dim=1).sum()
-        (grad_theta,) = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
+        (grad_theta,) = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=False)
         self.last_theta_grad = grad_theta.detach().clone()
 
         return loss
