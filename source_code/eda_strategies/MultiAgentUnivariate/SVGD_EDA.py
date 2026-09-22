@@ -315,9 +315,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         with torch.no_grad():
             phi = self.svgd.phi(self.theta, self.last_theta_grad.detach())
-            kernel_stats = self.svgd.get_last_kernel_stats()
-            if kernel_stats:
-                self._last_kernel_stats = kernel_stats
+            if self.enable_visualization:
+                kernel_stats = self.svgd.get_last_kernel_stats()
+                if kernel_stats:
+                    self._last_kernel_stats = kernel_stats
             self.theta += self.epsilon_svgd * phi
             self.probs = None
 
