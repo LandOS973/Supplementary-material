@@ -259,8 +259,6 @@ def _run_once(
 ):
     device = DEFAULTS["device"]
 
-    kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
-
     factory = FactoryStrategyEA()
     strategy = factory.createStrategyEA(
         "PPO-EDA",
@@ -276,7 +274,7 @@ def _run_once(
         decay_min_factor=decay_min_factor,
         decay_enabled=True,
         advantage_cfg=advantage,
-        kernel_config=kernel_config,
+        kernel_name=kernel_name,
         no_interact=no_interact,
     ).to(device)
 

@@ -85,10 +85,8 @@ def main(cfg: DictConfig):
     M = int(agent_val("M") or cfg.get("M") or 1)
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
-    kernel_cfg = {"name": kernel_name}
     prob_eps_override = agent_val("prob_eps_clamp") or cfg.get("prob_eps_clamp")
-    if prob_eps_override is not None:
-        kernel_cfg["prob_eps_clamp"] = float(prob_eps_override)
+    prob_eps_clamp = float(prob_eps_override) if prob_eps_override is not None else 1e-3
     epsilon_svgd = float(
         agent_val("epsilon_svgd")
         or cfg.get("epsilon_svgd")
@@ -231,7 +229,8 @@ def main(cfg: DictConfig):
         decay_min_factor=decay_min_factor,
         decay_enabled=decay_enabled,
         advantage_cfg=advantage_cfg,
-        kernel_config=kernel_cfg,
+        kernel_name=kernel_name,
+        prob_eps_clamp=prob_eps_clamp,
         no_interact=no_interact,
         no_repulsion=no_repulsion,
         ppo_active=ppo_active,

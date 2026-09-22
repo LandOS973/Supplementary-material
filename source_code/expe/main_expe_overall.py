@@ -398,8 +398,6 @@ def _run_once(
     device = device or DEFAULTS["device"]
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
 
-    kernel_config = {"name": kernel_name, "epsilon_svgd": epsilon_svgd, "gamma": gamma}
-
     ppo_params = ppo_params or {}
     ppo_kwargs = {}
     if ppo_params.get("ppo_active"):
@@ -424,7 +422,7 @@ def _run_once(
         decay_min_factor=decay_min_factor,
         decay_enabled=True,
         advantage_cfg=advantage,
-        kernel_config=kernel_config,
+        kernel_name=kernel_name,
         no_interact=False,
         **ppo_kwargs,
     ).to(device)

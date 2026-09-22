@@ -545,11 +545,6 @@ def main(cfg: DictConfig):
     M = int(agent_val("M") or cfg.get("M") or 1)
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
-    kernel_cfg = {
-        "name": kernel_name,
-        "debug_svgd": bool(OmegaConf.select(cfg, "debug_svgd") or cfg.get("debug_svgd", False)),
-        "debug_every": int(OmegaConf.select(cfg, "debug_every") or cfg.get("debug_every") or 25),
-    }
 
     epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or 0.1)
     svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or 0.01)
@@ -616,7 +611,7 @@ def main(cfg: DictConfig):
         decay_min_factor=decay_min_factor,
         decay_enabled=decay_enabled,
         advantage_cfg=advantage_cfg,
-        kernel_config=kernel_cfg,
+        kernel_name=kernel_name,
         no_interact=no_interact,
         no_repulsion=no_repulsion,
     ).to(device)

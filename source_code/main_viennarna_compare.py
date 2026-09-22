@@ -99,7 +99,7 @@ def _run_one_target(
     num_workers: int,
     lambda_: int,
     M: int,
-    kernel_cfg: dict,
+    kernel_name: str,
     epsilon_svgd: float,
     svgd_gamma: float,
     advantage_cfg,
@@ -140,7 +140,7 @@ def _run_one_target(
         decay_min_factor=decay_min_factor,
         decay_enabled=decay_enabled,
         advantage_cfg=advantage_cfg,
-        kernel_config=kernel_cfg,
+        kernel_name=kernel_name,
         no_interact=bool(agent_val("no_interact") or False),
         no_repulsion=bool(agent_val("no_repulsion") or False),
     ).to(device)
@@ -241,7 +241,6 @@ def main(cfg: DictConfig) -> None:
     lambda_ = int(agent_val("lambda") or cfg.get("lambda") or cfg.get("lambda_") or 10)
     M = int(agent_val("M") or cfg.get("M") or 1)
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
-    kernel_cfg = {"name": kernel_name, "debug_svgd": False}
     epsilon_svgd = float(agent_val("epsilon_svgd") or cfg.get("epsilon_svgd") or 0.1)
     svgd_gamma = float(agent_val("gamma") or cfg.get("gamma") or 0.01)
     advantage_cfg = agent_val("advantage") or cfg.get("advantage") or "globalrankweighted"
@@ -276,7 +275,7 @@ def main(cfg: DictConfig) -> None:
             num_workers=num_workers,
             lambda_=lambda_,
             M=M,
-            kernel_cfg=kernel_cfg,
+            kernel_name=kernel_name,
             epsilon_svgd=epsilon_svgd,
             svgd_gamma=svgd_gamma,
             advantage_cfg=advantage_cfg,

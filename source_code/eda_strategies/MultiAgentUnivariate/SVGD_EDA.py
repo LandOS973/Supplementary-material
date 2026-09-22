@@ -36,7 +36,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         decay_min_factor=0.1,
         decay_enabled=False,
         advantage_cfg=None,
-        kernel_config=None,
+        kernel_name="rbf",
+        prob_eps_clamp=1e-3,
         # PPO hyperparameters
         ppo_active=False,      # True => PPO (K époques), False => REINFORCE pur
         ppo_epochs=1,          # K : nombre d'époques internes (ignoré si ppo_active=False)
@@ -57,8 +58,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         no_repulsion = bool(no_repulsion)
         self.max_dim = int(max_dim) if max_dim is not None else None
         self.use_categorical = self.max_dim is not None
-        if self.use_categorical and self.max_dim < 2:
-            raise ValueError(f"Invalid categorical max_dim: {self.max_dim}")
         self.svgd_gamma = float(svgd_gamma)
         self.decay_start_ratio = float(decay_start_ratio)
         self.decay_min_factor = float(decay_min_factor)
@@ -69,12 +68,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.ppo_epochs = int(ppo_epochs)
         self.kl_beta = float(kl_beta)
 
-        kernel_config_local = kernel_config or {}
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
-        kernel_name = str(kernel_config_local.get("name", "rbf")).lower()
-        self.prob_eps_clamp = float(kernel_config_local.get("prob_eps_clamp", 1e-3))
+        self.prob_eps_clamp = float(prob_eps_clamp)
 
-        self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
+        self.agent_lambdas = [self.lambda_per_agent] * self.M
         self.agents = []
 
         kernel_impl = self._build_svgd_kernel(kernel_name)
@@ -112,9 +109,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         init_sigma = 0.1
         if self.use_categorical:
-            max_dim = self.max_dim or 3
             init_theta = torch.randn(
-                (nb_instances, self.M, self.N, max_dim), device=self.device
+                (nb_instances, self.M, self.N, self.max_dim), device=self.device
             ) * init_sigma
         else:
             init_theta = torch.randn((nb_instances, self.M, self.N), device=self.device) * init_sigma
@@ -363,7 +359,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.theta_history.append(probs_final)
 
     def get_theta_history(self):
-        return {"values": self.theta_history}
+        return self.theta_history
 
     def get_latest_kernel_metrics(self):
         return self._last_kernel_stats

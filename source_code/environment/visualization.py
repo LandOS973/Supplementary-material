@@ -186,7 +186,7 @@ def render_agent_dashboard(
             )
         extra_series_vars = {name: tk.IntVar(value=1) for name in extra_series_config}
 
-        theta_available = bool(theta_history and theta_history.get("values"))
+        theta_available = bool(theta_history)
         hamming_evo_series, hamming_evo_num_instances = (
             _compute_agent_hamming_evolution(theta_history) if theta_available else (None, 0)
         )
@@ -210,7 +210,7 @@ def render_agent_dashboard(
             if best_individual_available:
                 shared_num_instances = int(best_individual_hamming.shape[0])
             elif theta_available:
-                first_agent = theta_history["values"][0][0]
+                first_agent = theta_history[0][0]
                 first_arr = (
                     first_agent.detach().cpu().numpy() if hasattr(first_agent, "detach") else np.asarray(first_agent)
                 )
@@ -781,7 +781,7 @@ def _compute_agent_hamming_evolution(history):
     Retourne (per_agent_all, num_instances) avec per_agent_all de forme
     (T, M, B), ou (None, 0) si les donnees ne s'y pretent pas.
     """
-    values = history.get("values") or []
+    values = history or []
     if not values or len(values[0]) < 2:
         return None, 0
 
@@ -824,7 +824,7 @@ def _build_probs_heatmap_panel(container, history, num_agents, instance_var, ave
     Quand `average_var` est actif, affiche la moyenne des probas sur toutes les
     instances plutôt que l'instance sélectionnée.
     """
-    values = history.get("values") or []
+    values = history or []
     if not values or num_agents == 0:
         return
 

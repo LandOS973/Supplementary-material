@@ -81,8 +81,6 @@ def _run_once_no_interact(problem_ctx, params: dict, budget: int, device=None, n
     device = device or DEFAULTS["device"]
     nb_restarts = DEFAULTS["nb_restarts"] if nb_restarts is None else int(nb_restarts)
 
-    kernel_config = {"name": NO_INTERACT_KERNEL, "epsilon_svgd": params["epsilon_svgd"], "gamma": params["gamma"]}
-
     factory = FactoryStrategyEA()
     strategy = factory.createStrategyEA(
         "PPO-EDA",
@@ -98,7 +96,6 @@ def _run_once_no_interact(problem_ctx, params: dict, budget: int, device=None, n
         decay_min_factor=params["decay_min_factor"],
         decay_enabled=True,
         advantage_cfg=params["advantage"],
-        kernel_config=kernel_config,
         no_interact=True,
     ).to(device)
 
