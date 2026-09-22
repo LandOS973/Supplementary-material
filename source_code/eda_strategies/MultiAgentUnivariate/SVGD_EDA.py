@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 from types import SimpleNamespace
@@ -85,21 +84,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.kl_beta = float(kl_beta)
 
         kernel_config_local = kernel_config or {}
-        advantage_cfg_local = advantage_cfg
-        if isinstance(advantage_cfg_local, str) and advantage_cfg_local.lower() == "baseline_rescaled":
-            advantage_cfg_local = {"type": advantage_cfg_local, "params": {}}
-        if isinstance(advantage_cfg_local, dict):
-            adv_type = str(advantage_cfg_local.get("type", "")).lower()
-            if adv_type == "baseline_rescaled":
-                params = advantage_cfg_local.setdefault("params", {})
-                for key in ("calibration_path", "problem", "dim", "type_instance", "top_k", "h_top_k"):
-                    if key not in params and key in kernel_config_local:
-                        params[key] = kernel_config_local.get(key)
-                if "dim" not in params:
-                    params["dim"] = self.N
-                if "problem" not in params:
-                    params["problem"] = getattr(self, "problem_type", None)
-        self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg_local)
+        self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
         self.kernel_config = kernel_config_local
         self.kernel_name = str(self.kernel_config.get("name", "rbf")).lower()
         self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
@@ -110,7 +95,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         kernel_impl = self._build_svgd_kernel(self.kernel_name)
         self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma, no_repulsion=self.no_repulsion)
         self.theta_history = []
-        self.kernel_metric_history = []
+        self._last_kernel_stats = None
 
         self.theta = None
         self.nb_instances = 0
@@ -155,7 +140,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.baseline.resize_(nb_instances, self.M).zero_()
 
         self.theta_history = []
-        self.kernel_metric_history = []
+        self._last_kernel_stats = None
         self.last_theta_grad = None
         if self.enable_visualization:
             self._record_theta()
@@ -362,7 +347,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             phi = self.svgd.phi(self.theta, self.last_theta_grad.detach())
             kernel_stats = self.svgd.get_last_kernel_stats()
             if kernel_stats:
-                self.kernel_metric_history.append(kernel_stats)
+                self._last_kernel_stats = kernel_stats
             self.theta += self.epsilon_svgd * phi
             self.probs = None
 
@@ -395,13 +380,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
     def get_theta_history(self):
         return {"values": self.theta_history}
 
-    def get_kernel_metric_history(self):
-        return list(self.kernel_metric_history)
-
     def get_latest_kernel_metrics(self):
-        if not self.kernel_metric_history:
-            return None
-        return self.kernel_metric_history[-1]
+        return self._last_kernel_stats
 
     def get_latest_force_stats(self):
         return self.svgd.get_last_force_stats()
@@ -421,48 +401,3 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         raise ValueError(
             f"Unsupported kernel '{kernel_name}'. Available kernels: rbf, no_interact."
         )
-
-    def initialize_from_dataset(self, x_data, max_samples: int = 50000, noise_std: float = 0.01) -> bool:
-        """
-        Initialize categorical logits from empirical per-position distribution.
-        Works with tokens (B, N) or onehot (B, N, D).
-        """
-        if not self.use_categorical or self.theta is None:
-            return False
-        try:
-            x_np = np.asarray(x_data)
-        except Exception:
-            return False
-        if x_np.ndim not in (2, 3):
-            return False
-        if x_np.shape[0] > max_samples:
-            idx = np.random.choice(x_np.shape[0], size=max_samples, replace=False)
-            x_np = x_np[idx]
-        if x_np.ndim == 3:
-            if self.max_dim is None or x_np.shape[-1] != self.max_dim:
-                return False
-            p = x_np.mean(axis=0).astype(np.float32)
-        else:
-            if self.max_dim is None:
-                return False
-            n_samples, n_dim = x_np.shape
-            if n_dim != self.N:
-                return False
-            p = np.zeros((n_dim, self.max_dim), dtype=np.float32)
-            for j in range(n_dim):
-                counts = np.bincount(x_np[:, j].astype(np.int64), minlength=self.max_dim).astype(np.float32)
-                total = float(counts.sum())
-                if total > 0:
-                    p[j] = counts / total
-        p = np.clip(p, self.prob_eps_clamp, 1.0)
-        p = p / np.sum(p, axis=-1, keepdims=True)
-        logits = np.log(p)
-        base = torch.as_tensor(logits, device=self.device, dtype=torch.float32)
-        with torch.no_grad():
-            expanded = base.unsqueeze(0).unsqueeze(0).expand(self.nb_instances, self.M, -1, -1)
-            if noise_std and noise_std > 0:
-                expanded = expanded + (noise_std * torch.randn_like(expanded))
-            self.theta.copy_(expanded)
-            self.probs = None
-        self._refresh_agent_views()
-        return True
