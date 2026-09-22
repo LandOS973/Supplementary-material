@@ -44,14 +44,10 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         kl_beta=1.0,           # β : pénalité KL, fixe
     ):
         self.M = M
-        self.N = N
         self.lambda_per_agent = int(lambda_)
         self.total_lambda = self.lambda_per_agent * self.M
         Abstract_EDA.__init__(self, N, self.total_lambda, device)
         nn.Module.__init__(self)
-
-        self.lambda_ = self.total_lambda
-        self.device = device
         self.epsilon_svgd = epsilon_svgd
         self.enable_visualization = bool(enable_visualization)
         self.no_interact = bool(no_interact)
