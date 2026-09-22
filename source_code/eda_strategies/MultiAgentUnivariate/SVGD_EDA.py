@@ -168,17 +168,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         greedy = (probs >= 0.5).float()
         return greedy.unsqueeze(-1)
 
-    def updateDistribution(self, solutionList, scoreList):
-        """Applique la mise à jour (REINFORCE ou PPO) suivie de SVGD entre agents."""
-        if self.ppo_active:
-            total_loss = self._updateDistribution_PPO(solutionList, scoreList)
-        else:
-            total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
-            self._apply_svgd()
-        if self.enable_visualization:
-            self._record_theta()
-        return total_loss
-
     def _compute_kl(self, pi_old_full, pi_new_full):
         """
         KL(π_old || π_new) par (instance×agent, variable), sommée sur N puis sur BM
@@ -237,6 +226,17 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             probs_exp = probs.unsqueeze(1).expand(-1, λa, -1)           # (BM, λa, N)
             return torch.where(indivduals == 1.0, probs_exp, 1.0 - probs_exp)  # (BM, λa, N)
 
+    def updateDistribution(self, solutionList, scoreList):
+        """Applique la mise à jour (REINFORCE ou PPO) suivie de SVGD entre agents."""
+        if self.ppo_active:
+            total_loss = self._updateDistribution_PPO(solutionList, scoreList)
+        else:
+            total_loss = self._updateDistribution_REINFORCE(solutionList, scoreList)
+            self._apply_svgd()
+        if self.enable_visualization:
+            self._record_theta()
+        return total_loss
+
     def _updateDistribution_REINFORCE(self, solutionList, scoreList):
         """
         Mise à jour REINFORCE pure : ∇_θ E[A · log π_θ(x)].
@@ -278,7 +278,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 log_pi = torch.log(pi_new_per_pos).sum(dim=-1)         # (BM, λa)
                 objective = torch.mean(advantages * log_pi, dim=1).sum()
             else:
-                self.probs = self.forward()
+                self.forward()
                 pi_new_per_pos = self._compute_pi_per_pos(indivduals)  # (BM, λa, N)
                 ratio = pi_new_per_pos / pi_old_per_pos                # (BM, λa, N)
                 surrogate = (ratio * adv_exp).sum(dim=-1)              # (BM, λa)
@@ -300,11 +300,8 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         Applique un pas SVGD instance par instance en se basant sur les directions RL observées.
         Utilise self.last_theta_grad comme direction RL : (B, M, N)
         """
-        if self.last_theta_grad is None:
-            return
-
         with torch.no_grad():
-            phi = self.svgd.phi(self.theta, self.last_theta_grad.detach())
+            phi = self.svgd.phi(self.theta, self.last_theta_grad)
             if self.enable_visualization:
                 kernel_stats = self.svgd.get_last_kernel_stats()
                 if kernel_stats:
