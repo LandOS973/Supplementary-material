@@ -147,7 +147,7 @@ def main(cfg: DictConfig):
 
     factory = FactoryStrategyEA()
 
-    dim_variables = None
+    max_dim = None
     D = None
     block_size = None
     dummy_blocks = int(cfg.problem.dummy_blocks) if "problem" in cfg and "dummy_blocks" in cfg.problem else 0
@@ -179,6 +179,8 @@ def main(cfg: DictConfig):
         tensor_matrix_locus, tensor_matrix_contrib, tensor_Q_test = getTensorInstances_NK(
             nk_path, nb_instances_test, nb_restarts, lambda_ * M, dim, D, type_instance, device
         )
+        if type_problem_upper == "NK3":
+            max_dim = 3
     elif type_problem_upper == "BLOCK":
         block_size = type_instance
         if block_size <= 0:
@@ -207,7 +209,7 @@ def main(cfg: DictConfig):
             )
             print(f"[ViennaRNA] loaded target={target_resolved_name} (len={len(target_struct)})")
         dim = len(target_struct)
-        dim_variables = [4 for _ in range(dim)]
+        max_dim = 4
         num_workers_cfg = OmegaConf.select(cfg, "problem.num_workers")
         if num_workers_cfg is None:
             num_workers_cfg = cfg.get("num_workers")
@@ -220,7 +222,7 @@ def main(cfg: DictConfig):
         dim,
         lambda_,
         device,
-        dim_variables,
+        max_dim,
         M,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
@@ -232,7 +234,6 @@ def main(cfg: DictConfig):
         kernel_config=kernel_cfg,
         no_interact=no_interact,
         no_repulsion=no_repulsion,
-        is_nk3=(type_problem_upper == "NK3"),
         ppo_active=ppo_active,
         ppo_epochs=ppo_epochs,
         kl_beta=kl_beta,

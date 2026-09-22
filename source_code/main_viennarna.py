@@ -583,7 +583,7 @@ def main(cfg: DictConfig):
     np.random.seed(seed)
     random.seed(seed)
 
-    dim_variables = [alphabet_size for _ in range(dim)]
+    max_dim = alphabet_size
     factory = FactoryStrategyEA()
 
     params = dict(
@@ -607,7 +607,7 @@ def main(cfg: DictConfig):
         dim,
         lambda_,
         device,
-        dim_variables,
+        max_dim,
         M,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=visualization_enabled,
@@ -619,7 +619,6 @@ def main(cfg: DictConfig):
         kernel_config=kernel_cfg,
         no_interact=no_interact,
         no_repulsion=no_repulsion,
-        is_nk3=False,
     ).to(device)
 
     scores_array, history = get_Score_trajectories_viennarna_cuda(

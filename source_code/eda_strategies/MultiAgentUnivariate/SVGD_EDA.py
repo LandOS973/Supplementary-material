@@ -24,7 +24,7 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self,
         N,
         lambda_,
-        dim_variables,
+        max_dim,
         M,
         device,
         epsilon_svgd=None,
@@ -37,7 +37,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         decay_enabled=False,
         advantage_cfg=None,
         kernel_config=None,
-        is_nk3=False,
         # PPO hyperparameters
         ppo_active=False,      # True => PPO (K époques), False => REINFORCE pur
         ppo_epochs=1,          # K : nombre d'époques internes (ignoré si ppo_active=False)
@@ -55,24 +54,11 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.epsilon_svgd = epsilon_svgd
         self.enable_visualization = bool(enable_visualization)
         self.no_interact = bool(no_interact)
-        self.no_repulsion = bool(no_repulsion)
-        self.dim_variables = dim_variables
-        self.is_nk3 = bool(is_nk3)
-        self.use_categorical = bool(self.is_nk3 or self.dim_variables is not None)
-        self.max_dim = 3 if self.is_nk3 else None
-        if self.dim_variables is not None:
-            if len(self.dim_variables) != self.N:
-                raise ValueError(
-                    f"dim_variables length ({len(self.dim_variables)}) must match N={self.N}."
-                )
-            if len(set(self.dim_variables)) != 1:
-                raise ValueError(
-                    "SVGD_EDA ne supporte que des variables categorielles de meme cardinalite "
-                    f"(dim_variables={self.dim_variables})."
-                )
-            self.max_dim = int(self.dim_variables[0])
-            if self.max_dim < 2:
-                raise ValueError(f"Invalid categorical max_dim: {self.max_dim}")
+        no_repulsion = bool(no_repulsion)
+        self.max_dim = int(max_dim) if max_dim is not None else None
+        self.use_categorical = self.max_dim is not None
+        if self.use_categorical and self.max_dim < 2:
+            raise ValueError(f"Invalid categorical max_dim: {self.max_dim}")
         self.svgd_gamma = float(svgd_gamma)
         self.decay_start_ratio = float(decay_start_ratio)
         self.decay_min_factor = float(decay_min_factor)
@@ -85,15 +71,14 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         kernel_config_local = kernel_config or {}
         self.advantage_strategy = AdvantageFactory.from_config(advantage_cfg)
-        self.kernel_config = kernel_config_local
-        self.kernel_name = str(self.kernel_config.get("name", "rbf")).lower()
-        self.prob_eps_clamp = float(self.kernel_config.get("prob_eps_clamp", 1e-3))
+        kernel_name = str(kernel_config_local.get("name", "rbf")).lower()
+        self.prob_eps_clamp = float(kernel_config_local.get("prob_eps_clamp", 1e-3))
 
         self.agent_lambdas = [self.lambda_per_agent for _ in range(self.M)]
         self.agents = []
 
-        kernel_impl = self._build_svgd_kernel(self.kernel_name)
-        self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma, no_repulsion=self.no_repulsion)
+        kernel_impl = self._build_svgd_kernel(kernel_name)
+        self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma, no_repulsion=no_repulsion)
         self.theta_history = []
         self._last_kernel_stats = None
 

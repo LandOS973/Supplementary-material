@@ -89,8 +89,7 @@ def _prepare_strategy(
     decay_min_factor: float,
     epsilon_svgd: float,
     svgd_gamma: float,
-    dim_variables,
-    is_nk3: bool,
+    max_dim,
 ):
     factory = FactoryStrategyEA()
     strategy = factory.createStrategyEA(
@@ -98,7 +97,7 @@ def _prepare_strategy(
         dim,
         lambda_,
         device,
-        dim_variables,
+        max_dim,
         m_agents,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=False,
@@ -110,7 +109,6 @@ def _prepare_strategy(
         kernel_config=kernel_cfg,
         no_interact=no_interact,
         no_repulsion=no_repulsion,
-        is_nk3=is_nk3,
     ).to(device)
     return strategy
 
@@ -142,7 +140,7 @@ def _run_once(
     start = time.perf_counter()
 
     total_lambda = lambda_ * m_agents
-    dim_variables = [3 for _ in range(dim)] if type_problem == "NK3" else None
+    max_dim = 3 if type_problem == "NK3" else None
 
     strategy = _prepare_strategy(
         device=device,
@@ -158,8 +156,7 @@ def _run_once(
         decay_min_factor=decay_min_factor,
         epsilon_svgd=epsilon_svgd,
         svgd_gamma=svgd_gamma,
-        dim_variables=dim_variables,
-        is_nk3=type_problem == "NK3",
+        max_dim=max_dim,
     )
 
     if type_problem == "QUBO":

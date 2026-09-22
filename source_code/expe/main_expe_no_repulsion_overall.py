@@ -171,7 +171,7 @@ def _run_once_no_repulsion(
         problem_ctx["dim"],
         lambda_,
         device,
-        problem_ctx["dim_variables"],
+        problem_ctx["max_dim"],
         M,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=DEFAULTS["visualization"],

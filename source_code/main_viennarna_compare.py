@@ -131,7 +131,7 @@ def _run_one_target(
         dim,
         lambda_,
         device,
-        [4] * dim,
+        4,
         M,
         epsilon_svgd=epsilon_svgd,
         enable_visualization=False,
@@ -143,7 +143,6 @@ def _run_one_target(
         kernel_config=kernel_cfg,
         no_interact=bool(agent_val("no_interact") or False),
         no_repulsion=bool(agent_val("no_repulsion") or False),
-        is_nk3=False,
     ).to(device)
 
     print(f"\n[1/2] SVGD-EDA  M={M} lambda={lambda_} ...")

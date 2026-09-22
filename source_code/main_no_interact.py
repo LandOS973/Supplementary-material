@@ -89,7 +89,7 @@ def _run_once_no_interact(problem_ctx, params: dict, budget: int, device=None, n
         problem_ctx["dim"],
         params["lambda_"],
         device,
-        problem_ctx["dim_variables"],
+        problem_ctx["max_dim"],
         params["M"],
         epsilon_svgd=params["epsilon_svgd"],
         enable_visualization=DEFAULTS["visualization"],
