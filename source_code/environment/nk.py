@@ -377,7 +377,9 @@ def get_Score_trajectoriesNK_cuda(
                 js_pairwise_history.append(None)
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
-            agent_fitness_history.append([score.item() / N for score in agent_mean_scores])
+            agent_fitness_history.append(
+                [score.item() / N for score in agent_mean_scores] if enable_visualization else []
+            )
             kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
             kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
             if kernel_stats:

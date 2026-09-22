@@ -221,22 +221,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
         return indivduals, advantages
 
-    def _updateDistribution_REINFORCE(self, solutionList, scoreList):
-        """
-        Mise à jour REINFORCE pure : ∇_θ E[A · log π_θ(x)].
-        Identique au comportement de la branche main (ppo_active=False).
-        _apply_svgd() est appelé par updateDistribution après ce retour.
-        """
-        indivduals, advantages = self._prepare_step(solutionList, scoreList)
-        log_Pi = torch.log(self._compute_pi_per_pos(indivduals) + 1e-10).sum(dim=2)  # (BM, λa)
-
-        loss = torch.mean(advantages * log_Pi, dim=1).sum()
-
-        (grad_theta,) = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
-        self.last_theta_grad = grad_theta.detach().clone()
-
-        return loss
-
     def _compute_pi_per_pos(self, indivduals):
         """
         Retourne π_θ(x_n) (probabilité brute) pour chaque position n.
@@ -254,6 +238,20 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
             probs = self.probs.view(BM, N)
             probs_exp = probs.unsqueeze(1).expand(-1, λa, -1)           # (BM, λa, N)
             return torch.where(indivduals == 1.0, probs_exp, 1.0 - probs_exp)  # (BM, λa, N)
+
+    def _updateDistribution_REINFORCE(self, solutionList, scoreList):
+        """
+        Mise à jour REINFORCE pure : ∇_θ E[A · log π_θ(x)].
+        Identique au comportement de la branche main (ppo_active=False).
+        _apply_svgd() est appelé par updateDistribution après ce retour.
+        """
+        indivduals, advantages = self._prepare_step(solutionList, scoreList)
+        log_Pi = torch.log(self._compute_pi_per_pos(indivduals)).sum(dim=2)  # (BM, λa)
+        loss = torch.mean(advantages * log_Pi, dim=1).sum()
+        (grad_theta,) = torch.autograd.grad(loss, self.theta, create_graph=False, retain_graph=True)
+        self.last_theta_grad = grad_theta.detach().clone()
+
+        return loss
 
     def _updateDistribution_PPO(self, solutionList, scoreList):
         """
@@ -274,36 +272,30 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
                 else self.probs.view(BM, N).detach()
 
         # --- Boucle K époques PPO avec SVGD intra-boucle ---
-        last_surrogate_mean = None
         adv_exp = advantages.unsqueeze(-1)  # (BM, λa, 1) — précalculé hors boucle
 
         for epoch in range(self.ppo_epochs):
-            if epoch > 0:
+            if epoch == 0:
+                pi_new_per_pos = self._compute_pi_per_pos(indivduals)  # (BM, λa, N)
+                log_pi = torch.log(pi_new_per_pos).sum(dim=-1)         # (BM, λa)
+                objective = torch.mean(advantages * log_pi, dim=1).sum()
+            else:
                 self.probs = self.forward()
+                pi_new_per_pos = self._compute_pi_per_pos(indivduals)  # (BM, λa, N)
+                ratio = pi_new_per_pos / pi_old_per_pos                # (BM, λa, N)
+                surrogate = (ratio * adv_exp).sum(dim=-1)              # (BM, λa)
 
-            # Ratio par position : r_n = π_θ_new(x_n) / π_θ_old(x_n)
-            pi_new_per_pos = self._compute_pi_per_pos(indivduals)  # (BM, λa, N)
-            ratio = pi_new_per_pos / pi_old_per_pos                # (BM, λa, N)
-            surrogate = (ratio * adv_exp).sum(dim=-1)              # (BM, λa) — pas de clipping
+                pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \
+                    else self.probs.view(BM, N)
+                kl_sum = self._compute_kl(pi_old_full, pi_new_full)
+                objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl_sum
 
-            pi_new_full = self.probs.view(BM, N, -1) if self.use_categorical \
-                else self.probs.view(BM, N)
-            kl_sum = self._compute_kl(pi_old_full, pi_new_full)
-            objective = surrogate.mean(dim=1).sum() - self.kl_beta * kl_sum
-
-            # retain_graph=False : le graph est reconstruit à chaque epoch via forward()
             (grad_theta,) = torch.autograd.grad(
                 objective, self.theta, create_graph=False, retain_graph=False
             )
             self.last_theta_grad = grad_theta.detach().clone()
-
-            # Pas SVGD : θ_i += ε · φ(θ)  — à l'intérieur de la boucle K
             self._apply_svgd()
-
-            last_surrogate_mean = float(surrogate.detach().mean(dim=1).mean().item())
-
-        val = last_surrogate_mean if last_surrogate_mean is not None else 0.0
-        return torch.tensor(val, device=self.device)
+        return objective
 
     def _apply_svgd(self):
         """
