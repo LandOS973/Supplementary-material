@@ -34,8 +34,6 @@ def render_agent_dashboard(
     js_pairwise_history=None,
     entropy_history=None,
     entropy_agent_history=None,
-    kernel_value_history=None,
-    kernel_grad_history=None,
     sample_entropy_history=None,
     sample_entropy_agent_history=None,
     sample_hamming_history=None,
@@ -45,8 +43,6 @@ def render_agent_dashboard(
     l1_history=None,
     l1_pairwise_history=None,
     best_individual_history=None,
-    attraction_agent_history=None,
-    repulsion_agent_history=None,
 ):
     if tk is None or plt is None or FigureCanvasTkAgg is None:
         print("Tkinter/matplotlib not available, skipping dashboard.")

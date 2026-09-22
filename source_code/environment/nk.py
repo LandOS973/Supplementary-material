@@ -182,15 +182,11 @@ def get_Score_trajectoriesNK_cuda(
     score_p95_history = []
     score_p98_history = []
     agent_fitness_history = []
-    attraction_agent_history = []
-    repulsion_agent_history = []
     hamming_pairwise_history = []
     js_pairwise_history = []
     l1_pairwise_history = []
     entropy_agent_history = []
     kl_pairwise_history = []
-    avg_kernel_value_history = []
-    avg_kernel_grad_history = []
     solutions_history = [] if collect_debug_metrics else None
     metrics = MetricsCalculator(normalization_factor=N)
 
@@ -380,21 +376,6 @@ def get_Score_trajectoriesNK_cuda(
             agent_fitness_history.append(
                 [score.item() / N for score in agent_mean_scores] if enable_visualization else []
             )
-            kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
-            kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
-            if kernel_stats:
-                avg_kernel_value_history.append(kernel_stats.get("avg_kernel_value", 0.0))
-                avg_kernel_grad_history.append(kernel_stats.get("avg_kernel_grad", 0.0))
-            force_stats = None
-            if enable_visualization:
-                force_stats_fn = getattr(strategy, "get_latest_force_stats", None)
-                force_stats = force_stats_fn() if callable(force_stats_fn) else None
-            if force_stats:
-                attraction_agent_history.append(force_stats.get("attraction_per_agent"))
-                repulsion_agent_history.append(force_stats.get("repulsion_per_agent"))
-            else:
-                attraction_agent_history.append(None)
-                repulsion_agent_history.append(None)
 
         runtime_steps.append((epoch + 1) * size_pop)
         best_fitness_history.append(-global_best)
@@ -555,15 +536,11 @@ def get_Score_trajectoriesNK_cuda(
             js_pairwise_history=js_pairwise_history,
             entropy_history=avg_entropy_history,
             entropy_agent_history=entropy_agent_history,
-            kernel_value_history=avg_kernel_value_history,
-            kernel_grad_history=avg_kernel_grad_history,
             score_history=score_mean_history,
             ranking_lines=ranking_lines,
             l1_history=avg_l1_history,
             l1_pairwise_history=l1_pairwise_history,
             best_individual_history=best_individual_history,
-            attraction_agent_history=attraction_agent_history,
-            repulsion_agent_history=repulsion_agent_history,
         )
 
         svgd_snapshot_fn = getattr(strategy, "get_svgd_field_snapshot", None)

@@ -77,7 +77,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         kernel_impl = self._build_svgd_kernel(kernel_name)
         self.svgd = SVGD(kernel_impl, gamma=self.svgd_gamma, no_repulsion=no_repulsion)
         self.theta_history = []
-        self._last_kernel_stats = None
 
         self.theta = None
         self.nb_instances = 0
@@ -119,7 +118,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         self.baseline.resize_(nb_instances, self.M).zero_()
 
         self.theta_history = []
-        self._last_kernel_stats = None
         self.last_theta_grad = None
         if self.enable_visualization:
             self._record_theta()
@@ -302,10 +300,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
         """
         with torch.no_grad():
             phi = self.svgd.phi(self.theta, self.last_theta_grad)
-            if self.enable_visualization:
-                kernel_stats = self.svgd.get_last_kernel_stats()
-                if kernel_stats:
-                    self._last_kernel_stats = kernel_stats
             self.theta += self.epsilon_svgd * phi
             self.probs = None
 
@@ -337,12 +331,6 @@ class SVGD_EDA(Abstract_EDA, nn.Module):
 
     def get_theta_history(self):
         return self.theta_history
-
-    def get_latest_kernel_metrics(self):
-        return self._last_kernel_stats
-
-    def get_latest_force_stats(self):
-        return self.svgd.get_last_force_stats()
 
     def _refresh_agent_views(self):
         if self.theta is None:

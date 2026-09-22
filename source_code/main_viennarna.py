@@ -233,8 +233,6 @@ def get_Score_trajectories_viennarna_cuda(
     l2_pairwise_history = []
     l1_pairwise_history = []
     entropy_agent_history = []
-    avg_kernel_value_history = []
-    avg_kernel_grad_history = []
 
     if name_file is not None:
         with open(name_file, "w", encoding="utf-8") as f_results:
@@ -365,15 +363,6 @@ def get_Score_trajectories_viennarna_cuda(
                         start_idx = end_idx
                 agent_fitness_history.append(per_agent_fitness)
 
-                kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
-                kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
-                if kernel_stats:
-                    avg_kernel_value_history.append(float(kernel_stats.get("avg_kernel_value", 0.0)))
-                    avg_kernel_grad_history.append(float(kernel_stats.get("avg_kernel_grad", 0.0)))
-                else:
-                    avg_kernel_value_history.append(0.0)
-                    avg_kernel_grad_history.append(0.0)
-
             _record_history(step, avg_hamming=avg_hamming, avg_l1=avg_l1, avg_entropy=avg_entropy)
 
             if use_tqdm:
@@ -398,8 +387,6 @@ def get_Score_trajectories_viennarna_cuda(
                 l1_pairwise_history.append(l1_pairwise_history[-1] if l1_pairwise_history else None)
                 entropy_agent_history.append(entropy_agent_history[-1] if entropy_agent_history else None)
                 agent_fitness_history.append(agent_fitness_history[-1] if agent_fitness_history else [])
-                avg_kernel_value_history.append(avg_kernel_value_history[-1] if avg_kernel_value_history else 0.0)
-                avg_kernel_grad_history.append(avg_kernel_grad_history[-1] if avg_kernel_grad_history else 0.0)
             _record_history(budget)
 
     finally:
@@ -446,17 +433,13 @@ def get_Score_trajectories_viennarna_cuda(
             agent_fitness_history,
             num_agents,
             theta_history,
-            None,
-            hamming_pairwise_history,
-            js_pairwise_history,
-            avg_l2_history,
-            l2_pairwise_history,
-            avg_l1_history,
-            l1_pairwise_history,
-            avg_entropy_history,
-            entropy_agent_history,
-            avg_kernel_value_history,
-            avg_kernel_grad_history,
+            solutions_history=None,
+            hamming_pairwise_history=hamming_pairwise_history,
+            js_pairwise_history=js_pairwise_history,
+            entropy_history=avg_entropy_history,
+            entropy_agent_history=entropy_agent_history,
+            l1_history=avg_l1_history,
+            l1_pairwise_history=l1_pairwise_history,
             best_individual_history=best_individual_history,
         )
 

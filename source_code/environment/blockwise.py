@@ -97,8 +97,6 @@ def get_Score_trajectoriesBLOCK_cuda(
     l1_pairwise_history = []
     entropy_agent_history = []
     kl_pairwise_history = []
-    avg_kernel_value_history = []
-    avg_kernel_grad_history = []
     solutions_history = [] if enable_visualization else None
     metrics = MetricsCalculator()
     num_agents = len(agent_lambdas) if isinstance(agent_lambdas, (list, tuple)) else 0
@@ -325,14 +323,6 @@ def get_Score_trajectoriesBLOCK_cuda(
                 l1_pairwise_history.append(None)
                 entropy_agent_history.append(None)
             agent_fitness_history.append([score.item() for score in agent_mean_scores])
-            kernel_stats_fn = getattr(strategy, "get_latest_kernel_metrics", None)
-            kernel_stats = kernel_stats_fn() if callable(kernel_stats_fn) else None
-            if kernel_stats:
-                avg_kernel_value_history.append(kernel_stats.get("avg_kernel_value", 0.0))
-                avg_kernel_grad_history.append(kernel_stats.get("avg_kernel_grad", 0.0))
-            else:
-                avg_kernel_value_history.append(0.0)
-                avg_kernel_grad_history.append(0.0)
 
         if use_tqdm:
             postfix = {"bestScore": global_best, "current_score": global_current}
@@ -480,19 +470,15 @@ def get_Score_trajectoriesBLOCK_cuda(
             agent_fitness_history,
             num_agents,
             theta_history,
-            {"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
+            solutions_history={"values": solutions_history, "lambda_per_agent": size_pop // max(num_agents, 1)}
             if solutions_history is not None and num_agents > 0
             else None,
-            hamming_pairwise_history,
-            js_pairwise_history,
-            avg_l2_history,
-            l2_pairwise_history,
-            avg_l1_history,
-            l1_pairwise_history,
-            avg_entropy_history,
-            entropy_agent_history,
-            avg_kernel_value_history,
-            avg_kernel_grad_history,
+            hamming_pairwise_history=hamming_pairwise_history,
+            js_pairwise_history=js_pairwise_history,
+            entropy_history=avg_entropy_history,
+            entropy_agent_history=entropy_agent_history,
+            l1_history=avg_l1_history,
+            l1_pairwise_history=l1_pairwise_history,
             sample_hamming_history=sample_hamming_history,
             sample_hamming_pairwise_history=sample_hamming_pairwise_history,
             best_individual_history=best_individual_history,
