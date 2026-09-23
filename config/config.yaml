@@ -1,29 +1,29 @@
 seed: 0
 verbose: true
-nb_instances_test: 1
-nb_restarts: 1
+nb_instances_test: 10
+nb_restarts: 10
 budget: 50000
 visualization: true
 
 agent:
-  M: 5
-  lambda: 10
+  M: 10
+  lambda: 13
   advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
   kernel: rbf # rbf | no_interact
-  epsilon_svgd: 0.06 # Pas de mise à jour des particules
+  epsilon_svgd: 0.05 # Pas de mise à jour des particules
   gamma: 0.006 # Ponderation de l'attraction vers les zones de haute densité
   no_interact: false
   no_repulsion: false
   enable_greedy_final: true
-  decay_start_ratio: 0.1
-  min_factor: 0.1
-  decay: false
-  ppo_active: true
+  decay_start_ratio: 0.03
+  min_factor: 0.01
+  decay: true
+  ppo_active: false
   ppo:
     ppo_epochs: 4
     beta: 0.01
 
-problem_name: anr
+problem_name: nk3
 
 problems:
   qubo:

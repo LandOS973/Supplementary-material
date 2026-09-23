@@ -313,7 +313,9 @@ def main(cfg: DictConfig):
 
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
-    print_global_ranking(repo_root, type_problem, dim, type_instance, avg, target_name=target_resolved_name)
+    if type_problem_upper not in ("NK", "NK3", "QUBO"):
+        # NK/NK3 and QUBO already print the ranking internally, before the dashboard is rendered.
+        print_global_ranking(repo_root, type_problem, dim, type_instance, avg, target_name=target_resolved_name)
 
 
 if __name__ == "__main__":

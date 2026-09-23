@@ -385,7 +385,7 @@ def get_Score_trajectoriesBLOCK_cuda(
             restarts_group = int(nb_restarts) if (int(nb_restarts) > 0 and total_cases % int(nb_restarts) == 0) else 1
             grouped_instances = total_cases // restarts_group
 
-            if verbose:
+            if verbose and float(improved_agents_count.sum().item()) > 0:
                 suffix = f" (moyenne sur {restarts_group} restarts)" if restarts_group > 1 else ""
                 print(f"Agents qui ameliorent leur score final par instance{suffix}:")
                 for inst_idx in range(grouped_instances):
@@ -394,6 +394,8 @@ def get_Score_trajectoriesBLOCK_cuda(
                     count_slice = improved_agents_count[start:end].float()
                     gain_slice = positive_gain_sum[start:end]
                     mean_count = float(count_slice.mean().item())
+                    if mean_count <= 0:
+                        continue
                     improved_total = float(count_slice.sum().item())
                     mean_gain = float(gain_slice.sum().item() / improved_total) if improved_total > 0 else 0.0
                     count_str = (
@@ -441,20 +443,6 @@ def get_Score_trajectoriesBLOCK_cuda(
             "best_epochs": best_epochs_bm,
         }
 
-    if track_leader and enable_visualization and agent_best_overall is not None and hasattr(strategy, "agents"):
-        print("Per-agent summary:")
-        for idx, agent in enumerate(strategy.agents):
-            avg_best = torch.mean(agent_best_overall[idx]).item()
-            theta_mean = torch.mean(metrics.agent_theta_tensor(agent)).item()
-            print(f"Agent {idx}: avg_best_score={avg_best:.4f}, theta_mean={theta_mean:.6f}")
-        if best_individual_history is not None:
-            mean_hamming = best_individual_history["hamming"].mean(axis=0)
-            print(f"Best-individual Hamming distance (raw bits, mean over {best_individual_history['hamming'].shape[0]} instances):")
-            header = "        " + "".join(f"Agt{j:<5}" for j in range(mean_hamming.shape[0]))
-            print(header)
-            for i in range(mean_hamming.shape[0]):
-                row = "".join(f"{mean_hamming[i, j]:<8.1f}" for j in range(mean_hamming.shape[1]))
-                print(f"Agent {i}: {row}")
 
     if enable_visualization:
         iterations = [(idx + 1) * size_pop for idx in range(len(avg_hamming_history))] if avg_hamming_history else []
