@@ -23,12 +23,12 @@ agent:
     ppo_epochs: 4
     beta: 0.01
 
-problem_name: nk3
+problem_name: qubo
 
 problems:
   qubo:
     name: QUBO
-    dim: 64
+    dim: 512
     type_instance: 5
 
   nk:
