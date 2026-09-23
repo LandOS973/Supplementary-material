@@ -10,6 +10,12 @@ import warnings
 warnings.filterwarnings("ignore")
 import sys
 
+# Chemins absolus, independants du repertoire courant d'ou le script est lance
+# (ex: SLURM fait `cd $WORK/Supplementary-material` puis appelle
+# `python source_code/main_nevergrad.py`, donc CWD != dossier du script).
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+
 parser = argparse.ArgumentParser(description='Nevergrad')
 
 parser.add_argument('type_problem', type=str, help='type_problem : QUBO, NK or NK3')
@@ -46,7 +52,7 @@ list_problem = []
 
 if(type_problem == "QUBO"):
 
-    path = "instances/QUBO/"
+    path = os.path.join(SCRIPT_DIR, "instances", "QUBO") + os.sep
     for num_instance in range(1, nb_instances + 1):
         filename = path + "puboi_evo_n_" + str(dim) + "_t_" + str(type_instance) + "_i_" + str(num_instance) + ".json"
         f = WalshExpansion()
@@ -58,7 +64,7 @@ if(type_problem == "QUBO"):
 
 elif(type_problem == "NK"):
 
-    path = "instances/nk/" + str(dim) + "/" + str(type_instance) + "/"
+    path = os.path.join(SCRIPT_DIR, "instances", "nk", str(dim), str(type_instance)) + os.sep
     for num_instance in range(nb_instances):
         name_instance = path + "nk_" + str(dim) + "_" + str(type_instance) + "_" + str(num_instance) + ".txt"
         list_problem.append(problem_NKlandscape(name_instance))
@@ -70,7 +76,7 @@ elif(type_problem == "NK3"):
 
     D = 3
 
-    path = "instances/nk3/" + str(dim) + "/" + str(type_instance) + "/"
+    path = os.path.join(SCRIPT_DIR, "instances", "nk3", str(dim), str(type_instance)) + os.sep
     for num_instance in range(nb_instances):
         name_instance = path + "nk_" + str(dim) + "_" + str(type_instance) + "_" + str(D) + "_" + str(num_instance) + ".txt"
         list_problem.append(problem_NKlandscape(name_instance))
@@ -79,23 +85,13 @@ elif(type_problem == "NK3"):
 
 
     
-if(type_problem == "QUBO"):
-    type_problem = "UBQP"
+os.makedirs(
+    os.path.join(REPO_ROOT, "results", "nevergrad", name_algo, str(type_problem), str(dim), str(type_instance)),
+    exist_ok=True,
+)
 
-if not os.path.exists("results/results_nevergrad_final/" + name_algo ):
-    os.mkdir("results/results_nevergrad_final/" + name_algo)
 
-if not os.path.exists("results/results_nevergrad_final/" + name_algo + "/" + type_problem ):
-    os.mkdir("results/results_nevergrad_final/" + name_algo + "/" + str(type_problem))
-    
-if not os.path.exists("results/results_nevergrad_final/" + name_algo + "/" + type_problem + "/" + str(dim) ):
-    os.mkdir("results/results_nevergrad_final/" + name_algo + "/" + type_problem + "/" + str(dim))
-
-if not os.path.exists("results/results_nevergrad_final/" + name_algo + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance) ):
-    os.mkdir("results/results_nevergrad_final/" + name_algo + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance))
-    
-
-path_result = "results/results_nevergrad_final/" + name_algo + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance) + "/"
+path_result = os.path.join(REPO_ROOT, "results", "nevergrad", name_algo, str(type_problem), str(dim), str(type_instance)) + os.sep
 path_logs = "logs/"
 name_file_result = "results_nevergrad_" + name_algo + "_" + type_problem + "_" + str(dim) + "_" + str(type_instance) + "_" + str(nb_instances) + "_budget_" + str(budget) + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
 
