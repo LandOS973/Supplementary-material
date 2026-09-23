@@ -28,9 +28,11 @@ from problems.viennarna import ETERNA100_TSV_URL, load_target_from_eterna100, no
 from utils.main_utils import build_global_ranking_lines
 
 
-def print_global_ranking(repo_root: str, type_problem: str, dim: int, type_instance: int, avg_score: float) -> None:
+def print_global_ranking(
+    repo_root: str, type_problem: str, dim: int, type_instance: int, avg_score: float, target_name: str | None = None
+) -> None:
     """Situe notre score parmi les algos de additional_results/global_ranking (top 1, +-2 autour de nous)."""
-    lines = build_global_ranking_lines(repo_root, type_problem, dim, type_instance, avg_score)
+    lines = build_global_ranking_lines(repo_root, type_problem, dim, type_instance, avg_score, target_name=target_name)
     print("\n=== " + lines[0] + " ===")
     for line in lines[1:]:
         print(line)
@@ -151,6 +153,7 @@ def main(cfg: DictConfig):
     dummy_blocks = int(cfg.problem.dummy_blocks) if "problem" in cfg and "dummy_blocks" in cfg.problem else 0
 
     target_struct = None
+    target_resolved_name = None
     num_workers = None
 
     if type_problem_upper == "QUBO":
@@ -197,6 +200,7 @@ def main(cfg: DictConfig):
         target_struct_cfg = OmegaConf.select(cfg, "problem.target_struct")
         if target_struct_cfg:
             target_struct = normalize_target_struct(str(target_struct_cfg))
+            target_resolved_name = target_name
             print(f"[ViennaRNA] using target from cfg.problem.target_struct (len={len(target_struct)})")
         else:
             target_struct, target_resolved_name = load_target_from_eterna100(
@@ -309,7 +313,7 @@ def main(cfg: DictConfig):
 
     avg = float(np.mean(list_scores))
     print("average_test_score:", avg)
-    print_global_ranking(repo_root, type_problem, dim, type_instance, avg)
+    print_global_ranking(repo_root, type_problem, dim, type_instance, avg, target_name=target_resolved_name)
 
 
 if __name__ == "__main__":

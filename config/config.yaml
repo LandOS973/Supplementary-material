@@ -1,12 +1,12 @@
 seed: 0
 verbose: true
-nb_instances_test: 10
-nb_restarts: 10
+nb_instances_test: 1
+nb_restarts: 1
 budget: 50000
 visualization: true
 
 agent:
-  M: 10
+  M: 5
   lambda: 10
   advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
   kernel: rbf # rbf | no_interact
@@ -23,7 +23,7 @@ agent:
     ppo_epochs: 4
     beta: 0.01
 
-problem_name: nk3
+problem_name: anr
 
 problems:
   qubo:
@@ -43,7 +43,7 @@ problems:
 
   anr:
     name: VIENNARNA
-    target_name: Gladius
+    target_name: Frog Foot
     target_source: https://raw.githubusercontent.com/eternagame/eterna100-benchmarking/master/data/eterna100_puzzles.tsv
     nevergrad_algo: DiscreteDE
     num_workers: null

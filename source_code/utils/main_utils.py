@@ -573,22 +573,32 @@ def _write_group_history(agg_outdir: str, problem: str, dim: int, type_instance:
     out_file.write_text("\n".join(lines), encoding="utf-8")
 
 
-def global_ranking_filename(type_problem: str, dim: int, type_instance: int) -> str:
+def slugify_target_name(target_name: str) -> str:
+    """Reproduit le slug de dossier utilise par main_nevergrad_viennarna*.py pour un target Eterna100."""
+    return str(target_name).strip().replace(" ", "_")
+
+
+def global_ranking_filename(type_problem: str, dim: int, type_instance: int, target_name: str | None = None) -> str:
     problem_upper = str(type_problem).upper()
     if problem_upper == "QUBO":
         return f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
     if problem_upper == "NK3":
         return f"NK3_N_{dim}_K_{type_instance}_ranks.csv"
+    if problem_upper == "VIENNARNA":
+        slug = slugify_target_name(target_name) if target_name else str(dim)
+        return f"VIENNARNA_{slug}_ranks.csv"
     return f"NK_N_{dim}_K_{type_instance}_ranks.csv"
 
 
-def build_global_ranking_lines(repo_root, type_problem: str, dim: int, type_instance: int, avg_score: float):
+def build_global_ranking_lines(
+    repo_root, type_problem: str, dim: int, type_instance: int, avg_score: float, target_name: str | None = None
+):
     """Situe avg_score parmi additional_results/global_ranking (top 1, +-2 autour de nous).
 
     Retourne une liste de lignes texte prete a afficher (print ou widget Tk).
     """
     ranking_path = Path(repo_root) / "additional_results" / "global_ranking" / global_ranking_filename(
-        type_problem, dim, type_instance
+        type_problem, dim, type_instance, target_name=target_name
     )
     if not ranking_path.exists():
         return [f"Classement introuvable : {ranking_path.name}"]

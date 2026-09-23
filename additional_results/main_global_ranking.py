@@ -24,18 +24,26 @@ def iter_algo_dirs(results_root: Path) -> List[Path]:
     return sorted([p for p in results_root.iterdir() if p.is_dir()])
 
 
-def find_instances(results_root: Path) -> Dict[Tuple[str, int, int], Dict[str, Path]]:
+def find_instances(results_root: Path) -> Dict[Tuple[str, object, object], Dict[str, Path]]:
     """Return mapping instance -> algo -> directory for that instance.
 
-    Instance key is (problem, dim, type_instance).
+    Instance key is (problem, dim, type_instance) for NK/NK3/QUBO, or
+    (problem, target_slug, None) for VIENNARNA (no dim/type_instance there).
     """
-    instances: Dict[Tuple[str, int, int], Dict[str, Path]] = {}
+    instances: Dict[Tuple[str, object, object], Dict[str, Path]] = {}
     for algo_dir in iter_algo_dirs(results_root):
         algo = algo_dir.name
         for problem_dir in algo_dir.iterdir():
             if not problem_dir.is_dir():
                 continue
             problem = problem_dir.name.upper()
+            if problem == "VIENNARNA":
+                for target_dir in problem_dir.iterdir():
+                    if not target_dir.is_dir():
+                        continue
+                    key = (problem, target_dir.name, None)
+                    instances.setdefault(key, {})[algo] = target_dir
+                continue
             if problem not in ("NK", "NK3", "QUBO"):
                 continue
             for dim_dir in problem_dir.iterdir():
@@ -147,11 +155,13 @@ def mean(values: Iterable[float]) -> float:
     return total / count
 
 
-def filename_for(problem: str, dim: int, type_instance: int) -> str:
+def filename_for(problem: str, dim, type_instance) -> str:
     if problem.upper() == "QUBO":
         return f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
     if problem.upper() == "NK3":
         return f"NK3_N_{dim}_K_{type_instance}_ranks.csv"
+    if problem.upper() == "VIENNARNA":
+        return f"VIENNARNA_{dim}_ranks.csv"  # dim holds the target slug here
     return f"NK_N_{dim}_K_{type_instance}_ranks.csv"
 
 
@@ -160,10 +170,13 @@ def build_rankings(
     out_dir: Path,
     budget: int,
     expected_runs: int,
+    only_problems: set[str] | None = None,
 ) -> int:
     algo_dirs = iter_algo_dirs(results_root)
     algos = [p.name for p in algo_dirs]
     instances = find_instances(results_root)
+    if only_problems:
+        instances = {k: v for k, v in instances.items() if k[0] in only_problems}
 
     if not instances:
         print(f"[WARN] No instances found under {results_root}", file=sys.stderr)
@@ -248,13 +261,23 @@ def main() -> int:
         default=DEFAULT_EXPECTED_RUNS,
         help="Expected number of run files per algo/instance",
     )
+    parser.add_argument(
+        "--only-problems",
+        type=str,
+        default=None,
+        help="Comma-separated problem filter, e.g. 'VIENNARNA' or 'NK,QUBO' (default: all)",
+    )
 
     args = parser.parse_args()
+    only_problems = (
+        {p.strip().upper() for p in args.only_problems.split(",") if p.strip()} if args.only_problems else None
+    )
     return build_rankings(
         results_root=args.results_root,
         out_dir=args.out_dir,
         budget=args.budget,
         expected_runs=args.expected_runs,
+        only_problems=only_problems,
     )
 
 
