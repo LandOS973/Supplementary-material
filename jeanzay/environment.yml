@@ -10,10 +10,10 @@ dependencies:
   - torchvision
   - pytorch-cuda=11.8
   - tqdm
-  - nevergrad
   - matplotlib
   - hydra-core
   - omegaconf
   - pip
   - pip:
       - ViennaRNA   # bindings Python `import RNA`, requis par les runs ViennaRNA
+      - nevergrad==1.0.12   # version utilisee dans le papier (Section 4.2) ; pinner via pip, pas conda
