@@ -84,12 +84,14 @@ fi
 
 echo "Algo=[$ALGO]  Dim=$DIM  T=$T  Seed=$SEED  Budget=$BUDGET  NbInstances=$NB_INSTANCES"
 
-# 5. Skip si ce (algo,t,seed) a deja un resultat complet (evite de refaire les 3223 runs
-#    deja produits par la v1 avant son timeout -- meme budget, meme seed, peu importe le timestamp)
+# 5. Skip si ce (algo,t,seed) a deja un resultat COMPLET (evite de refaire les 3223 runs
+#    deja produits par la v1 avant son timeout -- meme budget, meme seed, peu importe le timestamp).
+#    Attention : un fichier tue en plein calcul ne contient que l'en-tete (1 ligne) -- on
+#    verifie donc aussi le nombre de lignes, pas juste l'existence du fichier.
 RESULT_DIR="results/nevergrad/${ALGO}/QUBO/${DIM}/${T}"
-EXISTING=$(ls "${RESULT_DIR}"/results_nevergrad_${ALGO}_QUBO_${DIM}_${T}_${NB_INSTANCES}_budget_${BUDGET}_*_${SEED}.txt 2>/dev/null)
+EXISTING=$(ls -t "${RESULT_DIR}"/results_nevergrad_${ALGO}_QUBO_${DIM}_${T}_${NB_INSTANCES}_budget_${BUDGET}_*_${SEED}.txt 2>/dev/null | head -1)
 
-if [ -n "$EXISTING" ]; then
+if [ -n "$EXISTING" ] && [ "$(wc -l < "$EXISTING")" -gt 1 ]; then
   echo "  -> deja fait, on saute : $EXISTING"
 else
   python source_code/main_nevergrad.py QUBO "$ALGO" "$DIM" "$T" \
