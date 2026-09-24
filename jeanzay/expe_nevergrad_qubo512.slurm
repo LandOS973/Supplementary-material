@@ -84,9 +84,18 @@ fi
 
 echo "Algo=[$ALGO]  Dim=$DIM  T=$T  Seed=$SEED  Budget=$BUDGET  NbInstances=$NB_INSTANCES"
 
-python source_code/main_nevergrad.py QUBO "$ALGO" "$DIM" "$T" \
-  --nb_instances "$NB_INSTANCES" \
-  --budget "$BUDGET" \
-  --seed "$SEED"
+# 5. Skip si ce (algo,t,seed) a deja un resultat complet (evite de refaire les 3223 runs
+#    deja produits par la v1 avant son timeout -- meme budget, meme seed, peu importe le timestamp)
+RESULT_DIR="results/nevergrad/${ALGO}/QUBO/${DIM}/${T}"
+EXISTING=$(ls "${RESULT_DIR}"/results_nevergrad_${ALGO}_QUBO_${DIM}_${T}_${NB_INSTANCES}_budget_${BUDGET}_*_${SEED}.txt 2>/dev/null)
+
+if [ -n "$EXISTING" ]; then
+  echo "  -> deja fait, on saute : $EXISTING"
+else
+  python source_code/main_nevergrad.py QUBO "$ALGO" "$DIM" "$T" \
+    --nb_instances "$NB_INSTANCES" \
+    --budget "$BUDGET" \
+    --seed "$SEED"
+fi
 
 echo "Tache ${SLURM_ARRAY_TASK_ID} terminee a $(date)"
