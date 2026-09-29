@@ -12,6 +12,11 @@ from eda.optimizer.ppbil import PPBIL
 from eda.optimizer.replacement import RestrictedTournament, Truncation
 from eda.optimizer.selection import Top
 
+# Chemins absolus, independants du repertoire courant d'ou le script est lance
+# (meme piege que main_nevergrad.py : SLURM fait `cd $WORK/...` puis appelle
+# `python source_code/main_baseline_edas_and_tabu.py`, donc CWD != dossier du script).
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 
 parser = argparse.ArgumentParser(description='Nevergrad')
 
@@ -266,7 +271,7 @@ class TabuSearchAlgorithm:
 list_problem = []
 if(type_problem == "QUBO"):
 
-    path = "instances/QUBO/"
+    path = os.path.join(SCRIPT_DIR, "instances", "QUBO") + os.sep
     for num_instance in range(1, nb_instances + 1):
         filename = path + "puboi_evo_n_" + str(dim) + "_t_" + str(type_instance) + "_i_" + str(num_instance) + ".json"
         f = WalshExpansion()
@@ -279,7 +284,7 @@ if(type_problem == "QUBO"):
 
 elif(type_problem == "NK"):
 
-    path = "instances/nk/" + str(dim) + "/" + str(type_instance) + "/"
+    path = os.path.join(SCRIPT_DIR, "instances", "nk", str(dim), str(type_instance)) + os.sep
     for num_instance in range(nb_instances):
         name_instance = path + "nk_" + str(dim) + "_" + str(type_instance)  + "_" + str(num_instance) + ".txt"
         
@@ -293,7 +298,7 @@ elif(type_problem == "NK3"):
     D = 3
     categories = np.full((dim,), D)
 
-    path = "instances/nk3/" + str(dim) + "/" + str(type_instance) + "/"
+    path = os.path.join(SCRIPT_DIR, "instances", "nk3", str(dim), str(type_instance)) + os.sep
     for num_instance in range(nb_instances):
         name_instance = path + "nk_" + str(dim) + "_" + str(type_instance) + "_" + str(D) + "_" + str(num_instance) + ".txt"
         list_problem.append(problem_NKlandscape(name_instance))
@@ -312,20 +317,12 @@ elif (type_problem == "Bonnans"):
 
 
 
-if not os.path.exists("results/results_EDAs_final/" + name_algo ):
-    os.mkdir("results/results_EDAs_final/" + name_algo)
+os.makedirs(
+    os.path.join(REPO_ROOT, "results", "nevergrad", name_algo, str(type_problem), str(dim), str(type_instance)),
+    exist_ok=True,
+)
 
-if not os.path.exists("results/results_EDAs_final/" + name_algo + "/" + type_problem ):
-    os.mkdir("results/results_EDAs_final/" + name_algo + "/" + str(type_problem))
-    
-if not os.path.exists("results/results_EDAs_final/" + name_algo + "/" + type_problem + "/" + str(dim) ):
-    os.mkdir("results/results_EDAs_final/" + name_algo + "/" + type_problem + "/" + str(dim))
-
-if not os.path.exists("results/results_EDAs_final/" + name_algo + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance) ):
-    os.mkdir("results/results_EDAs_final/" + name_algo + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance))
-    
-
-path_result = "results/results_EDAs_final/" + name_algo + "/" + type_problem + "/" + str(dim) + "/" + str(type_instance) + "/"
+path_result = os.path.join(REPO_ROOT, "results", "nevergrad", name_algo, str(type_problem), str(dim), str(type_instance)) + os.sep
 name_file_result = "results_EDAs_final_" + name_algo + "_" + type_problem + "_" + str(dim) + "_" + str(type_instance) + "_" + str(nb_instances) + "_budget_" + str(budget) + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + str(seed) + ".txt"
 
 
