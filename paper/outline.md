@@ -77,6 +77,18 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
 | 6 | Données n=512 | En cours | Campagne nevergrad (81 algos × QUBO n=512) en cours sur Jean Zay (job JZ, ~4860 tâches réparties, voir `jeanzay/expe_nevergrad_qubo512.slurm` et `jeanzay/compute_missing_tasks.py`). Reste : NK/NK3 à n=512 côté nevergrad, et les runs SVGD-EDA propres (PPSN/+rang/+proximal) à toutes tailles |
 | 7 | Nommage "PPO" trompeur (pas de clipping, c'est un mode KL) | Mineur | Renommer en "proximal"/"KL-regularized multi-epoch" dans le papier |
 
+## Exclusions documentées du pool de concurrents
+
+- **`DiscreteNoisyInfSplits`, exclu à n=512 uniquement.** Mesuré sur JZ (campagne QUBO
+  n=512, job array) : ~5h par instance (10 instances requises par run), contre
+  ~15-20 min/instance pour les 80 autres algos du pool — un facteur ~15-20x.
+  Progression réelle confirmée (scores qui évoluent normalement), donc pas un bug/
+  boucle infinie mais un cas pathologiquement coûteux à cette échelle (le nom même,
+  "InfSplits", suggère un paramètre de split interne démesuré). Coût total estimé
+  intraitable (~50h+ par combo (t, seed), ×60 combos). À documenter dans le papier
+  avec la même justification structurelle que l'exclusion de PBIL sur NK3 dans le
+  PPSN (Table 1) — reste dans le pool pour n=64/128/256 où il tournait normalement.
+
 ## Expériences en cours / à lancer (côté calcul)
 
 - [x] Génération instances NK/NK3 n=512 (`source_code/utils/generate_nk_instances.py`)
