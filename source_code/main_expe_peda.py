@@ -161,10 +161,10 @@ def _eval_qubo_batch(tensor_solution, tensor_Q):
     Returns (B, pop) float32 — x^T Q x with x = 2*solution - 1 ∈ {-1,+1}
     (same value as WalshExpansion.eval, to maximise).
     """
-    pop    = tensor_solution.size(1)
-    x      = tensor_solution.float() * 2 - 1                          # (B, pop, N, 1) {-1,+1}
-    Q_exp  = tensor_Q.unsqueeze(1).expand(-1, pop, -1, -1)            # (B, pop, N, N)
-    return (x.transpose(2, 3) @ (Q_exp @ x)).squeeze(3).squeeze(2)   # (B, pop)
+    x    = (tensor_solution.float() * 2 - 1).squeeze(3)   # (B, pop, N) {-1,+1}
+    x_t  = x.transpose(1, 2)                               # (B, N, pop)
+    Qx   = tensor_Q @ x_t                                  # (B, N, pop) -- Q not expanded over pop
+    return (x_t * Qx).sum(dim=1)                           # (B, pop)
 
 
 def run_config_gpu(dim, type_instance):
