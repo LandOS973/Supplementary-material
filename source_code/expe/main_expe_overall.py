@@ -40,19 +40,18 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
         advantages=["peragentrankweighted"],
-        M_values=[15],
+        M_values=[10],
         lambda_values=[10],
-        epsilon_svgd=[0.06,0.15],
-        gamma=[0.001],
-        decay_start_ratio=[0.03,1],
+        epsilon_svgd=[0.03, 0.06, 0.1, 0.15, 0.2],
+        gamma=[0.003, 0.006, 0.01, 0.015],
+        decay_start_ratio=[0.03, 1],
         decay_min_factor=[0.01],
-        # Variantes PPO croisées avec le grid ci-dessus.
-        # Chaque entrée porte uniquement les params de son mode ("none" = baseline sans PPO).
         ppo_variants=[
-            dict(mode="kl", ppo_epochs=[2,4,6], kl_beta=[0.01,0.1,0.5]),
+            dict(mode="kl", ppo_epochs=[2, 4, 6], kl_beta=[0.01, 0.1, 0.5]),
         ],
     )
 ]
+
 
 # Config exacte du papier PPSN (commit 4a990591d), pour reproduire
 # krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01 a n=512
