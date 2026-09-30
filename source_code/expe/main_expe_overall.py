@@ -40,7 +40,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
         advantages=["peragentrankweighted"],
-        M_values=[10],
+        M_values=[10,15],
         lambda_values=[10],
         epsilon_svgd=[0.06],
         gamma=[0.006],
@@ -49,7 +49,7 @@ DEFAULT_GRIDS = [
         # Variantes PPO croisées avec le grid ci-dessus.
         # Chaque entrée porte uniquement les params de son mode ("none" = baseline sans PPO).
         ppo_variants=[
-            dict(mode="kl", ppo_epochs=[4], kl_beta=[0.01]),
+            dict(mode="kl", ppo_epochs=[2,4,6], kl_beta=[0.01,0.1,0.5]),
         ],
     )
 ]

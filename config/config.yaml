@@ -3,10 +3,10 @@ verbose: true
 nb_instances_test: 10
 nb_restarts: 10
 budget: 50000
-visualization: true
+visualization: false
 
 agent:
-  M: 10
+  M: 10   
   lambda: 10
   advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
   kernel: rbf # rbf | no_interact
@@ -17,18 +17,18 @@ agent:
   enable_greedy_final: true
   decay_start_ratio: 0.03
   min_factor: 0.01
-  decay: false
+  decay: true
   ppo_active: true
   ppo:
     ppo_epochs: 4
     beta: 0.01
 
-problem_name: nk3
+problem_name: qubo
 
 problems:
   qubo:
     name: QUBO
-    dim: 128
+    dim: 512
     type_instance: 5
 
   nk:
