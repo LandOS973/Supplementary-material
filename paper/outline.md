@@ -89,6 +89,16 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
   avec la même justification structurelle que l'exclusion de PBIL sur NK3 dans le
   PPSN (Table 1) — reste dans le pool pour n=64/128/256 où il tournait normalement.
 
+- **NK3 K=8 exclu du dépôt git à n=512 (raison différente : taille de fichier, pas
+  performance).** La table de contribution NKD grandit en N×D^(K+1) ; pour NK3
+  (D=3), K=8 donne 3^9=19683 valeurs/variable × 512 variables ≈ 10M floats en
+  texte = 186 Mo/fichier × 10 instances, au-dessus de la limite GitHub (100 Mo).
+  Les instances existent quand même (générées localement et sur JZ via
+  `source_code/utils/generate_nk_instances.py --dim 512 --k 8 --problems nk3`,
+  transférées par `rsync` direct plutôt que git) mais ne sont pas versionnées.
+  NK K=8 n'a pas ce problème (D=2 -> 512 valeurs/variable seulement, ~5 Mo/fichier).
+  À mentionner dans le protocole expérimental si NK3 K=8 à n=512 est rapporté.
+
 ## Expériences en cours / à lancer (côté calcul)
 
 - [x] Génération instances NK/NK3 n=512 (`source_code/utils/generate_nk_instances.py`)
