@@ -31,29 +31,32 @@ echo "Lancement de main_expe.py..."
 export PYTHONUNBUFFERED=1
 
 M_VALUES=""
-while getopts "m:" opt; do
+GRID="wip"
+while getopts "m:g:" opt; do
   case "$opt" in
     m) M_VALUES="$OPTARG" ;;
+    g) GRID="$OPTARG" ;;
   esac
 done
 shift $((OPTIND - 1))
 
-JOB_NAME="expe_jz"
+JOB_NAME="expe_${GRID}"
 if [ -n "$M_VALUES" ]; then
   JOB_SUFFIX="${M_VALUES//,/_}"
   JOB_SUFFIX="${JOB_SUFFIX// /_}"
-  JOB_NAME="expe_${JOB_SUFFIX}"
-  scontrol update JobName="$JOB_NAME" JobId="$SLURM_JOB_ID" >/dev/null 2>&1 || true
+  JOB_NAME="${JOB_NAME}_${JOB_SUFFIX}"
 fi
+scontrol update JobName="$JOB_NAME" JobId="$SLURM_JOB_ID" >/dev/null 2>&1 || true
 
-echo "Job name: $JOB_NAME"
+echo "Job name: $JOB_NAME  Grid: $GRID"
 
 if [ -n "$M_VALUES" ]; then
-  srun python source_code/expe/main_expe_overall.py -m "$M_VALUES"
+  srun python source_code/expe/main_expe_overall.py -g "$GRID" -m "$M_VALUES"
 else
-  srun python source_code/expe/main_expe_overall.py
+  srun python source_code/expe/main_expe_overall.py -g "$GRID"
 fi
 
 echo "Job terminé à $(date)"
 
 # sbatch jeanzay/expe_kernelH100.slurm -m 10
+# sbatch jeanzay/expe_kernelH100.slurm -g wip
