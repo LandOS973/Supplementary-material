@@ -1530,12 +1530,12 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     ("Rank moy", f"{sum(ranks_a)/len(ranks_a):.1f}", f"{sum(ranks_b)/len(ranks_b):.1f}"),
                     ("Rank méd", sorted(ranks_a)[len(ranks_a)//2],   sorted(ranks_b)[len(ranks_b)//2]),
                 ]
-            for dim in [64, 128, 256]:
+            for dim in [64, 128, 256, 512]:
                 dim_ha = [r[col_hamming_a] for r in summary_rows if r["_dim"] == dim and r[col_hamming_a] is not None]
                 dim_hb = [r[col_hamming_b] for r in summary_rows if r["_dim"] == dim and r[col_hamming_b] is not None]
                 if dim_ha and dim_hb:
                     stat_rows.append((f"Hamming {dim}", f"{sum(dim_ha)/len(dim_ha):.1f}", f"{sum(dim_hb)/len(dim_hb):.1f}"))
-            for dim in [64, 128, 256]:
+            for dim in [64, 128, 256, 512]:
                 dim_la = [r["_l1_a"] for r in summary_rows if r["_dim"] == dim and r["_l1_a"] is not None]
                 dim_lb = [r["_l1_b"] for r in summary_rows if r["_dim"] == dim and r["_l1_b"] is not None]
                 if dim_la and dim_lb:
@@ -2043,7 +2043,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Hamming / L1 moyens par dimension (64 / 128 / 256) ────────────────────
+    # ── Hamming / L1 moyens par dimension (64 / 128 / 256 / 512) ──────────────
     h_th_l = "padding:8px 20px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
     h_th   = "padding:8px 20px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
     h_td_l = "padding:7px 20px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;"
@@ -2071,7 +2071,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     def _dim_html(title: str, prefix: str, fmt: str) -> str:
         rows = []
-        for dim in [64, 128, 256]:
+        for dim in [64, 128, 256, 512]:
             cells, has = [], False
             for cfg in configs:
                 short = config_shorts[cfg]
