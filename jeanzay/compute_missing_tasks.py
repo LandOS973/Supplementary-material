@@ -2,7 +2,7 @@
 campaign still need to run, by scanning existing complete result files and
 excluding them from the full 0..4859 range.
 
-Reuses the EXACT same encoding as expe_nevergrad_qubo512.slurm's decode logic
+Reuses the EXACT same encoding as expe_nevergrad_512.slurm's decode logic
 (ALGO_IDX = task_id // 60, T = remainder // 10, SEED = remainder % 10), so the
 computed indices line up with what the .slurm script would compute for the
 same task_id.

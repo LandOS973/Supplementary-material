@@ -24,10 +24,10 @@
 # binaire seulement. Verifie : results/nevergrad/PBIL/NK3/{64,128,256} existent deja.
 #
 # Usage :
-#   sbatch jeanzay/expe_edas_qubo512.slurm                             # QUBO (defaut)
-#   sbatch --array=0-119%100 jeanzay/expe_edas_qubo512.slurm -p NK     # NK  : 3x4x10=120
-#   sbatch --array=0-119%100 jeanzay/expe_edas_qubo512.slurm -p NK3    # NK3 : 3x4x10=120
-#   sbatch --qos=qos_cpu-dev --time=00:10:00 --array=0 jeanzay/expe_edas_qubo512.slurm -b 500
+#   sbatch jeanzay/expe_edas_512.slurm                             # QUBO (defaut)
+#   sbatch --array=0-119%100 jeanzay/expe_edas_512.slurm -p NK     # NK  : 3x4x10=120
+#   sbatch --array=0-119%100 jeanzay/expe_edas_512.slurm -p NK3    # NK3 : 3x4x10=120
+#   sbatch --qos=qos_cpu-dev --time=00:10:00 --array=0 jeanzay/expe_edas_512.slurm -b 500
 #
 # Options (getopts) :
 #   -p  type_problem (QUBO|NK|NK3)   (defaut : QUBO)

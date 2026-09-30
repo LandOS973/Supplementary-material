@@ -25,9 +25,9 @@
 # Sortie : results/nevergrad/<algo>/<TYPE_PROBLEM>/512/<t>/..._i_<i>_budget_<b>_..._<seed>.txt
 #
 # Usage :
-#   sbatch jeanzay/expe_nevergrad_qubo512.slurm                              # QUBO (defaut)
-#   sbatch --array=0-3239%200 jeanzay/expe_nevergrad_qubo512.slurm -p NK     # NK  : 81x4x10=3240
-#   sbatch --array=0-3239%200 jeanzay/expe_nevergrad_qubo512.slurm -p NK3    # NK3 : 81x4x10=3240
+#   sbatch jeanzay/expe_nevergrad_512.slurm                              # QUBO (defaut)
+#   sbatch --array=0-3239%200 jeanzay/expe_nevergrad_512.slurm -p NK     # NK  : 81x4x10=3240
+#   sbatch --array=0-3239%200 jeanzay/expe_nevergrad_512.slurm -p NK3    # NK3 : 81x4x10=3240
 #
 # Options (getopts) :
 #   -p  type_problem (QUBO|NK|NK3)   (defaut : QUBO)

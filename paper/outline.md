@@ -74,7 +74,7 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
 | 3 | Théorie (plus de cible Boltzmann unique) | Résolu (option A ci-dessus) | Ablation no_repulsion sur les nouvelles variantes à faire |
 | 4 | Mécanisme peu clair (diversité Hamming mitigée : plus basse que PPSN à faible K sur NK, plus basse aussi à K=8 sur NK3 malgré le meilleur score) | À investiguer | Persister les stats de debug (`_print_debug` est un stub aujourd'hui) en gardant l'axe instance B ; comparer à un PPSN dont γ est réglé pour atteindre la même diversité (test décisif : si PPSN score moins bien à diversité égale, le gain ne vient pas de la quantité de diversité) |
 | 5 | Contribution perçue comme mince | Risque réel | Étoffer via le fil "dilution du budget" (balayage en m complet sur les 3 variantes) + passage à l'échelle n=512 + analyse de mécanisme |
-| 6 | Données n=512 | En cours | Campagne nevergrad (81 algos × QUBO n=512) en cours sur Jean Zay (job JZ, ~4860 tâches réparties, voir `jeanzay/expe_nevergrad_qubo512.slurm` et `jeanzay/compute_missing_tasks.py`). Reste : NK/NK3 à n=512 côté nevergrad, et les runs SVGD-EDA propres (PPSN/+rang/+proximal) à toutes tailles |
+| 6 | Données n=512 | En cours | Campagne nevergrad (81 algos × QUBO n=512) en cours sur Jean Zay (job JZ, ~4860 tâches réparties, voir `jeanzay/expe_nevergrad_512.slurm` et `jeanzay/compute_missing_tasks.py`). Reste : NK/NK3 à n=512 côté nevergrad, et les runs SVGD-EDA propres (PPSN/+rang/+proximal) à toutes tailles |
 | 7 | Nommage "PPO" trompeur (pas de clipping, c'est un mode KL) | Mineur | Renommer en "proximal"/"KL-regularized multi-epoch" dans le papier |
 
 ## Exclusions documentées du pool de concurrents
