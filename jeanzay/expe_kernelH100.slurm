@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=24
 #SBATCH --hint=nomultithread
-#SBATCH --time=08:00:00
+#SBATCH --time=20:00:00             # ~170s/config observe (360 configs, grid "wip") -> ~17h ; augmenter (--qos) si la grille grossit encore
 #SBATCH --account=ndg@h100
 #SBATCH -C h100
 
