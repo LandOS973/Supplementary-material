@@ -8,7 +8,7 @@
 #SBATCH --time=06:00:00             # a recalibrer, jamais mesure pour PBIL a n=512
 #SBATCH --partition=cpu_p1
 #SBATCH --account=ndg@cpu
-#SBATCH --array=0-59%100            # QUBO par defaut (PBIL x 6 t x 10). NK/NK3 : 1x4x10=0-39.
+#SBATCH --array=0-59%100            # QUBO par defaut (PBIL x 6 t x 10). NK : 1x4x10=0-39. NK3 : n/a (voir plus bas).
 
 # --- PBIL a n=512, meme granularite (algo,t,seed) que nevergrad ---
 # main_baseline_edas_and_tabu.py n'a pas de --nb_restarts interne (contrairement a
@@ -27,14 +27,16 @@
 # fichiers resultat reduits a l'en-tete). PBIL est un modele univarie, O(n),
 # non concerne. Voir paper/outline.md pour la justification complete.
 #
-# PBIL supporte NK3 dans ce depot (implementation generique, categories geree
-# par D) -- contrairement a PPBIL (voir expe_peda_ppbil_512.slurm) qui est
-# binaire seulement. Verifie : results/nevergrad/PBIL/NK3/{64,128,256} existent deja.
+# PBIL NE SUPPORTE PAS NK3 : eda/optimizer/pbil.py:26 fait `assert self.Cmax == 2`
+# (modele strictement binaire), et NK3 a D=3 categories/variable -> AssertionError
+# immediate. Meme exclusion que dans le PPSN (Table 1) et que PPBIL (voir
+# expe_peda_ppbil_512.slurm). Ce script exit proprement sans rien lancer si
+# -p NK3 (plus aucun algo a executer une fois MIMIC/BOA/PBIL tous exclus).
 #
 # Usage :
 #   sbatch jeanzay/expe_edas_512.slurm                            # QUBO (defaut)
 #   sbatch --array=0-39%100 jeanzay/expe_edas_512.slurm -p NK     # NK  : 1x4x10=40
-#   sbatch --array=0-39%100 jeanzay/expe_edas_512.slurm -p NK3    # NK3 : 1x4x10=40
+#   sbatch jeanzay/expe_edas_512.slurm -p NK3                     # NK3 : rien a lancer, exit 0
 #   sbatch --qos=qos_cpu-dev --time=00:10:00 --array=0 jeanzay/expe_edas_512.slurm -b 500
 #
 # Options (getopts) :
@@ -66,6 +68,11 @@ while getopts "p:d:b:n:" opt; do
     n) NB_INSTANCES="$OPTARG" ;;
   esac
 done
+
+if [ "$TYPE_PROBLEM" = "NK3" ]; then
+  echo "TYPE_PROBLEM=NK3 : PBIL ne supporte pas NK3 (binaire seulement), MIMIC/BOA deja exclus a n=512. Rien a lancer."
+  exit 0
+fi
 
 if [ "$TYPE_PROBLEM" = "QUBO" ]; then
   NB_T=6

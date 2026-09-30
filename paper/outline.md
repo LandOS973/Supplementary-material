@@ -112,8 +112,21 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
   produire de sortie, et les runs de la campagne QUBO n=512 (budget=50000, 6h
   de limite) n'ont jamais dépassé l'en-tête du fichier résultat (0/60 pour
   chacun des deux algos). PBIL, modèle univarié (O(n), pas de structure par
-  paire), n'est pas concerné et reste dans le pool à n=512.
-  `jeanzay/expe_edas_512.slurm` ne lance plus que PBIL (`ALGOS=(PBIL)`).
+  paire), n'est pas concerné et reste dans le pool à n=512 (QUBO et NK — pas
+  NK3, voir point suivant). `jeanzay/expe_edas_512.slurm` ne lance plus que
+  PBIL (`ALGOS=(PBIL)`).
+
+- **`PBIL` confirmé binaire seulement, ne supporte pas NK3 — correction d'une
+  vérification erronée faite plus tôt dans le projet.** `eda/optimizer/pbil.py:26`
+  fait `assert self.Cmax == 2` ; NK3 a D=3 catégories/variable donc
+  `AssertionError` immédiate, quelle que soit la taille n. Les fichiers
+  `results/nevergrad/PBIL/NK3/{64,128,256}` qui semblaient prouver le contraire
+  ne sont en fait que des stubs d'un en-tête (`runtime, score`, 1 ligne, datés
+  de mars) — un crash jamais remarqué, pas un résultat réel. C'est en fait
+  cohérent avec le PPSN d'origine (Table 1), qui exclut déjà PBIL de NK3 pour
+  la même raison. `expe_edas_512.slurm` exit proprement sans rien lancer si
+  `-p NK3` (plus aucun algo de ce script n'est éligible une fois PBIL/MIMIC/BOA
+  tous exclus de NK3 à n=512).
 
 ## Expériences en cours / à lancer (côté calcul)
 
