@@ -66,9 +66,27 @@ def find_instances(results_root: Path) -> Dict[Tuple[str, object, object], Dict[
 
 
 def read_last_score(path: Path) -> float | None:
-    """Read last numeric score from a run file. Return None if not found."""
-    # Scan from end for the last non-empty, non-header line
+    """Read last numeric score from a run file. Return None if not found.
+
+    Two incompatible file formats coexist on disk, tied to when/by-which-script
+    a result was generated -- NOT to algo family or problem type (verified:
+    same algo, same problem, different era => different format and sign):
+      - old format, header "runtime, score" (2 cols): the written value is
+        already oriented "higher = better" (e.g. PEDA/PPBIL always write this
+        format, on every problem type; so do nevergrad/PBIL/MIMIC/BOA's
+        March-2026-era QUBO/NK/NK3 runs, n<=256).
+      - new format, header "runtime, mean, median, std, 2%, 5%, ..." (13 cols):
+        the written "mean" value is the raw quantity nevergrad/PBIL/MIMIC/BOA
+        minimise internally (x^T Q x for QUBO, -fitness for NK/NK3), unflipped
+        -- "lower = better". This is what main_nevergrad.py / EDAs.py write for
+        n=512 data generated this session. Negate it here so "higher = better"
+        holds uniformly regardless of which era/format a given file is in.
+    """
     lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    if not lines:
+        return None
+    header = lines[0].strip().lower()
+    is_new_format = header.startswith("runtime") and "mean" in header
     for line in reversed(lines):
         line = line.strip()
         if not line or line.lower().startswith("runtime"):
@@ -77,9 +95,10 @@ def read_last_score(path: Path) -> float | None:
         if len(parts) < 2:
             continue
         try:
-            return float(parts[1])
+            value = float(parts[1])
         except ValueError:
             continue
+        return -value if is_new_format else value
     return None
 
 
@@ -202,31 +221,13 @@ def build_rankings(
                 low_runs.append((f"{algo}:bad", bad))
             if not scores:
                 continue
+            # Sign normalization now happens per-file inside read_last_score() (based on
+            # each file's own header format, which reliably reflects which script/era wrote
+            # it -- see its docstring). read_scores_from_final_csv's pre-aggregated CSVs are
+            # exclusively legacy-era data and already "higher = better" as-is. So `scores`
+            # here is already uniformly oriented regardless of algo or problem type -- no
+            # further transformation needed.
             avg_score = mean(scores)
-            if problem in ("QUBO", "NK", "NK3") and algo not in ("PEDA", "PPBIL"):
-                # main_nevergrad.py and main_baseline_edas_and_tabu.py (nevergrad's 81 algos,
-                # PBIL/MIMIC/BOA) always write the raw value they minimise internally: for
-                # QUBO that's x^T Q x directly (lower = better); for NK/NK3 it's -fitness
-                # (problem.eval already returns -fitness there, and they minimise that raw,
-                # unflipped quantity too -- see main_baseline_edas_and_tabu.py's
-                # `table_scores[...] = -self.best_fitness`). So "lower raw = better" for this
-                # whole family, on QUBO/NK/NK3 -- negate so "higher = better" holds uniformly
-                # for the descending sort below.
-                #
-                # PEDA/PPBIL (main_expe_peda.py / main_expe_ppbil.py) are the opposite on these
-                # same 3 problem types: both their QUBO and NK/NK3 paths write their own
-                # internal *maximised* score directly (already "higher = better", e.g.
-                # -x^T Q x for QUBO, +fitness for NK/NK3) -- do NOT negate them, or a
-                # genuinely good result gets flipped to look bad.
-                #
-                # VIENNARNA is excluded from this whole branch: its writer
-                # (main_nevergrad_viennarna_batch.py) already tracks and writes best_score
-                # pre-oriented "higher = better" (init -inf, `if score > best_score: ...`),
-                # unlike main_nevergrad.py's QUBO/NK/NK3 path -- same algo names, different
-                # writer script, different convention. Negating it here would break an
-                # already-correct ranking. PEDA/PPBIL don't run on VIENNARNA at all, so this
-                # condition never matters for them there.
-                avg_score = -avg_score
             per_algo_score[algo] = avg_score
 
         if not per_algo_score:
