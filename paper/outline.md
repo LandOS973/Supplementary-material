@@ -128,9 +128,9 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
   `-p NK3` (plus aucun algo de ce script n'est éligible une fois PBIL/MIMIC/BOA
   tous exclus de NK3 à n=512).
 
-- **Bug de direction QUBO corrigé (PEDA/PPBIL + classement) — n'affecte pas le
-  papier publié.** `x^T Q x` (= `WalshExpansion.eval`) est une MINIMISATION
-  dans ce dépôt (convention partagée par `main_nevergrad.py`,
+- **Bug de direction QUBO dans PEDA/PPBIL, corrigé — n'affecte pas le papier
+  publié.** `x^T Q x` (= `WalshExpansion.eval`) est une MINIMISATION dans ce
+  dépôt (convention partagée par `main_nevergrad.py`,
   `main_baseline_edas_and_tabu.py` et le SVGD-EDA du papier, `environment/qubo.py`).
   `main_expe_peda.py`/`main_expe_ppbil.py` (ajoutés le 2026-05-04, commit
   `4b3e2fc98`, donc après soumission PPSN — pas dans le pool du papier)
@@ -139,20 +139,48 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
   là-bas). Corrigé dans les 4 emplacements (CPU + GPU × PEDA + PPBIL) en
   négant le score interne. Toutes les données PEDA/PPBIL QUBO existantes
   (n=64/128/256/512) ont été supprimées (invalides, résolvaient le mauvais
-  problème) — à relancer.
-  En creusant, second bug distinct trouvé dans `additional_results/main_global_ranking.py`
-  (commit initial 2026-03-11, donc potentiellement utilisé pour le papier —
-  mais **`curves/main_table.py` exclut explicitement QUBO du tableau final**
-  via `EXCLUDED_TABLE_PROBLEMS = {"QUBO", "UBQP"}`, donc aucun impact sur le
-  papier publié) : le tri était toujours décroissant (`reverse=True`,
-  commentaire "maximization") alors que nevergrad/PBIL/MIMIC/BOA écrivent la
-  valeur brute (minimisation, donc "plus bas = meilleur") dans leurs fichiers
-  résultat pour QUBO — le classement était inversé pour ces familles.
-  Corrigé en négant le score QUBO à la génération du CSV, pour une convention
-  "plus haut = meilleur" uniforme entre QUBO/NK/NK3. CSVs de
-  `additional_results/global_ranking/UBQP_*` régénérés et vérifiés (les
-  algos nevergrad réputés forts, ex. famille DiscreteLengler, remontent bien
-  en tête après correction).
+  problème) et relancées.
+
+- **Classement (`additional_results/main_global_ranking.py`) — bug de signe
+  distinct, root-cause finalement isolée après deux corrections ratées.**
+  N'affecte pas le papier publié (`curves/main_table.py` exclut explicitement
+  QUBO du tableau final via `EXCLUDED_TABLE_PROBLEMS = {"QUBO", "UBQP"}`).
+  Deux tentatives de fix ont échoué avant la bonne :
+  1. D'abord négation conditionnée au type de problème (`if problem == "QUBO"`)
+     — cassait PEDA/PPBIL une fois leur propre bug corrigé (leur score déjà
+     bien orienté se retrouvait négativé deux fois).
+  2. Puis négation conditionnée à l'algo (`if algo not in (PEDA, PPBIL)`,
+     appliquée à QUBO/NK/NK3) — cassait VIENNARNA (négativé à tort) et restait
+     fausse sur NK à n≤256 (vérifié : `DiscreteDE`/`DiscreteLengler3OnePlusOne`
+     sur NK ont un score brut déjà positif et croissant dans leurs fichiers
+     `.txt`, donc déjà "plus haut = meilleur", à ne pas négativer).
+  **Cause réelle** : deux formats de fichiers résultat incompatibles
+  coexistent sur disque pour le **même algo** et le **même type de
+  problème**, selon la *génération/version du script* qui a produit le
+  fichier — pas selon l'algo ni le type de problème :
+  - Format ancien (n≤256, données de mars 2026), en-tête `runtime, score`
+    (2 colonnes) : valeur déjà orientée "plus haut = meilleur". PEDA/PPBIL
+    écrivent aussi ce format, systématiquement, sur toutes les tailles y
+    compris n=512.
+  - Format actuel (données n=512 générées cette session), en-tête
+    `runtime, mean, median, std, 2%, 5%, ...` (13 colonnes) : la valeur
+    "mean" est la quantité brute minimisée en interne par
+    nevergrad/PBIL/MIMIC/BOA (`x^T Q x` pour QUBO, `-fitness` pour NK/NK3),
+    non retournée — "plus bas = meilleur".
+  Vérifié directement sur disque : même algo (`DiscreteLengler3OnePlusOne`),
+  même problème (QUBO), instance/génération différente → en-tête différent,
+  signe différent, échelle de grandeur totalement différente.
+  **Fix retenu** : `read_last_score()` inspecte l'en-tête de chaque fichier
+  et négative uniquement pour le format 13-colonnes ; plus aucune
+  distinction par algo ou type de problème dans `build_rankings()`. Gère
+  aussi VIENNARNA sans cas particulier (même format ancien, en-tête
+  2-colonnes, confirmé identique octet-pour-octet après le fix — aucune
+  régression). CSVs de `additional_results/global_ranking/*` régénérés et
+  vérifiés sur QUBO/NK/NK3, ancienne et nouvelle génération : PEDA/PPBIL
+  s'intègrent naturellement dans le peloton des deux côtés (plus jamais
+  gonflés ni écrasés artificiellement), et les algos nevergrad réputés
+  forts (famille DiscreteLengler) remontent bien en tête sur les données
+  n=512.
 
 ## Expériences en cours / à lancer (côté calcul)
 
