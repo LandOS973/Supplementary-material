@@ -40,7 +40,7 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
         advantages=["peragentrankweighted"],
-        M_values=[8,12],
+        M_values=[5],
         lambda_values=[10],
         epsilon_svgd=[0.06,0.15],
         gamma=[0.006],
