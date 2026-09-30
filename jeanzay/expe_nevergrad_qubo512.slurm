@@ -1,39 +1,38 @@
 #!/bin/bash
-#SBATCH --job-name=ng_qubo512
-#SBATCH --output=/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/outputs/ng_qubo512_%A_%a.out
-#SBATCH --error=/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/outputs/ng_qubo512_%A_%a.err
+#SBATCH --job-name=ng_512
+#SBATCH --output=/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/outputs/ng_512_%A_%a.out
+#SBATCH --error=/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/outputs/ng_512_%A_%a.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1            # nevergrad est mono-thread
 #SBATCH --hint=nomultithread        # OBLIGATOIRE sur JZ
 #SBATCH --time=06:00:00             # marge x2 sur le pire cas observe (AdaptiveDiscreteOnePlusOne ~2h45/seed)
 #SBATCH --partition=cpu_p1          # noeuds CPU Cascade Lake (alloc "Jean Zay CSL")
 #SBATCH --account=ndg@cpu           # /!\ compte CPU du projet ndg -- verifier avec `idracct ndg`
-#SBATCH --array=0-4859%200          # 81 algos x 6 t x 10 seeds (0..4859). %200 = max 200 taches en meme temps (politesse cluster).
+#SBATCH --array=0-4859%200          # QUBO par defaut (81 x 6 x 10). Voir Usage pour NK/NK3 (81 x 4 x 10 = 0-3239).
 
-# --- Une tache = un (algo, t, seed) sur QUBO n=512 : un seul appel main_nevergrad.py ---
-# 81 algos x 6 types d'instance (t=0..5) x 10 seeds = 4860 taches, chacune faisant
-# UN SEUL appel (10 instances) -> 4860x10 = 48600 runs au total, le protocole complet
-# du papier (10 instances x 10 restarts par config).
+# --- Une tache = un (algo, t, seed) a n=512 : un seul appel main_nevergrad.py ---
+# main_nevergrad.py gere nativement QUBO/NK/NK3. QUBO a 6 types d'instance (t=0..5),
+# NK/NK3 en ont 4 (K=1,2,4,8) -> NB_T ci-dessous s'adapte a -p.
+# 81 algos x NB_T x 10 seeds taches, chacune faisant UN SEUL appel (10 instances).
 #
-# Pourquoi ce decoupage (v2) : la v1 (1 tache = 1 (algo,t), boucle interne sur 10 seeds,
-# --time=12h) a donne 312/486 taches en TIMEOUT. Calibrage initial fait sur DiscreteDE
-# seul (~55min/appel) ne generalisait pas : AdaptiveDiscreteOnePlusOne mesure ~2h30-2h45
-# par appel sur JZ (jusqu'a 3x plus lent), donc 10 seeds dans une tache peut depasser
-# largement 12h selon l'algo. Decouper au niveau du seed rend chaque tache courte
-# independamment de la variance inter-algo, sans reduire le volume de calcul.
+# DiscreteNoisyInfSplits est saute automatiquement (algo pathologiquement lent a
+# n=512, ~15-20x les autres algos, deja constate sur QUBO -- voir paper/outline.md).
 #
-# main_nevergrad.py gere nativement QUBO/NK/NK3, aucun script "_batch" requis ici
-# (contrairement a ViennaRNA qui avait besoin d'un runner dedie).
+# Pourquoi ce decoupage : calibrage initial sur un seul algo ne generalise pas,
+# certains algos sont jusqu'a 3x plus lents que d'autres -> decouper au niveau du
+# seed rend chaque tache courte independamment de la variance inter-algo.
 #
-# Sortie : results/nevergrad/<algo>/QUBO/512/<t>/..._i_<i>_budget_<b>_..._<seed>.txt
+# Sortie : results/nevergrad/<algo>/<TYPE_PROBLEM>/512/<t>/..._i_<i>_budget_<b>_..._<seed>.txt
 #
 # Usage :
-#   sbatch jeanzay/expe_nevergrad_qubo512.slurm
-#   sbatch jeanzay/expe_nevergrad_qubo512.slurm -b 50000 -n 10 -d 512
+#   sbatch jeanzay/expe_nevergrad_qubo512.slurm                              # QUBO (defaut)
+#   sbatch --array=0-3239%200 jeanzay/expe_nevergrad_qubo512.slurm -p NK     # NK  : 81x4x10=3240
+#   sbatch --array=0-3239%200 jeanzay/expe_nevergrad_qubo512.slurm -p NK3    # NK3 : 81x4x10=3240
 #
 # Options (getopts) :
-#   -d  dimension                   (defaut : 512)
-#   -b  budget (evaluations)        (defaut : 50000)
+#   -p  type_problem (QUBO|NK|NK3)   (defaut : QUBO)
+#   -d  dimension                    (defaut : 512)
+#   -b  budget (evaluations)         (defaut : 50000)
 #   -n  nb instances par (algo,t,seed) (defaut : 10, doit matcher les fichiers generes)
 
 echo "Job ${SLURM_ARRAY_JOB_ID} tache ${SLURM_ARRAY_TASK_ID} sur $(hostname) a $(date)"
@@ -52,25 +51,31 @@ conda activate ppo_env
 export PYTHONUNBUFFERED=1
 
 # 3. Parametres
+TYPE_PROBLEM=QUBO
 DIM=512
 BUDGET=50000
 NB_INSTANCES=10
-while getopts "d:b:n:" opt; do
+while getopts "p:d:b:n:" opt; do
   case "$opt" in
+    p) TYPE_PROBLEM="$OPTARG" ;;
     d) DIM="$OPTARG" ;;
     b) BUDGET="$OPTARG" ;;
     n) NB_INSTANCES="$OPTARG" ;;
   esac
 done
 
-# 4. Decodage (algo, t, seed) a partir de l'index de tache : 81 algos x 6 t x 10 seeds
-NB_T=6
+if [ "$TYPE_PROBLEM" = "QUBO" ]; then
+  NB_T=6
+else
+  NB_T=4
+fi
 NB_SEEDS=10
 COMBOS_PER_ALGO=$((NB_T * NB_SEEDS))
 
+# 4. Decodage (algo, t_idx, seed) a partir de l'index de tache
 ALGO_IDX=$((SLURM_ARRAY_TASK_ID / COMBOS_PER_ALGO))
 REMAINDER=$((SLURM_ARRAY_TASK_ID % COMBOS_PER_ALGO))
-T=$((REMAINDER / NB_SEEDS))
+T_IDX=$((REMAINDER / NB_SEEDS))
 SEED=$((REMAINDER % NB_SEEDS))
 
 ALGO_FILE="jeanzay/nevergrad_discrete_algos.txt"
@@ -82,19 +87,31 @@ if [ -z "${ALGO:-}" ]; then
   exit 1
 fi
 
-echo "Algo=[$ALGO]  Dim=$DIM  T=$T  Seed=$SEED  Budget=$BUDGET  NbInstances=$NB_INSTANCES"
+if [ "$ALGO" = "DiscreteNoisyInfSplits" ]; then
+  echo "Algo=[$ALGO] : exclu (pathologiquement lent a n=512), on saute."
+  exit 0
+fi
 
-# 5. Skip si ce (algo,t,seed) a deja un resultat COMPLET (evite de refaire les 3223 runs
-#    deja produits par la v1 avant son timeout -- meme budget, meme seed, peu importe le timestamp).
-#    Attention : un fichier tue en plein calcul ne contient que l'en-tete (1 ligne) -- on
-#    verifie donc aussi le nombre de lignes, pas juste l'existence du fichier.
-RESULT_DIR="results/nevergrad/${ALGO}/QUBO/${DIM}/${T}"
-EXISTING=$(ls -t "${RESULT_DIR}"/results_nevergrad_${ALGO}_QUBO_${DIM}_${T}_${NB_INSTANCES}_budget_${BUDGET}_*_${SEED}.txt 2>/dev/null | head -1)
+# T (type_instance) : pour QUBO t=T_IDX directement (0..5). Pour NK/NK3, K in {1,2,4,8}.
+if [ "$TYPE_PROBLEM" = "QUBO" ]; then
+  T=$T_IDX
+else
+  K_VALUES=(1 2 4 8)
+  T=${K_VALUES[$T_IDX]}
+fi
+
+echo "Algo=[$ALGO]  Pb=$TYPE_PROBLEM  Dim=$DIM  T=$T  Seed=$SEED  Budget=$BUDGET  NbInstances=$NB_INSTANCES"
+
+# 5. Skip si ce (algo,t,seed) a deja un resultat COMPLET (reprise apres timeout/relance).
+#    Un fichier tue en plein calcul ne contient que l'en-tete (1 ligne) -- on verifie
+#    donc aussi le nombre de lignes, pas juste l'existence du fichier.
+RESULT_DIR="results/nevergrad/${ALGO}/${TYPE_PROBLEM}/${DIM}/${T}"
+EXISTING=$(ls -t "${RESULT_DIR}"/results_nevergrad_${ALGO}_${TYPE_PROBLEM}_${DIM}_${T}_${NB_INSTANCES}_budget_${BUDGET}_*_${SEED}.txt 2>/dev/null | head -1)
 
 if [ -n "$EXISTING" ] && [ "$(wc -l < "$EXISTING")" -gt 1 ]; then
   echo "  -> deja fait, on saute : $EXISTING"
 else
-  python source_code/main_nevergrad.py QUBO "$ALGO" "$DIM" "$T" \
+  python source_code/main_nevergrad.py "$TYPE_PROBLEM" "$ALGO" "$DIM" "$T" \
     --nb_instances "$NB_INSTANCES" \
     --budget "$BUDGET" \
     --seed "$SEED"
