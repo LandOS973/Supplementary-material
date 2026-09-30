@@ -5,12 +5,12 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --hint=nomultithread
-#SBATCH --time=06:00:00             # a recalibrer, jamais mesure pour PBIL/MIMIC/BOA a n=512
+#SBATCH --time=06:00:00             # a recalibrer, jamais mesure pour PBIL a n=512
 #SBATCH --partition=cpu_p1
 #SBATCH --account=ndg@cpu
-#SBATCH --array=0-179%100           # QUBO par defaut (3 algos x 6 t x 10). NK/NK3 : 3x4x10=0-119.
+#SBATCH --array=0-59%100            # QUBO par defaut (PBIL x 6 t x 10). NK/NK3 : 1x4x10=0-39.
 
-# --- PBIL/MIMIC/BOA a n=512, meme granularite (algo,t,seed) que nevergrad ---
+# --- PBIL a n=512, meme granularite (algo,t,seed) que nevergrad ---
 # main_baseline_edas_and_tabu.py n'a pas de --nb_restarts interne (contrairement a
 # PEDA/PPBIL), donc un appel = un seed. QUBO a 6 types d'instance (t=0..5), NK/NK3
 # en ont 4 (K=1,2,4,8) -> NB_T s'adapte a -p.
@@ -19,14 +19,22 @@
 # absolus, sortie dans results/nevergrad/<algo>/<TYPE_PROBLEM>/512/<t>/... (au lieu
 # de results/results_EDAs_final/ relatif au CWD).
 #
-# PBIL/MIMIC/BOA supportent NK3 dans ce depot (implementation generique, categories
-# geree par D) -- contrairement a PPBIL (voir expe_peda_ppbil_512.slurm) qui est
+# MIMIC et BOA EXCLUS a n=512 (QUBO/NK/NK3) : leurs deux implementations
+# construisent une structure de dependance par paire de variables, cout O(n^2)
+# par construction (calc_bi_frequency dans mimic.py, k2_algorithm dans boa.py).
+# A n=512 ca ne termine jamais une seule generation dans un temps raisonnable
+# (verifie sur JZ : job budget=500 toujours RUNNING apres plusieurs minutes,
+# fichiers resultat reduits a l'en-tete). PBIL est un modele univarie, O(n),
+# non concerne. Voir paper/outline.md pour la justification complete.
+#
+# PBIL supporte NK3 dans ce depot (implementation generique, categories geree
+# par D) -- contrairement a PPBIL (voir expe_peda_ppbil_512.slurm) qui est
 # binaire seulement. Verifie : results/nevergrad/PBIL/NK3/{64,128,256} existent deja.
 #
 # Usage :
-#   sbatch jeanzay/expe_edas_512.slurm                             # QUBO (defaut)
-#   sbatch --array=0-119%100 jeanzay/expe_edas_512.slurm -p NK     # NK  : 3x4x10=120
-#   sbatch --array=0-119%100 jeanzay/expe_edas_512.slurm -p NK3    # NK3 : 3x4x10=120
+#   sbatch jeanzay/expe_edas_512.slurm                            # QUBO (defaut)
+#   sbatch --array=0-39%100 jeanzay/expe_edas_512.slurm -p NK     # NK  : 1x4x10=40
+#   sbatch --array=0-39%100 jeanzay/expe_edas_512.slurm -p NK3    # NK3 : 1x4x10=40
 #   sbatch --qos=qos_cpu-dev --time=00:10:00 --array=0 jeanzay/expe_edas_512.slurm -b 500
 #
 # Options (getopts) :
@@ -65,8 +73,8 @@ else
   NB_T=4
 fi
 
-# Decodage (algo, t_idx, seed)
-ALGOS=(PBIL MIMIC BOA)
+# Decodage (algo, t_idx, seed) -- MIMIC/BOA exclus a n=512, voir commentaire plus haut
+ALGOS=(PBIL)
 NB_SEEDS=10
 COMBOS_PER_ALGO=$((NB_T * NB_SEEDS))
 

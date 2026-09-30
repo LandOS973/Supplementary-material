@@ -99,6 +99,22 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
   NK K=8 n'a pas ce problème (D=2 -> 512 valeurs/variable seulement, ~5 Mo/fichier).
   À mentionner dans le protocole expérimental si NK3 K=8 à n=512 est rapporté.
 
+- **`MIMIC` et `BOA`, exclus à n=512 (QUBO, NK et NK3) — coût algorithmique
+  O(n²), pas un bug de configuration.** Les deux implémentations
+  (`source_code/eda/optimizer/mimic.py`, `boa.py`) construisent une structure
+  de dépendance entre chaque paire de variables à chaque génération :
+  `MIMIC.calc_bi_frequency` fait une triple boucle Python pure
+  `for m in range(dim): for n in range(m,dim): for j in range(lam)` (≈16.7M
+  itérations à n=512, contre ≈4.2M à n=256) ; `BOA.k2_algorithm` évalue le
+  gain d'ajout d'arête pour chaque paire (i,j) via l'algorithme K2, même
+  ordre de grandeur. Confirmé sur JZ : un job MIMIC/BOA avec budget=500 (donc
+  quelques générations seulement) reste `RUNNING` plusieurs minutes sans
+  produire de sortie, et les runs de la campagne QUBO n=512 (budget=50000, 6h
+  de limite) n'ont jamais dépassé l'en-tête du fichier résultat (0/60 pour
+  chacun des deux algos). PBIL, modèle univarié (O(n), pas de structure par
+  paire), n'est pas concerné et reste dans le pool à n=512.
+  `jeanzay/expe_edas_512.slurm` ne lance plus que PBIL (`ALGOS=(PBIL)`).
+
 ## Expériences en cours / à lancer (côté calcul)
 
 - [x] Génération instances NK/NK3 n=512 (`source_code/utils/generate_nk_instances.py`)
