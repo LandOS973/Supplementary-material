@@ -39,7 +39,7 @@ DEFAULTS = dict(
 DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
-        advantages=["peragentrankweighted"], 
+        advantages=["peragentrankweighted"],
         M_values=[10],
         lambda_values=[10],
         epsilon_svgd=[0.06],
@@ -53,6 +53,28 @@ DEFAULT_GRIDS = [
         ],
     )
 ]
+
+# Config exacte du papier PPSN (commit 4a990591d), pour reproduire
+# krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01 a n=512
+# (deja presente pour n=64/128/256 sous results/config/<ce nom>/). Selectionnable
+# via --grid ppsn_baseline, sans toucher au grid de travail ci-dessus.
+PPSN_BASELINE_GRID = [
+    dict(
+        kernels=["rbf"],
+        advantages=["globalrankweighted"],
+        M_values=[7],
+        lambda_values=[13],
+        epsilon_svgd=[0.08],
+        gamma=[0.015],
+        decay_start_ratio=[0.03],
+        decay_min_factor=[0.01],
+    )
+]
+
+GRID_PRESETS = {
+    "wip": DEFAULT_GRIDS,
+    "ppsn_baseline": PPSN_BASELINE_GRID,
+}
 
 _PPO_INACTIVE = dict(
     ppo_active=False,
@@ -192,8 +214,10 @@ def _expand_grid(grid: dict):
             yield cfg_name, params
 
 
-def _load_grids():
-    return DEFAULT_GRIDS
+def _load_grids(name: str = "wip"):
+    if name not in GRID_PRESETS:
+        raise ValueError(f"Unknown grid preset '{name}' (expected one of {sorted(GRID_PRESETS)}).")
+    return GRID_PRESETS[name]
 
 
 def _parse_int_list(raw: str):
@@ -985,13 +1009,22 @@ def main():
         default=None,
         help="Override M_values grid with a comma/space-separated list (e.g. -m 7,8,9,6).",
     )
+    parser.add_argument(
+        "-g",
+        "--grid",
+        type=str,
+        default="wip",
+        choices=sorted(GRID_PRESETS),
+        help="Named grid preset to run (default: wip, the in-progress ablation grid). "
+             "'ppsn_baseline' reproduces the exact PPSN paper config.",
+    )
     args = parser.parse_args()
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     out_root = args.outdir or os.path.join(repo_root, "results", "config")
     Path(out_root).mkdir(parents=True, exist_ok=True)
 
-    grids = _apply_m_override(_load_grids(), args.m_values)
+    grids = _apply_m_override(_load_grids(args.grid), args.m_values)
     for idx, grid in enumerate(grids, start=1):
         m_vals = _get_grid_m_values(grid)
         print(f"[GRID {idx}] M_values={m_vals}")
