@@ -7,7 +7,7 @@ visualization: true
 
 agent:
   M: 10
-  lambda: 13
+  lambda: 10
   advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
   kernel: rbf # rbf | no_interact
   epsilon_svgd: 0.05 # Pas de mise à jour des particules
@@ -17,28 +17,28 @@ agent:
   enable_greedy_final: true
   decay_start_ratio: 0.03
   min_factor: 0.01
-  decay: true
-  ppo_active: false
+  decay: false
+  ppo_active: true
   ppo:
     ppo_epochs: 4
     beta: 0.01
 
-problem_name: qubo
+problem_name: nk3
 
 problems:
   qubo:
     name: QUBO
-    dim: 512
+    dim: 128
     type_instance: 5
 
   nk:
     name: NK
-    dim: 64
-    type_instance: 1
+    dim: 128
+    type_instance: 8
 
   nk3:
     name: NK3
-    dim: 64
+    dim: 256
     type_instance: 8
 
   anr:
