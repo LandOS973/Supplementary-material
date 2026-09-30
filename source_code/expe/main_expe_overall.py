@@ -40,11 +40,11 @@ DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
         advantages=["peragentrankweighted"],
-        M_values=[10,15],
+        M_values=[8,12],
         lambda_values=[10],
         epsilon_svgd=[0.06],
         gamma=[0.006],
-        decay_start_ratio=[0.03],
+        decay_start_ratio=[0.03,1],
         decay_min_factor=[0.01],
         # Variantes PPO croisées avec le grid ci-dessus.
         # Chaque entrée porte uniquement les params de son mode ("none" = baseline sans PPO).
