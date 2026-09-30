@@ -2891,16 +2891,23 @@ with st.sidebar:
 
 st.caption(f"{len(filtered)} configs affichées sur {len(df)} disponibles")
 
-# ── Sorted instances (scan one config dir — all configs share the same instances)
-sorted_instances: list[str] = []
-for _cfg in df["config"]:
-    _d = RESULTS_DIR / _cfg
-    if _d.exists():
-        sorted_instances = sorted(
-            sub.name for sub in _d.iterdir()
-            if sub.is_dir() and INSTANCE_RE.match(sub.name)
-        )
-        break
+@st.cache_data(show_spinner=False)
+def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
+    """Union of instance dirs across all config dirs — configs no longer all
+    share the same instances now that some, e.g. the PPSN baseline, have been
+    extended to n=512 while others haven't been re-run there yet."""
+    instance_set: set[str] = set()
+    for cfg in configs:
+        d = RESULTS_DIR / cfg
+        if d.exists():
+            instance_set.update(
+                sub.name for sub in d.iterdir()
+                if sub.is_dir() and INSTANCE_RE.match(sub.name)
+            )
+    return sorted(instance_set)
+
+
+sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
