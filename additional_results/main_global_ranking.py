@@ -203,13 +203,29 @@ def build_rankings(
             if not scores:
                 continue
             avg_score = mean(scores)
-            if problem == "QUBO":
-                # QUBO's raw eval() / x^T Q x is a MINIMIZATION objective (lower = better),
-                # unlike NK/NK3 (maximization, natural "higher = better"). Every QUBO writer
-                # (main_nevergrad.py, main_baseline_edas_and_tabu.py, and PEDA/PPBIL once
-                # fixed to minimize like everyone else) writes this raw, unflipped value, so
-                # negate here to make "higher score = better" hold uniformly across problems
+            if problem in ("QUBO", "NK", "NK3") and algo not in ("PEDA", "PPBIL"):
+                # main_nevergrad.py and main_baseline_edas_and_tabu.py (nevergrad's 81 algos,
+                # PBIL/MIMIC/BOA) always write the raw value they minimise internally: for
+                # QUBO that's x^T Q x directly (lower = better); for NK/NK3 it's -fitness
+                # (problem.eval already returns -fitness there, and they minimise that raw,
+                # unflipped quantity too -- see main_baseline_edas_and_tabu.py's
+                # `table_scores[...] = -self.best_fitness`). So "lower raw = better" for this
+                # whole family, on QUBO/NK/NK3 -- negate so "higher = better" holds uniformly
                 # for the descending sort below.
+                #
+                # PEDA/PPBIL (main_expe_peda.py / main_expe_ppbil.py) are the opposite on these
+                # same 3 problem types: both their QUBO and NK/NK3 paths write their own
+                # internal *maximised* score directly (already "higher = better", e.g.
+                # -x^T Q x for QUBO, +fitness for NK/NK3) -- do NOT negate them, or a
+                # genuinely good result gets flipped to look bad.
+                #
+                # VIENNARNA is excluded from this whole branch: its writer
+                # (main_nevergrad_viennarna_batch.py) already tracks and writes best_score
+                # pre-oriented "higher = better" (init -inf, `if score > best_score: ...`),
+                # unlike main_nevergrad.py's QUBO/NK/NK3 path -- same algo names, different
+                # writer script, different convention. Negating it here would break an
+                # already-correct ranking. PEDA/PPBIL don't run on VIENNARNA at all, so this
+                # condition never matters for them there.
                 avg_score = -avg_score
             per_algo_score[algo] = avg_score
 
