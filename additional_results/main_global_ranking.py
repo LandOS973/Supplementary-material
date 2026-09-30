@@ -202,7 +202,16 @@ def build_rankings(
                 low_runs.append((f"{algo}:bad", bad))
             if not scores:
                 continue
-            per_algo_score[algo] = mean(scores)
+            avg_score = mean(scores)
+            if problem == "QUBO":
+                # QUBO's raw eval() / x^T Q x is a MINIMIZATION objective (lower = better),
+                # unlike NK/NK3 (maximization, natural "higher = better"). Every QUBO writer
+                # (main_nevergrad.py, main_baseline_edas_and_tabu.py, and PEDA/PPBIL once
+                # fixed to minimize like everyone else) writes this raw, unflipped value, so
+                # negate here to make "higher score = better" hold uniformly across problems
+                # for the descending sort below.
+                avg_score = -avg_score
+            per_algo_score[algo] = avg_score
 
         if not per_algo_score:
             skipped += 1

@@ -138,13 +138,16 @@ def _eval_qubo_batch(tensor_solution, tensor_Q):
     """
     tensor_solution : (B, pop, N, 1) int64, values in {0, 1}
     tensor_Q        : (B, N, N)      float32 — symmetric Q matrix
-    Returns (B, pop) float32 — x^T Q x with x = 2*solution - 1 ∈ {-1,+1}
-    (same value as WalshExpansion.eval, to maximise).
+    Returns (B, pop) float32 — score to maximise = -(x^T Q x) with x = 2*solution - 1 ∈ {-1,+1}.
+    x^T Q x itself (same value as WalshExpansion.eval) is a MINIMIZATION objective in this
+    codebase (matches main_nevergrad.py / main_baseline_edas_and_tabu.py / environment/qubo.py's
+    SVGD-EDA scoring, all of which minimise it) -- negate here so maximising this score is
+    equivalent to minimising x^T Q x, instead of solving the opposite (maximisation) problem.
     """
     x    = (tensor_solution.float() * 2 - 1).squeeze(3)   # (B, pop, N) {-1,+1}
     x_t  = x.transpose(1, 2)                               # (B, N, pop)
     Qx   = tensor_Q @ x_t                                  # (B, N, pop) -- Q not expanded over pop
-    return (x_t * Qx).sum(dim=1)                           # (B, pop)
+    return -(x_t * Qx).sum(dim=1)                          # (B, pop)
 
 
 def run_config_gpu(dim, type_instance):
@@ -308,8 +311,10 @@ def run_config(dim, type_instance):
                         cost     = eval_val    # already negative → minimising = maximising fitness
                     else:  # QUBO
                         eval_val = problem.eval(2 * x - 1)
-                        score    = eval_val    # positive QUBO value
-                        cost     = -eval_val   # negate → minimising = maximising QUBO
+                        # eval_val = x^T Q x is a MINIMIZATION objective in this codebase
+                        # (matches main_nevergrad.py / main_baseline_edas_and_tabu.py / SVGD-EDA)
+                        score    = -eval_val   # negate so maximising score = minimising eval_val
+                        cost     = eval_val
 
                     if score > best_raw:
                         best_raw = score

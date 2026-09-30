@@ -128,6 +128,32 @@ logits) — recoupe le "future work" du PPSN sur les noyaux Fisher-Rao/Jensen-Sh
   `-p NK3` (plus aucun algo de ce script n'est éligible une fois PBIL/MIMIC/BOA
   tous exclus de NK3 à n=512).
 
+- **Bug de direction QUBO corrigé (PEDA/PPBIL + classement) — n'affecte pas le
+  papier publié.** `x^T Q x` (= `WalshExpansion.eval`) est une MINIMISATION
+  dans ce dépôt (convention partagée par `main_nevergrad.py`,
+  `main_baseline_edas_and_tabu.py` et le SVGD-EDA du papier, `environment/qubo.py`).
+  `main_expe_peda.py`/`main_expe_ppbil.py` (ajoutés le 2026-05-04, commit
+  `4b3e2fc98`, donc après soumission PPSN — pas dans le pool du papier)
+  **maximisaient** `x^T Q x` brut au lieu de le minimiser, sur QUBO uniquement
+  (NK/NK3 étaient déjà corrects, convention de maximisation naturelle
+  là-bas). Corrigé dans les 4 emplacements (CPU + GPU × PEDA + PPBIL) en
+  négant le score interne. Toutes les données PEDA/PPBIL QUBO existantes
+  (n=64/128/256/512) ont été supprimées (invalides, résolvaient le mauvais
+  problème) — à relancer.
+  En creusant, second bug distinct trouvé dans `additional_results/main_global_ranking.py`
+  (commit initial 2026-03-11, donc potentiellement utilisé pour le papier —
+  mais **`curves/main_table.py` exclut explicitement QUBO du tableau final**
+  via `EXCLUDED_TABLE_PROBLEMS = {"QUBO", "UBQP"}`, donc aucun impact sur le
+  papier publié) : le tri était toujours décroissant (`reverse=True`,
+  commentaire "maximization") alors que nevergrad/PBIL/MIMIC/BOA écrivent la
+  valeur brute (minimisation, donc "plus bas = meilleur") dans leurs fichiers
+  résultat pour QUBO — le classement était inversé pour ces familles.
+  Corrigé en négant le score QUBO à la génération du CSV, pour une convention
+  "plus haut = meilleur" uniforme entre QUBO/NK/NK3. CSVs de
+  `additional_results/global_ranking/UBQP_*` régénérés et vérifiés (les
+  algos nevergrad réputés forts, ex. famille DiscreteLengler, remontent bien
+  en tête après correction).
+
 ## Expériences en cours / à lancer (côté calcul)
 
 - [x] Génération instances NK/NK3 n=512 (`source_code/utils/generate_nk_instances.py`)
