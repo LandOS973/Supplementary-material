@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1                
 #SBATCH --cpus-per-task=10          
 #SBATCH --hint=nomultithread        
-#SBATCH --time=08:00:00             # augmenter (ex: --time=20:00:00) pour -g ppsn_baseline a n=512 (14 combos QUBO+NK+NK3, ~1.5h/combo observe sur PEDA/PPBIL)
+#SBATCH --time=12:00:00             # augmenter (ex: --time=20:00:00) pour -g ppsn_baseline a n=512 (14 combos QUBO+NK+NK3, ~1.5h/combo observe sur PEDA/PPBIL)
 #SBATCH --account=ndg@v100
 
 # --- Préparation ---
