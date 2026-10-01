@@ -174,6 +174,15 @@ for idx_run in range(nb_instances):
     list_best_scores.append(score)
 
 
+# Score final par instance (le fichier agrege ci-dessous ne garde que des stats sur
+# les instances, inutilisable pour le Wilcoxon apparie par instance de main_table.py).
+# Signe inverse -> "plus haut = meilleur", meme convention que les anciens
+# final_scores_budget_*.csv. Agreger les seeds avec
+# additional_results/build_final_scores_from_seeds.py.
+with open(path_result + "final_scores_seed" + str(seed) + "_budget_" + str(budget) + ".csv", "w") as f_final:
+    f_final.write("instance,restart,runtime,score,filename\n")
+    for i in range(nb_instances):
+        f_final.write(f"{i},{seed},{budget},{-table_scores[-1, i]},{name_file_result}\n")
 
 
 for index in range(table_scores.shape[0]):

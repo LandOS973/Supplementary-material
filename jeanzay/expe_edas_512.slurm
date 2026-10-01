@@ -43,6 +43,8 @@
 #   -p  type_problem (QUBO|NK|NK3)   (defaut : QUBO)
 #   -d  dimension                    (defaut : 512)
 #   -b  budget (evaluations)         (defaut : 50000)
+#   -f  force : relance meme si un resultat existe deja (ex: pour regenerer
+#       final_scores_seed*.csv sur le meilleur concurrent)
 #   -n  nb instances                 (defaut : 10)
 
 echo "Job ${SLURM_ARRAY_JOB_ID} tache ${SLURM_ARRAY_TASK_ID} sur $(hostname) a $(date)"
@@ -60,12 +62,14 @@ TYPE_PROBLEM=QUBO
 DIM=512
 BUDGET=50000
 NB_INSTANCES=10
-while getopts "p:d:b:n:" opt; do
+FORCE=0
+while getopts "p:d:b:n:f" opt; do
   case "$opt" in
     p) TYPE_PROBLEM="$OPTARG" ;;
     d) DIM="$OPTARG" ;;
     b) BUDGET="$OPTARG" ;;
     n) NB_INSTANCES="$OPTARG" ;;
+    f) FORCE=1 ;;
   esac
 done
 
@@ -109,7 +113,7 @@ echo "Algo=[$ALGO]  Pb=$TYPE_PROBLEM  Dim=$DIM  T=$T  Seed=$SEED  Budget=$BUDGET
 RESULT_DIR="results/nevergrad/${ALGO}/${TYPE_PROBLEM}/${DIM}/${T}"
 EXISTING=$(ls -t "${RESULT_DIR}"/results_EDAs_final_${ALGO}_${TYPE_PROBLEM}_${DIM}_${T}_${NB_INSTANCES}_budget_${BUDGET}_*_${SEED}.txt 2>/dev/null | head -1)
 
-if [ -n "$EXISTING" ] && [ "$(wc -l < "$EXISTING")" -gt 1 ]; then
+if [ "$FORCE" -eq 0 ] && [ -n "$EXISTING" ] && [ "$(wc -l < "$EXISTING")" -gt 1 ]; then
   echo "  -> deja fait, on saute : $EXISTING"
 else
   python source_code/main_baseline_edas_and_tabu.py "$TYPE_PROBLEM" "$ALGO" "$DIM" "$T" \

@@ -358,9 +358,14 @@ for idx_run in range(nb_instances):
     print("idx_run : " + str(idx_run))
 
     list_algos[idx_run].__call__(list_problem[idx_run], dim, D, type_problem, table_scores)
-    
 
 
+# Score final par instance, meme format et convention que main_nevergrad.py
+# (table_scores contient -best_fitness, donc "plus bas = meilleur" -> on inverse).
+with open(path_result + "final_scores_seed" + str(seed) + "_budget_" + str(budget) + ".csv", "w") as f_final:
+    f_final.write("instance,restart,runtime,score,filename\n")
+    for i in range(nb_instances):
+        f_final.write(f"{i},{seed},{budget},{-table_scores[-1, i]},{name_file_result}\n")
 
 
 for index in range(table_scores.shape[0]):
