@@ -214,9 +214,19 @@ def _expand_grid(grid: dict):
 
 
 def _load_grids(name: str = "wip"):
-    if name not in GRID_PRESETS:
-        raise ValueError(f"Unknown grid preset '{name}' (expected one of {sorted(GRID_PRESETS)}).")
-    return GRID_PRESETS[name]
+    # Either a preset name, or a path to a JSON file holding a list of grid dicts
+    # (same keys as DEFAULT_GRIDS), e.g. jeanzay/grids/m7_core.json.
+    if name in GRID_PRESETS:
+        return GRID_PRESETS[name]
+    path = Path(name)
+    if not path.is_file():
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        path = repo_root / name
+    if path.is_file():
+        import json
+        grids = json.loads(path.read_text())
+        return grids if isinstance(grids, list) else [grids]
+    raise ValueError(f"Unknown grid '{name}': not a preset {sorted(GRID_PRESETS)} nor a JSON file.")
 
 
 def _parse_int_list(raw: str):
@@ -1013,9 +1023,8 @@ def main():
         "--grid",
         type=str,
         default="wip",
-        choices=sorted(GRID_PRESETS),
-        help="Named grid preset to run (default: wip, the in-progress ablation grid). "
-             "'ppsn_baseline' reproduces the exact PPSN paper config.",
+        help="Grid to run: a preset name (wip = DEFAULT_GRIDS, ppsn_baseline = exact PPSN "
+             "config) or a path to a JSON grid file, e.g. jeanzay/grids/m7_core.json.",
     )
     args = parser.parse_args()
 

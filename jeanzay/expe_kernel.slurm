@@ -38,7 +38,7 @@ while getopts "m:g:" opt; do
 done
 shift $((OPTIND - 1))
 
-JOB_NAME="expe_${GRID}"
+JOB_NAME="expe_$(basename "$GRID" .json)"
 if [ -n "$M_VALUES" ]; then
   JOB_SUFFIX="${M_VALUES//,/_}"
   JOB_SUFFIX="${JOB_SUFFIX// /_}"
