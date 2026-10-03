@@ -902,8 +902,28 @@ def tab_classement(filtered: pd.DataFrame) -> None:
     display = filtered.dropna(subset=[rank_col]) if rank_col in filtered.columns else filtered
     display = display.sort_values(rank_col) if rank_col in display.columns else display
 
+    if "M" in display.columns:
+        m_excl = st.multiselect(
+            "Exclure M", sorted(display["M"].dropna().unique().tolist()),
+            default=[], key="class_m_excl",
+        )
+        if m_excl:
+            display = display[~display["M"].isin(m_excl)]
+
+    # Score / rank on the single NK3 N=512 K=8 bench, to sort on it specifically
+    if INSTANCES_FILE.exists():
+        try:
+            inst = pd.read_parquet(INSTANCES_FILE)
+            nk3 = inst[(inst["problem"] == "NK3") & (inst["dim"] == 512) & (inst["t"] == 8)]
+            nk3 = nk3[["config", "score", "rank"]].rename(
+                columns={"score": "score_nk3_512_8", "rank": "rank_nk3_512_8"})
+            display = display.merge(nk3.drop_duplicates("config"), on="config", how="left")
+        except Exception:
+            pass
+
     cols = [c for c in [
         *stat_cols,
+        "score_nk3_512_8", "rank_nk3_512_8",
         "ppo_mode", "ppo_epochs", "clip_eps", "kl_beta", "trpo_kl_threshold",
         "epsilon_svgd", "gamma", "M", "lambda",
         "kernel", "advantage",
@@ -925,6 +945,8 @@ def tab_classement(filtered: pd.DataFrame) -> None:
             "mean_rank_NK3":  st.column_config.NumberColumn("Rank NK3", format="%.2f"),
             "mean_rank_QUBO": st.column_config.NumberColumn("Rank QUBO",format="%.2f"),
             "median_rank":    st.column_config.NumberColumn("Rank med", format="%.1f"),
+            "score_nk3_512_8": st.column_config.NumberColumn("Score NK3 512 K8", format="%.6f"),
+            "rank_nk3_512_8":  st.column_config.NumberColumn("Rank NK3 512 K8",  format="%d"),
             "ppo_mode":       st.column_config.TextColumn("ppo mode", width="small"),
             "ppo_epochs":     st.column_config.NumberColumn("ks",       format="%d"),
             "clip_eps":       st.column_config.NumberColumn("ce",       format="%.2f"),
@@ -2814,6 +2836,14 @@ def _has_raw(config_name: str) -> bool:
 df = df[df["config"].apply(_has_raw)].reset_index(drop=True)
 if df.empty:
     st.warning("Aucune config avec `raw_scores.csv` trouvée.")
+    st.stop()
+
+# Configs incompletes (grid interrompue, timeout...) : leurs top1/rang moyen ne sont pas
+# comparables a ceux des configs completes, on les ecarte.
+EXPECTED_INSTANCES = 56
+df = df[df["n_instances"] == EXPECTED_INSTANCES].reset_index(drop=True)
+if df.empty:
+    st.warning(f"Aucune config avec les {EXPECTED_INSTANCES} instances.")
     st.stop()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
