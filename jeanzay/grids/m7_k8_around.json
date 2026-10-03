@@ -1,0 +1,28 @@
+[
+  {
+    "kernels": ["rbf"],
+    "advantages": ["peragentrankweighted"],
+    "M_values": [7],
+    "lambda_values": [11],
+    "epsilon_svgd": [0.025, 0.03, 0.035],
+    "gamma": [0.005, 0.006, 0.007],
+    "decay_start_ratio": [0.6, 0.7, 0.8],
+    "decay_min_factor": [0.01],
+    "ppo_variants": [
+      {"mode": "kl", "ppo_epochs": [5], "kl_beta": [0.001, 0.003]}
+    ]
+  },
+  {
+    "kernels": ["rbf"],
+    "advantages": ["peragentrankweighted"],
+    "M_values": [7],
+    "lambda_values": [10, 11, 12],
+    "epsilon_svgd": [0.03],
+    "gamma": [0.006],
+    "decay_start_ratio": [0.7],
+    "decay_min_factor": [0.01],
+    "ppo_variants": [
+      {"mode": "kl", "ppo_epochs": [4, 5, 6], "kl_beta": [0.001, 0.003, 0.01]}
+    ]
+  }
+]
