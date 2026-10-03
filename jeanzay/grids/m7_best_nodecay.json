@@ -1,0 +1,15 @@
+[
+  {
+    "kernels": ["rbf"],
+    "advantages": ["peragentrankweighted"],
+    "M_values": [7],
+    "lambda_values": [12, 13],
+    "epsilon_svgd": [0.02, 0.03, 0.04],
+    "gamma": [0.004, 0.006, 0.008],
+    "decay_start_ratio": [1],
+    "decay_min_factor": [0.01],
+    "ppo_variants": [
+      {"mode": "kl", "ppo_epochs": [4, 5], "kl_beta": [0.2, 0.3]}
+    ]
+  }
+]
