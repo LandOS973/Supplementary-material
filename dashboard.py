@@ -879,6 +879,10 @@ def _vs_top5_figure(sel_cfg: str, instance: str, label: str,
 # Each tab is a @st.fragment: interacting with its widgets re-runs only that
 # function, not the full script — other tabs are unaffected.
 
+# Single benches shown as their own score/rank columns in the Classement tab
+BENCH_COLS = [("NK3", 512, 8), ("NK3", 256, 8)]
+
+
 @st.fragment
 def tab_classement(filtered: pd.DataFrame) -> None:
     problem_sel = st.radio(
@@ -910,20 +914,22 @@ def tab_classement(filtered: pd.DataFrame) -> None:
         if m_excl:
             display = display[~display["M"].isin(m_excl)]
 
-    # Score / rank on the single NK3 N=512 K=8 bench, to sort on it specifically
+    # Score / rank on single benches, to sort on them specifically
     if INSTANCES_FILE.exists():
         try:
             inst = pd.read_parquet(INSTANCES_FILE)
-            nk3 = inst[(inst["problem"] == "NK3") & (inst["dim"] == 512) & (inst["t"] == 8)]
-            nk3 = nk3[["config", "score", "rank"]].rename(
-                columns={"score": "score_nk3_512_8", "rank": "rank_nk3_512_8"})
-            display = display.merge(nk3.drop_duplicates("config"), on="config", how="left")
+            for prob, dim, t in BENCH_COLS:
+                b = inst[(inst["problem"] == prob) & (inst["dim"] == dim) & (inst["t"] == t)]
+                sfx = f"{prob.lower()}_{dim}_{t}"
+                b = b[["config", "score", "rank"]].rename(
+                    columns={"score": f"score_{sfx}", "rank": f"rank_{sfx}"})
+                display = display.merge(b.drop_duplicates("config"), on="config", how="left")
         except Exception:
             pass
 
     cols = [c for c in [
         *stat_cols,
-        "score_nk3_512_8", "rank_nk3_512_8",
+        *[f"{k}_{p.lower()}_{d}_{t}" for p, d, t in BENCH_COLS for k in ("score", "rank")],
         "ppo_mode", "ppo_epochs", "clip_eps", "kl_beta", "trpo_kl_threshold",
         "epsilon_svgd", "gamma", "M", "lambda",
         "kernel", "advantage",
@@ -945,8 +951,10 @@ def tab_classement(filtered: pd.DataFrame) -> None:
             "mean_rank_NK3":  st.column_config.NumberColumn("Rank NK3", format="%.2f"),
             "mean_rank_QUBO": st.column_config.NumberColumn("Rank QUBO",format="%.2f"),
             "median_rank":    st.column_config.NumberColumn("Rank med", format="%.1f"),
-            "score_nk3_512_8": st.column_config.NumberColumn("Score NK3 512 K8", format="%.6f"),
-            "rank_nk3_512_8":  st.column_config.NumberColumn("Rank NK3 512 K8",  format="%d"),
+            **{f"score_{p.lower()}_{d}_{t}": st.column_config.NumberColumn(f"Score {p} {d} K{t}", format="%.6f")
+               for p, d, t in BENCH_COLS},
+            **{f"rank_{p.lower()}_{d}_{t}": st.column_config.NumberColumn(f"Rank {p} {d} K{t}", format="%d")
+               for p, d, t in BENCH_COLS},
             "ppo_mode":       st.column_config.TextColumn("ppo mode", width="small"),
             "ppo_epochs":     st.column_config.NumberColumn("ks",       format="%d"),
             "clip_eps":       st.column_config.NumberColumn("ce",       format="%.2f"),

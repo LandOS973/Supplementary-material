@@ -25,23 +25,76 @@ arXiv:2604.15837v1. Code : github.com/LandOS973/Supplementary-material.
    `source_code/environment/qubo.py` + générateur PUBOi officiel cloné et
    paramétré par reverse-engineering des instances existantes).
 
-## Ossature (6 sections)
+## Ossature (5 sections, LNCS ~15 pages)
 
-1. Intro — reprendre la motivation du PPSN, pointer explicitement les deux
-   faiblesses (dilution du budget §4.3, cas K=8/NK3 où SVGD-EDA perdait :
-   rangs 14/44/46 sur 83).
-2. Background — condensé, renvoi au PPSN pour SVGD-EDA de base.
-3. Méthode — 3.1 rang par agent (justification IGO par agent), 3.2 mise à jour
-   proximale (dérivation, cadrage théorique — voir section dédiée ci-dessous).
-4. Protocole — même méthodologie que PPSN : grid search unique sur un ensemble
-   représentatif d'instances, config figée appliquée partout (pas de tuning par
-   instance). Nevergrad 1.0.12 (81 algos "Discrete*"), + PBIL/MIMIC/BOA.
-   100 runs (10 instances × 10 restarts), Wilcoxon apparié.
-5. Résultats — tableau global étendu (NK/NK3/QUBO, n=64..512), courbe gain vs n
-   et vs rugosité, ablation en cascade (PPSN → +rang par agent → +proximal),
-   sensibilité à K/β/eps et à m (le proximal repousse-t-il la dilution ?),
-   analyse de diversité (Hamming/entropie par agent).
-6. Conclusion et limites.
+### Config retenue (grid search terminée, M et L identiques à PPSN)
+
+`krbf__advperagentrankweighted__M7__L13__eps0p06__g0p01__ds1__dm0p01__ppokl__pe6__b0p1`
+- M=7, L=13 (mêmes valeurs que PPSN → comparaison à population égale)
+- eps=0.06 (contre 0.08 PPSN : rééchelonné car appliqué K=6 fois par génération)
+- γ=0.01, K=6 epochs, β=0.1, ds=1 (pas de décroissance de γ)
+- Contre PPSN (`krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01`) :
+  43 victoires/56, rang moyen 1.9 contre 9.5, top-1 36 contre 23.
+  NK3 256 K8 : rang 1 (PPSN 46) ; NK3 512 K8 : rang 23 (PPSN 47).
+
+### Plan
+
+1. **Intro** — motivation du PPSN, deux faiblesses identifiées : dilution du
+   budget (§4.3 PPSN) et cas K=8 où SVGD-EDA décrochait (rangs 14/44/46 sur 83).
+2. **Background** — condensé, renvoi au PPSN pour SVGD-EDA de base.
+3. **Méthode** — 3.1 avantage par rang par agent, 3.2 mise à jour proximale
+   multi-epoch (KL, K pas par génération sur le même batch). Cadrage : option A
+   ci-dessous. Nommer « proximal / KL-regularized multi-epoch », pas « PPO ».
+4. **Expériences**
+   - **4.1 Protocole et réglages** (~¾ p.)
+     - NK, NK3 (K ∈ {1,2,4,8}), QUBO/PUBOi (t0–t5), n ∈ {64,128,256,512} :
+       56 distributions × 10 instances. 512 et QUBO nouveaux vs PPSN.
+     - Budget 50000 évaluations, 100 runs (10 instances × 10 restarts),
+       Wilcoxon apparié sur moyennes par instance.
+     - Pool : ~80 nevergrad 1.0.12 + PBIL, PPBIL, PEDA + PPSN (PPSN compte
+       dans le classement). Exclusions (voir section dédiée) : MIMIC/BOA à 512,
+       PBIL/PPBIL sur NK3, DiscreteNoisyInfSplits à 512.
+     - Réglages : une grid search par variante, config figée partout. Donner
+       toutes les valeurs (M, L, eps, γ, K, β) ; une phrase sur eps rééchelonné
+       par K. Chiffrer la robustesse (« X % des configs de la grid battent PPSN
+       en rang moyen »). M et L identiques à PPSN pour isoler l'effet des
+       nouveautés. **Ne pas parler du decay** (absent du PPSN, inutile ici :
+       hyperparamètres complets des deux configs dans le README du dépôt).
+     - Argument contre le sur-réglage : une config figée comparée au meilleur
+       des ~80 concurrents choisi a posteriori par instance (oracle), dont les
+       nevergrad incluent déjà des variantes de réglage du même algo.
+   - **4.2 Comparaison globale** (~1,5 p.)
+     - Tableau 1, colonnes : PPSN | nouvelle méthode | PPBIL (« — » sur NK3) |
+       meilleur concurrent (autres, hors variantes SVGD-EDA) ; rang + score.
+       NK et NK3 complets dans le corps, QUBO agrégé par n, table complète en
+       annexe / dépôt.
+     - Marqueurs : `*` significatif vs 2e du classement, `†` significatif vs PPSN.
+     - Messages : rang moyen 1.9 vs 9.5 ; gain croissant avec n et K (+3 à 5 %
+       à 512 et K=8) ; cas K=8 perdus par PPSN repassés rang 1–2 jusqu'à 256 ;
+       défaites marginales non significatives sur instances faciles.
+     - Limite affichée : NK3 512 K8 rang 23 → dilution du budget (renvoi 4.4).
+   - **4.3 Ablation** (~1 p.) — cascade PPSN → + avantage par agent →
+     + proximal (+ global avec KL pour croiser), mêmes M=7, L=13. Petit
+     tableau de rangs moyens par famille ou barres de gain par n.
+   - **4.4 Efficacité et diversité** (~1 p., figure 2 panneaux)
+     - Gauche : convergence PPSN / nouvelle méthode / 2–3 meilleurs nevergrad
+       sur QUBO 512 et NK3 256 K8 (argument sample efficiency).
+     - Droite : Hamming moyen inter-agents (`avg_hamming`, distance moyenne
+       entre distributions d'agents), nouvelle méthode vs PPSN, selon n.
+     - Si la place le permet : M-sweep à population fixe par n → démontre la
+       dilution du budget, prépare l'ouverture.
+5. **Conclusion** — récapitulatif ; limite NK3 512 K8 (dilution du budget à M
+   fixe malgré le gain d'efficacité) ; perspective : M adaptatif au cours du
+   run (beaucoup d'agents pour explorer, fusion/élagage pour concentrer le budget).
+
+### Données à produire (par priorité)
+
+1. Wilcoxon (Tableau 1) : vs PPSN et vs meilleur concurrent par instance
+   (`curves/main_table.py`, relancer le meilleur concurrent à 512 avec `-f`).
+2. Ablation en cascade (4.3).
+3. Courbes de convergence + diversité (4.4), depuis les historiques existants.
+4. Chiffre de robustesse de la grid (dashboard).
+5. M-sweep, si temps et place.
 
 ## Cadrage théorique retenu : option A
 
