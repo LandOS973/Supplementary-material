@@ -30,7 +30,7 @@
       0.01
     ],
     "advantages": [
-      "globalrankweighted"
+      "peragentrankweighted"
     ]
   },
   {
@@ -64,7 +64,18 @@
       0.01
     ],
     "advantages": [
-      "peragentrankweighted"
+      "globalrankweighted"
+    ],
+    "ppo_variants": [
+      {
+        "mode": "kl",
+        "ppo_epochs": [
+          6
+        ],
+        "kl_beta": [
+          0.1
+        ]
+      }
     ]
   }
 ]
