@@ -18,6 +18,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RESULTS_ROOT = PROJECT_ROOT / "results" / "nevergrad"
 DEFAULT_BUDGET = 50000
 DEFAULT_EXPECTED_RUNS = 100
+# Retirés du pool partout : sortis du benchmark, et BOA/MIMIC ne tournent que jusqu'à n=256,
+# ce qui rendait le pool inégal selon la taille de l'instance.
+EXCLUDED_ALGOS = {"BOA", "MIMIC", "DiscreteNoisyInfSplits", "UltraSmoothDiscreteLognormalOnePlusOne"}
 
 
 def iter_algo_dirs(results_root: Path) -> List[Path]:
@@ -192,7 +195,7 @@ def build_rankings(
     only_problems: set[str] | None = None,
 ) -> int:
     algo_dirs = iter_algo_dirs(results_root)
-    algos = [p.name for p in algo_dirs]
+    algos = [p.name for p in algo_dirs if p.name.strip() not in EXCLUDED_ALGOS]
     instances = find_instances(results_root)
     if only_problems:
         instances = {k: v for k, v in instances.items() if k[0] in only_problems}

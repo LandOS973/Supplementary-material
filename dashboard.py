@@ -2867,6 +2867,363 @@ def _paired_wilcoxon(a: list[float], b: list[float]) -> float | None:
         return None
 
 
+# Paramètres balayables dans l'onglet Sensi (ordre d'affichage, clés de parse_config_name)
+SENSI_PARAMS = list(dict.fromkeys(key for _, key, _ in PARSERS))
+SENSI_DEFAULTS = (
+    "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01",
+    "krbf__advperagentrankweighted__M7__L13__eps0p06__g0p01__ds1__dm0p01__ppokl__pe6__b0p1",
+)
+
+
+def _sensi_variants(ref_cfg: str, param: str, all_configs: list[str]) -> dict:
+    """Configs identiques à ref_cfg sur tous les paramètres sauf `param` -> {valeur: config}."""
+    ref = parse_config_name(ref_cfg)
+    if param not in ref:
+        return {}
+    ref_rest = {k: v for k, v in ref.items() if k != param}
+    out = {}
+    for cfg in all_configs:
+        p = parse_config_name(cfg)
+        if param in p and {k: v for k, v in p.items() if k != param} == ref_rest:
+            out[p[param]] = cfg
+    return dict(sorted(out.items()))
+
+
+# Slots 1-2 de la palette catégorielle de référence (validée CVD)
+SENSI_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+# Forme de marqueur par méthode : l'identité ne repose pas que sur la couleur (impression N&B, daltonisme)
+SENSI_SYMBOLS = ["circle", "square", "diamond", "triangle-up"]
+# Export PDF : même ratio que dans le dashboard (≈ 1060×640 px en demi-largeur, ratio 1,66) et
+# mêmes tailles en px. 880×530 px -> page 660×398 pt ; avec \includegraphics[width=12cm] l'échelle
+# est 0,52 : texte export 26 px -> ≈ 10 pt. Marges nulles (automargin garde graduations et titres)
+SENSI_PDF_W, SENSI_PDF_H = 880, 530
+# Place des graduations + titres d'axe (automargin mesure avant le chargement de Latin Modern et
+# sous-estime : titre y sur les graduations). Pas d'espace blanc au-delà.
+SENSI_PDF_ML, SENSI_PDF_MB = 108, 78
+SENSI_PDF_FONT = "Latin Modern Roman"   # police LaTeX/LNCS ; un seul nom : une liste fait retomber Chromium sur la serif par défaut
+
+
+def _hex_rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def _sensi_caption(inst: str) -> str:
+    """Texte de légende LaTeX, ex. « NK3, n=512, K=8 »."""
+    m = INSTANCE_RE.match(inst)
+    pb, dim, t = m.group("problem"), m.group("dim"), m.group("t")
+    return f"{pb}, n={dim}, " + (f"t={t}" if pb == "QUBO" else f"K={t}")
+
+
+def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
+                  style: str, export: bool, dark: bool = False) -> go.Figure:
+    """stats : [(label, color, {valeur: scores})]. Sans titre (l'instance va dans la légende LaTeX)."""
+    fig = go.Figure()
+    for j, (label, color, per_val) in enumerate(stats):
+        symbol = SENSI_SYMBOLS[j % len(SENSI_SYMBOLS)]
+        xs = [v for v in cats if v in per_val]
+        if style == "Boîtes":
+            fig.add_trace(go.Box(
+                x=[v for v in xs for _ in per_val[v]],
+                y=[y for v in xs for y in per_val[v].tolist()],
+                name=label, legendgroup=label, offsetgroup=label,
+                fillcolor=_hex_rgba(color, 0.22), line=dict(color=color, width=1.2),
+                boxpoints=False, whiskerwidth=0.5,
+            ))
+            continue
+        q = {v: np.percentile(per_val[v], [25, 50, 75]) for v in xs}
+        # Bande interquartile (q75 puis q25 en remplissage)
+        fig.add_trace(go.Scatter(x=xs, y=[q[v][2] for v in xs], mode="lines", line=dict(width=0),
+                                 legendgroup=label, showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=xs, y=[q[v][0] for v in xs], mode="lines", line=dict(width=0),
+                                 fill="tonexty", fillcolor=_hex_rgba(color, 0.2),
+                                 legendgroup=label, showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(
+            x=xs, y=[q[v][1] for v in xs], name=label, legendgroup=label, mode="lines+markers",
+            line=dict(color=color, width=2),
+            marker=dict(color=color, size=9, symbol=symbol),
+            customdata=[[q[v][0], q[v][2]] for v in xs],
+            hovertemplate=(f"<b>{label}</b><br>{param}=%{{x}}<br>médiane=%{{y:.4g}}"
+                           "<br>IQR=[%{customdata[0]:.4g}, %{customdata[1]:.4g}]<extra></extra>"),
+        ))
+    for rv in ref_vals & set(cats):
+        k = cats.index(rv)
+        fig.add_vrect(x0=k - 0.5, x1=k + 0.5, fillcolor="rgba(128,128,128,0.13)", line_width=0,
+                      layer="below")
+        # En haut de la bande, dans la marge réservée en haut de l'axe y (au-dessus des courbes)
+        fig.add_annotation(x=rv, y=0.995, yref="paper", yanchor="top", text="default", showarrow=False,
+                           font=dict(size=22 if export else 19, color="rgba(110,110,110,1)"))
+
+    fs = 26 if export else 22   # export : ≈ 10 pt une fois inclus à 12 cm
+    ink = "#262730" if export or not dark else "#e6e6e6"   # texte : thème clair / sombre
+    y_max = max(float(np.max(sc)) for _, _, pv in stats for sc in pv.values())
+    # Étendue tracée (bande IQR ou boîtes), + marge en haut pour loger la légende sans recouvrement
+    lo_q, hi_q = (0, 100) if style == "Boîtes" else (25, 75)
+    y_lo = min(float(np.percentile(sc, lo_q)) for _, _, pv in stats for sc in pv.values())
+    y_hi = max(float(np.percentile(sc, hi_q)) for _, _, pv in stats for sc in pv.values())
+    pad = (y_hi - y_lo) or 1.0
+    x_title = "<i>m</i>" if param == "M" else param
+    step = 2 if len(cats) > 15 else 1
+    fig.update_layout(
+        boxmode="group", boxgap=0.25, boxgroupgap=0.08,
+        height=640, margin=dict(t=44, l=80, r=10, b=70),  # t : place pour la barre d'outils Plotly
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(size=fs, color=ink,
+                  family=SENSI_PDF_FONT if export else None),
+        xaxis=dict(title=dict(text=x_title, standoff=8), automargin=True, type="category",
+                   categoryorder="array", categoryarray=cats,
+                   tickvals=cats[::step] if step > 1 else None,
+                   showgrid=False, showline=True, linecolor="rgba(128,128,128,0.6)", ticks="",
+                   tickfont=dict(size=fs - 1)),
+        yaxis=dict(title=dict(text="Final score", standoff=8), automargin=True, showgrid=True,
+                   gridcolor="rgba(128,128,128,0.2)", zeroline=False, showline=False,
+                   tickformat=".2f" if y_max < 10 else "~s", tickfont=dict(size=fs - 1),
+                   range=[y_lo - 0.04 * pad, y_hi + 0.2 * pad]),
+        # Légende dans la zone de tracé, en haut à droite (les courbes y sont basses : grands m)
+        legend=dict(orientation="h", y=0.99, yanchor="top", x=0.99, xanchor="right",
+                    bgcolor="rgba(255,255,255,0.75)" if not dark or export else "rgba(14,17,23,0.75)",
+                    bordercolor="rgba(128,128,128,0.35)", borderwidth=1),
+        hoverlabel=dict(font_size=17), hovermode="x unified" if style != "Boîtes" else "closest",
+    )
+    if export:
+        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white",
+                          margin=dict(t=0, l=SENSI_PDF_ML, r=4, b=SENSI_PDF_MB))
+        fig.update_yaxes(gridcolor="rgba(0,0,0,0.12)")
+        fig.update_xaxes(linecolor="rgba(0,0,0,0.5)")
+    return fig
+
+
+def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals: set[str],
+                       export: bool, dark: bool = False) -> go.Figure:
+    """Rang moyen (vs concurrents) en fonction du paramètre, axe y inversé (plus bas = meilleur)."""
+    cats = [str(v) for v in df[param]]
+    fs = 26 if export else 22   # export : ≈ 10 pt une fois inclus à 12 cm
+    ink = "#262730" if export or not dark else "#e6e6e6"
+    fig = go.Figure()
+    for j, label in enumerate(labels):
+        col = f"{label} · rang moy"
+        if col not in df.columns:
+            continue
+        color = SENSI_COLORS[j % len(SENSI_COLORS)]
+        fig.add_trace(go.Scatter(
+            x=cats, y=df[col], name=label, mode="lines+markers",
+            line=dict(color=color, width=2),
+            marker=dict(color=color, size=9, symbol=SENSI_SYMBOLS[j % len(SENSI_SYMBOLS)]),
+            hovertemplate=f"<b>{label}</b><br>{param}=%{{x}}<br>rang moyen=%{{y:.1f}}<extra></extra>",
+        ))
+    for rv in ref_vals & set(cats):
+        k = cats.index(rv)
+        fig.add_vrect(x0=k - 0.5, x1=k + 0.5, fillcolor="rgba(128,128,128,0.13)", line_width=0, layer="below")
+        fig.add_annotation(x=rv, y=0.995, yref="paper", yanchor="top", text="default", showarrow=False,
+                           font=dict(size=22 if export else 19, color="rgba(110,110,110,1)"))
+    y_hi = float(np.nanmax(df[[f"{l} · rang moy" for l in labels if f"{l} · rang moy" in df]].to_numpy()))
+    step = 2 if len(cats) > 15 else 1
+    fig.update_layout(
+        height=640, margin=dict(t=44, l=80, r=10, b=70),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(size=fs, color=ink,
+                  family=SENSI_PDF_FONT if export else None),
+        xaxis=dict(title=dict(text="<i>m</i>" if param == "M" else param, standoff=8), automargin=True,
+                   type="category", categoryorder="array", categoryarray=cats,
+                   tickvals=cats[::step] if step > 1 else None, showgrid=False, showline=True,
+                   linecolor="rgba(128,128,128,0.6)", ticks="", tickfont=dict(size=fs - 1)),
+        # Inversé : rang 1 en haut. Bande vide au-dessus du rang 1 (≈ 25 % de la hauteur) pour la
+        # légende et « default », que les courbes ne peuvent pas atteindre ; graduations ≥ 1 seulement
+        yaxis=dict(title=dict(text="Mean rank", standoff=8), automargin=True,
+                   range=[y_hi * 1.04, 1 - 0.33 * (y_hi - 1)],
+                   tickvals=[1] + list(range(10, int(y_hi) + 1, 10)),
+                   showgrid=True, gridcolor="rgba(128,128,128,0.2)", zeroline=False,
+                   tickfont=dict(size=fs - 1)),
+        legend=dict(orientation="h", y=0.99, yanchor="top", x=0.99, xanchor="right",
+                    bgcolor="rgba(255,255,255,0.75)" if not dark or export else "rgba(14,17,23,0.75)",
+                    bordercolor="rgba(128,128,128,0.35)", borderwidth=1),
+        hoverlabel=dict(font_size=17), hovermode="x unified",
+    )
+    if export:
+        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=0, l=SENSI_PDF_ML, r=4, b=SENSI_PDF_MB))
+        fig.update_yaxes(gridcolor="rgba(0,0,0,0.12)")
+        fig.update_xaxes(linecolor="rgba(0,0,0,0.5)")
+    return fig
+
+
+def _sensi_summary_table(series, param: str, ref_vals: set[str]):
+    """Renvoie la figure d'export du rang moyen (pour « Tout exporter »), ou None."""
+    """Récap par valeur du paramètre : rang moyen / top-k vs concurrents, et duel entre les deux méthodes."""
+    try:
+        inst = pd.read_parquet(INSTANCES_FILE)
+    except Exception:
+        st.info("Récap indisponible (instances.parquet illisible).")
+        return None
+    scope = st.radio("Périmètre du récap", ["Tout", "QUBO", "NK", "NK3"], horizontal=True,
+                     key="sensi_scope")
+    inst = inst[inst["config"].isin({c for _, variants in series for c in variants.values()})]
+    if scope != "Tout":
+        inst = inst[inst["problem"] == scope]
+    key = ["problem", "dim", "t"]
+    vals = sorted({v for _, variants in series for v in variants})
+    rows = []
+    for v in vals:
+        row = {param: v}
+        per = []
+        for label, variants in series:
+            sub = inst[inst["config"] == variants[v]] if v in variants else inst.iloc[0:0]
+            per.append(sub.set_index(key)["score"])
+            row[f"{label} · rang moy"] = round(float(sub["rank"].mean()), 1) if len(sub) else None
+            row[f"{label} · top 1"] = int((sub["rank"] == 1).sum()) if len(sub) else None
+            row[f"{label} · top 3"] = int((sub["rank"] <= 3).sum()) if len(sub) else None
+        if len(series) == 2 and len(per[0]) and len(per[1]):
+            a, b = per[0].align(per[1], join="inner")
+            row[f"{series[1][0]} > {series[0][0]}"] = f"{int((b > a).sum())}/{len(a)}"
+            # Écart de score moyen B vs A par famille (en %, > 0 : B meilleur)
+            gap = (b / a - 1) * 100
+            fams = gap.index.get_level_values("problem")
+            for fam in ("QUBO", "NK", "NK3"):
+                if (fams == fam).any():
+                    row[f"Δ {fam} %"] = float(gap[fams == fam].mean())
+        rows.append(row)
+    df = pd.DataFrame(rows)
+
+    rank_cols = [c for c in df.columns if c.endswith("rang moy")]
+    top_cols = [c for c in df.columns if "· top" in c]
+    gap_cols = [c for c in df.columns if c.startswith("Δ ")]
+
+    def _style(d: pd.DataFrame):
+        out = pd.DataFrame("", index=d.index, columns=d.columns)
+        ref = d[param].astype(str).isin(ref_vals)
+        out.loc[ref, :] = "background-color: rgba(128,128,128,0.15)"
+        for c in rank_cols:
+            out.loc[d[c] == d[c].min(), c] += "; font-weight: 700"
+        for c in top_cols + gap_cols:
+            out.loc[d[c] == d[c].max(), c] += "; font-weight: 700"
+        return out
+
+    n_inst = inst[key].drop_duplicates().shape[0]
+    scope_txt = scope if scope != "Tout" else "toutes les instances"
+    left, right = st.columns(2)
+    with left:
+        st.markdown(f"##### Rang moyen — {scope_txt} ({n_inst} instances)")
+        dark = getattr(st.context.theme, "type", None) == "dark"
+        labels = [label for label, _ in series]
+        fig = _sensi_rank_figure(df, labels, param, ref_vals, export=False, dark=dark)
+        st.plotly_chart(fig, use_container_width=True, theme=None, key="sensi_rank_fig")
+        st.download_button(
+            "⬇️ PDF", key="sensi_rank_dl", mime="application/pdf",
+            file_name=f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf",
+            data=lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True)
+            .to_image(format="pdf", width=SENSI_PDF_W, height=SENSI_PDF_H),
+        )
+    right.markdown(f"##### Récap — {scope_txt} ({n_inst} instances)")
+    right.dataframe(
+        df.style.apply(_style, axis=None).format(
+            {c: "{:.1f}" for c in rank_cols} | {c: "{:.0f}" for c in top_cols}
+            | {c: "{:+.2f}" for c in gap_cols}, na_rep="—"),
+        hide_index=True, use_container_width=True,
+        height=640,
+    )
+    gap_txt = (f" Δ famille % : écart de score moyen de {series[1][0]} par rapport à {series[0][0]} "
+               f"(> 0 : {series[1][0]} meilleur)." if len(series) == 2 else "")
+    right.caption("Rang vs ~82 concurrents (1 = meilleur). En gras : meilleure valeur de chaque colonne ; "
+               "ligne grisée : valeur par défaut." + gap_txt)
+    rank_name = f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf"
+    return rank_name, lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True)
+
+
+@st.fragment
+def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
+    """Sensibilité à un paramètre : deux configs de référence et toutes leurs variantes."""
+    all_configs = all_df["config"].tolist()
+    if not all_configs:
+        st.info("Aucune config disponible.")
+        return
+
+    c1, c2, c3 = st.columns([5, 5, 2])
+    sel = []
+    for col, key, default, name in ((c1, "sensi_a", SENSI_DEFAULTS[0], "PPSN"),
+                                    (c2, "sensi_b", SENSI_DEFAULTS[1], "EvoCOP")):
+        with col:
+            idx = all_configs.index(default) if default in all_configs else 0
+            cfg = st.selectbox(f"Config {key[-1].upper()}", all_configs, index=idx, key=key)
+            label = st.text_input("Nom", name, key=f"{key}_label")
+            sel.append((cfg, label))
+    with c3:
+        param = st.selectbox("Paramètre", SENSI_PARAMS, index=SENSI_PARAMS.index("M"), key="sensi_param")
+
+    series = []
+    for cfg, label in sel:
+        variants = _sensi_variants(cfg, param, all_configs)
+        series.append((label, variants))
+        vals = ", ".join(str(v) for v in variants) or "—"
+        st.caption(f"**{label}** : {len(variants)} variantes ({param} = {vals})")
+    if not any(v for _, v in series):
+        st.warning(f"Aucune variante trouvée en faisant varier `{param}`.")
+        return
+
+    rank_export = _sensi_summary_table(series, param, {str(parse_config_name(cfg).get(param)) for cfg, _ in sel})
+
+    groups = sorted({(m.group("problem"), int(m.group("dim")))
+                     for m in map(INSTANCE_RE.match, sorted_instances) if m},
+                    key=lambda g: (["QUBO", "NK", "NK3"].index(g[0]), g[1]))
+    g1, g2 = st.columns(2)
+    problem = g1.selectbox("Problème", sorted({g[0] for g in groups}, key=["QUBO", "NK", "NK3"].index),
+                           key="sensi_pb")
+    dim = g2.selectbox("Dimension", [d for p, d in groups if p == problem], key="sensi_dim")
+    instances = [i for i in sorted_instances
+                 if (m := INSTANCE_RE.match(i)) and m.group("problem") == problem
+                 and int(m.group("dim")) == dim]
+    instances.sort(key=lambda i: int(INSTANCE_RE.match(i).group("t")))
+
+    all_vals = sorted({v for _, variants in series for v in variants})
+    cats = [str(v) for v in all_vals]
+    ref_vals = {str(parse_config_name(cfg).get(param)) for cfg, _ in sel}
+
+    s1, s2 = st.columns([3, 2])
+    style = s1.radio("Style", ["Médiane + IQR", "Boîtes"], horizontal=True, key="sensi_style")
+    export = s2.button("📄 Tout exporter en PDF (12 cm)", key="sensi_export", use_container_width=True,
+                       help="Écrit un PDF par figure affichée dans figures/sensi/<paramètre>/")
+
+    figs = []
+    for inst in instances:
+        stats = []  # (label, color, {val: scores})
+        for i, (label, variants) in enumerate(series):
+            per_val = {str(v): sc for v, cfg in variants.items()
+                       if (sc := load_raw_scores(cfg, inst)) is not None}
+            if per_val:
+                stats.append((label, SENSI_COLORS[i % len(SENSI_COLORS)], per_val))
+        if stats:
+            figs.append((inst, stats))
+
+    dark = getattr(st.context.theme, "type", None) == "dark"
+    cols = st.columns(2)
+    for n, (inst, stats) in enumerate(figs):
+        fig = _sensi_figure(stats, param, cats, ref_vals, style, export=False, dark=dark)
+        with cols[n % 2]:
+            st.caption(_sensi_caption(inst))
+            # theme=None : sinon le thème Streamlit écrase tailles de police et couleurs
+            st.plotly_chart(fig, use_container_width=True, theme=None, key=f"sensi_fig_{inst}")
+            st.download_button(
+                "⬇️ PDF", key=f"sensi_dl_{inst}", mime="application/pdf",
+                file_name=f"sensi_{param}_{inst}{'_box' if style == 'Boîtes' else ''}.pdf",
+                # Généré au clic seulement (kaleido ~1 s par figure)
+                data=lambda st_=stats: _sensi_figure(st_, param, cats, ref_vals, style, export=True)
+                .to_image(format="pdf", width=SENSI_PDF_W, height=SENSI_PDF_H),
+            )
+
+    if export and figs:
+        out_dir = ROOT / "figures" / "sensi" / param
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with st.spinner(f"Export de {len(figs) + 1} PDF…"):
+            if rank_export:
+                rank_name, make_rank = rank_export
+                make_rank().write_image(out_dir / rank_name, format="pdf",
+                                        width=SENSI_PDF_W, height=SENSI_PDF_H)
+            for inst, stats in figs:
+                fig = _sensi_figure(stats, param, cats, ref_vals, style, export=True)
+                fig.write_image(out_dir / f"sensi_{param}_{inst}{'_box' if style == 'Boîtes' else ''}.pdf",
+                                format="pdf",
+                                width=SENSI_PDF_W, height=SENSI_PDF_H)
+        st.success(f"{len(figs) + bool(rank_export)} PDF écrits dans `{out_dir.relative_to(ROOT)}/`")
+
+
 def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
     """Comme Favoris, mais les configs ne sont comparées qu'entre elles (pas aux concurrents)."""
     abls        = load_ablations()
@@ -3316,8 +3673,9 @@ def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
 sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
-    ["📋 Classement", "📈 Courbes", "📦 Boxplots", "🔍 Analyse", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation"]
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
+    ["📋 Classement", "📈 Courbes", "📦 Boxplots", "🔍 Analyse", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation",
+     "🎚️ Sensi"]
 )
 
 with tab1:
@@ -3340,3 +3698,6 @@ with tab6:
 
 with tab7:
     tab_ablation(df, sorted_instances)
+
+with tab8:
+    tab_sensi(df, sorted_instances)
