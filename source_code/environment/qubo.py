@@ -30,7 +30,8 @@ def get_Score_trajectoriesQUBO_cuda(
 
     size_pop = strategy.lambda_
 
-    tensor_Q = (tensor_Q.unsqueeze(1)).repeat([1, size_pop, 1, 1]).to(device)
+    # (B, N, N) partagée par toute la population : pas de copie par individu
+    tensor_Q = tensor_Q.to(device)
 
     total_cases = tensor_Q.size(0)
 
@@ -91,10 +92,9 @@ def get_Score_trajectoriesQUBO_cuda(
     bestGlobalSolution = None
 
     def _evaluate_population(tensor_solution):
-        pop_size = tensor_solution.size(1)
-        tensor_QUBO = tensor_solution * 2 - 1
-        Qx = tensor_Q[:, :pop_size, :, :] @ tensor_QUBO
-        return -(torch.transpose(Qx, 2, 3) @ tensor_QUBO).squeeze(2).squeeze(2)
+        x = tensor_solution[:, :, :, 0] * 2 - 1                  # (B, pop, N)
+        Qx = tensor_Q @ x.transpose(1, 2)                         # (B, N, pop)
+        return -(x * Qx.transpose(1, 2)).sum(-1)                  # (B, pop)
 
     def _update_agent_best_overall(tensor_score, tensor_solution=None, epoch=None, greedy_one_per_agent=False):
         if not (track_leader and agent_best_overall is not None):
