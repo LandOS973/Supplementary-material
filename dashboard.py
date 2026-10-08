@@ -19,7 +19,13 @@ RANKING_DIR = ROOT / "additional_results" / "global_ranking"
 BEAST_DIR = ROOT / "results" / "the beast"
 
 INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
-SKIP_ALGOS = {"ppo-eda", "tabu", "svgd-eda"}
+# Nos deux méthodes de référence (configs par défaut), présentes dans les fichiers de rang :
+# écartées quand on classe nos configs sur le pool seul (cache, Classement, Sensi qui remet la méthode
+# adverse lui-même), gardées dans l'onglet Favoris = classement commun du papier (§5.1).
+REFERENCE_ALGOS = {"svgd-eda", "se-svgd-eda"}
+SKIP_ALGOS = {"ppo-eda", "tabu"} | REFERENCE_ALGOS
+def _skip_algos(include_svgd: bool) -> set[str]:
+    return SKIP_ALGOS - REFERENCE_ALGOS if include_svgd else SKIP_ALGOS
 
 # Ordre important : les préfixes les plus spécifiques d'abord (le 1er match gagne).
 # "kt" (seuil KL TRPO) doit passer avant "k" (kernel), sinon "kt0p01" écrase le kernel.
@@ -84,14 +90,14 @@ def _norm(series: pd.Series) -> pd.Series:
     return series.abs()
 
 
-def _get_rank(problem: str, dim: int, t: int, score: float) -> int | None:
+def _get_rank(problem: str, dim: int, t: int, score: float, include_svgd: bool = False) -> int | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     path = RANKING_DIR / fname
     if not path.exists():
         return None
     try:
         df = pd.read_csv(path)
-        df = df[~df["name_algo"].str.lower().isin(SKIP_ALGOS)]
+        df = df[~df["name_algo"].str.lower().isin(_skip_algos(include_svgd))]
         return int(1 + (df["score"] > score).sum())
     except Exception:
         return None
@@ -308,14 +314,14 @@ def load_raw_scores(config: str, instance: str) -> pd.Series | None:
 
 
 @st.cache_data(show_spinner=False)
-def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
+def load_ranking(problem: str, dim: int, t: int, include_svgd: bool = False) -> pd.DataFrame | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     p = RANKING_DIR / fname
     try:
         df = pd.read_csv(p) if p.exists() else None
         if df is None:
             return None
-        return df[~df["name_algo"].str.lower().isin(SKIP_ALGOS)]
+        return df[~df["name_algo"].str.lower().isin(_skip_algos(include_svgd))]
     except Exception:
         return None
 
@@ -2055,7 +2061,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             curve = load_curve(cfg, inst)
             if curve is not None:
                 score = abs(float(curve["best_fitness"].iloc[-1]))
-                rank  = _get_rank(prob, dim, t, score)
+                rank  = _get_rank(prob, dim, t, score, include_svgd=True)
                 row[f"Score {short}"] = round(score, 4)
                 row[f"Rang {short}"]  = rank
                 ham = float(curve["avg_hamming"].iloc[-1]) if "avg_hamming" in curve.columns else None
@@ -2361,7 +2367,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
         with _pl:
             _rm = INSTANCE_RE.match(instance)
-            _rk_df = load_ranking(_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")))
+            _rk_df = load_ranking(_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")),
+                                  include_svgd=True)
             if _rk_df is None or _rk_df.empty:
                 st.caption("Pas de classement pour cette instance.")
             else:
@@ -2387,7 +2394,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 comp_curves: dict = {}   # algo -> (x, y)
                 comp_boxes:  dict = {}   # algo -> stats dict
                 if fav_top5:
-                    ranking = load_ranking(prob, dim, t)
+                    ranking = load_ranking(prob, dim, t, include_svgd=True)
                     if ranking is not None:
                         for _, rk in ranking.nlargest(5, "score").iterrows():
                             algo = rk["name_algo"]
@@ -3056,10 +3063,25 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
         return None
     scope = st.radio("Périmètre du récap", ["Tout", "QUBO", "NK", "NK3"], horizontal=True,
                      key="sensi_scope")
-    inst = inst[inst["config"].isin({c for _, variants in series for c in variants.values()})]
+    key = ["problem", "dim", "t"]
+    # Classement commun (§5.2) : à chaque valeur du paramètre, les deux méthodes sont classées
+    # ensemble contre le pool (chacune a l'autre, à la même valeur, pour concurrent). Rang du cache =
+    # pool seul, +1 si l'autre méthode fait strictement mieux. À la valeur par défaut = rangs du §5.1.
+    inst = inst[inst["config"].isin({c for _, variants in series for c in variants.values()})].copy()
+    if len(series) == 2:
+        by_cfg = {c: g.set_index(key)["score"] for c, g in inst.groupby("config")}
+        for i, (_, variants) in enumerate(series):
+            other_variants = series[1 - i][1]
+            for v, cfg in variants.items():
+                other = by_cfg.get(other_variants.get(v))
+                if other is None:   # pas de variante adverse à cette valeur : pool seul
+                    continue
+                mine = inst["config"] == cfg
+                idx = pd.MultiIndex.from_frame(inst.loc[mine, key])
+                beats = other.reindex(idx).to_numpy() > inst.loc[mine, "score"].to_numpy()
+                inst.loc[mine, "rank"] = inst.loc[mine, "rank"] + beats.astype(int)
     if scope != "Tout":
         inst = inst[inst["problem"] == scope]
-    key = ["problem", "dim", "t"]
     vals = sorted({v for _, variants in series for v in variants})
     rows = []
     for v in vals:
@@ -3122,7 +3144,8 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
     )
     gap_txt = (f" Δ famille % : écart de score moyen de {series[1][0]} par rapport à {series[0][0]} "
                f"(> 0 : {series[1][0]} meilleur)." if len(series) == 2 else "")
-    right.caption("Rang vs ~82 concurrents (1 = meilleur). En gras : meilleure valeur de chaque colonne ; "
+    right.caption("Rang dans le classement commun : pool + l'autre méthode à la même valeur du paramètre "
+                  "(83 concurrents, 81 sur NK3 ; 1 = meilleur). En gras : meilleure valeur de chaque colonne ; "
                "ligne grisée : valeur par défaut." + gap_txt)
     rank_name = f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf"
     return rank_name, lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True)

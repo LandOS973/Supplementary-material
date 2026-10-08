@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -21,6 +22,14 @@ DEFAULT_EXPECTED_RUNS = 100
 # Retirés du pool partout : sortis du benchmark, et BOA/MIMIC ne tournent que jusqu'à n=256,
 # ce qui rendait le pool inégal selon la taille de l'instance.
 EXCLUDED_ALGOS = {"BOA", "MIMIC", "DiscreteNoisyInfSplits", "UltraSmoothDiscreteLognormalOnePlusOne"}
+# Classement commun du papier (§5.1) : le pool + nos deux méthodes dans leur config par défaut,
+# classés ensemble (chacune a donc l'autre pour concurrent). Le dashboard les écarte (SKIP_ALGOS)
+# quand il classe nos configs sur le pool seul, et l'onglet Sensi remet la méthode adverse à la main.
+REFERENCE_CONFIGS = {
+    "SVGD-EDA": "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01",          # PPSN
+    "SE-SVGD-EDA": "krbf__advperagentrankweighted__M7__L13__eps0p06__g0p01__ds1__dm0p01__ppokl__pe6__b0p1",  # EvoCOP
+}
+CONFIG_ROOT = PROJECT_ROOT / "results" / "config"
 
 
 def iter_algo_dirs(results_root: Path) -> List[Path]:
@@ -144,6 +153,23 @@ def read_scores_from_final_csv(path: Path) -> List[float]:
     return scores
 
 
+def config_score(config: str, problem: str, dim, type_instance) -> float | None:
+    """Score moyen (100 runs, orienté « plus haut = meilleur ») d'une de nos configs sur l'instance."""
+    inst_dir = CONFIG_ROOT / config / f"{problem}_dim{dim}_t{type_instance}"
+    # Même source que le dashboard (abs du dernier best_fitness, repli sur raw_scores) : sinon la
+    # config, classée dans l'onglet Favoris, pourrait se retrouver derrière sa propre entrée
+    # (best_fitness et moyenne des raw_scores diffèrent de quelques 1e-4 en relatif à n=512).
+    try:
+        with (inst_dir / "best_metrics.csv").open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        if rows and rows[-1].get("best_fitness"):
+            return abs(float(rows[-1]["best_fitness"]))
+    except (OSError, ValueError):
+        pass
+    scores = [abs(v) for v in read_scores_from_final_csv(inst_dir / "raw_scores.csv")]
+    return mean(scores) if scores else None
+
+
 def collect_scores(
     type_dir: Path,
     budget: int,
@@ -156,14 +182,32 @@ def collect_scores(
     pattern = f"*_budget_{budget}_*.txt"
     files = sorted(type_dir.glob(pattern))
     bad = 0
-    scores: List[float] = []
-    for run_file in files:
+    # Un même run relancé (même nom au timestamp près, ex. restart _4 relancé) produit plusieurs
+    # fichiers ; graine = indice du restart, donc résultats identiques. N'en garder qu'un par run
+    # (le plus récent valide), sinon les restarts relancés comptent double dans la moyenne.
+    latest: Dict[str, float] = {}
+    for run_file in files:  # tri par nom = tri par timestamp pour une même identité de run
         score = read_last_score(run_file)
         if score is None:
             bad += 1
             continue
-        scores.append(score)
-    return scores, len(files), bad, "txt"
+        latest[_TIMESTAMP_RE.sub("", run_file.name)] = score
+    scores = list(latest.values())
+    # Runs réels : les fichiers n=512 nevergrad/PBIL agrègent les 10 instances d'un restart
+    runs = sum(_runs_in_file(name) for name in latest)
+    return scores, runs, bad, "txt"
+
+
+_TIMESTAMP_RE = re.compile(r"_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
+
+
+def _runs_in_file(name: str) -> int:
+    """1 pour un fichier par run (…_i_<k>_r_<j>.txt), sinon le nb d'instances agrégées
+    (…_<problème>_<n>_<t>_<nb_instances>_budget_…), 1 par défaut."""
+    if re.search(r"_i_\d+_r_\d+", name):
+        return 1
+    m = re.search(r"_(?:QUBO|NK3?|UBQP)_\d+_\d+_(\d+)_budget_", name)
+    return int(m.group(1)) if m else 1
 
 
 def mean(values: Iterable[float]) -> float:
@@ -220,7 +264,7 @@ def build_rankings(
                 continue
             if total_runs < expected_runs:
                 low_runs.append((f"{algo}:{source}", total_runs))
-            if bad:
+            if bad and total_runs < expected_runs:  # fichiers vides de lancements relancés depuis
                 low_runs.append((f"{algo}:bad", bad))
             if not scores:
                 continue
@@ -232,6 +276,15 @@ def build_rankings(
             # further transformation needed.
             avg_score = mean(scores)
             per_algo_score[algo] = avg_score
+
+        if problem != "VIENNARNA":
+            for ref_name, ref_cfg in REFERENCE_CONFIGS.items():
+                ref = config_score(ref_cfg, problem, dim, type_instance)
+                if ref is None:
+                    print(f"[WARN] {problem} N={dim} K={type_instance}: pas de résultats {ref_name}",
+                          file=sys.stderr)
+                else:
+                    per_algo_score[ref_name] = ref
 
         if not per_algo_score:
             skipped += 1
