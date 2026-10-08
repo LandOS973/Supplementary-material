@@ -486,6 +486,7 @@ def _run_once(
             problem_ctx["D"],
             problem_ctx["type_instance"],
             device,
+            repeat_pop=False,
         )
         list_scores, history = get_Score_trajectoriesNK_cuda(
             strategy,

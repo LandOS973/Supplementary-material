@@ -10,7 +10,7 @@ from utils.main_utils import build_global_ranking_lines
 
 
 
-def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, device):
+def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, device, repeat_pop=True):
 
 
     list_matrix_locus = []
@@ -99,7 +99,8 @@ def getTensorInstances_NK(path, nb_instances, nb_restarts, size_pop,  N, D,  K, 
 
         tensor_matrix_locus = torch.stack(list_matrix_locus, dim=0)
         tensor_matrix_contrib = torch.stack(list_matrix_contrib, dim=0)
-        tensor_matrix_locus = (tensor_matrix_locus.unsqueeze(1)).repeat([1, size_pop, 1, 1]).to(device)
+        # repeat_pop=False : (B, 1, N, K+1), le même locus sert à toute la population
+        tensor_matrix_locus = (tensor_matrix_locus.unsqueeze(1)).repeat([1, size_pop if repeat_pop else 1, 1, 1]).to(device)
         tensor_matrix_contrib = tensor_matrix_contrib.to(device)
         
         tensor_matrix_Q = torch.stack(list_matrix_Q, dim=0)
@@ -194,14 +195,11 @@ def get_Score_trajectoriesNK_cuda(
     pbar = tqdm(range(nb_iterations)) if use_tqdm else range(nb_iterations)
 
     def _evaluate_population(tensor_solution):
-        pop_size = tensor_solution.size(1)
-        tensor_solution_rep = torch.transpose(tensor_solution, 2, 3).repeat([1, 1, N, 1])
-        tensor_solution_locus = torch.gather(
-            input=tensor_solution_rep,
-            dim=3,
-            index=tensor_matrix_locus[:, :pop_size, :, :],
-        )
-        tensor_solution_locus = tensor_solution_locus.float()
+        B, pop_size = tensor_solution.shape[:2]
+        # x[b, p, locus[b, n, k]] sans recopier chaque solution N fois : (B, pop, N, K+1)
+        locus = tensor_matrix_locus[:, 0].reshape(B, 1, -1).expand(-1, pop_size, -1)
+        tensor_solution_locus = torch.gather(tensor_solution[:, :, :, 0], 2, locus)
+        tensor_solution_locus = tensor_solution_locus.view(B, pop_size, N, -1).float()
         index_th = torch.sum(tensor_solution_locus * vectorIndex, dim=3).type(torch.int64).unsqueeze(3)
         contrib = tensor_matrix_contrib
         if contrib.dim() == 3:
