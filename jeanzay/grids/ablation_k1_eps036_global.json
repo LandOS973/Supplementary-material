@@ -1,0 +1,15 @@
+[
+  {
+    "kernels": ["rbf"],
+    "advantages": ["globalrankweighted"],
+    "M_values": [7],
+    "lambda_values": [13],
+    "epsilon_svgd": [0.36],
+    "gamma": [0.01],
+    "decay_start_ratio": [1],
+    "decay_min_factor": [0.01],
+    "ppo_variants": [
+      {"mode": "kl", "ppo_epochs": [1], "kl_beta": [0.1]}
+    ]
+  }
+]
