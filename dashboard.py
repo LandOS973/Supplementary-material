@@ -103,6 +103,7 @@ CACHE_FILE       = DASHBOARD_DIR / "cache.parquet"
 INSTANCES_FILE   = DASHBOARD_DIR / "instances.parquet"
 COMPARISONS_FILE = DASHBOARD_DIR / "comparisons.json"
 FAVORITES_FILE   = DASHBOARD_DIR / "favorites.json"
+ABLATIONS_FILE   = DASHBOARD_DIR / "ablations.json"
 
 # Migrate old files from previous locations
 _old_cache = RESULTS_DIR / ".dashboard_cache.parquet"
@@ -534,6 +535,21 @@ def load_favorites() -> list[dict]:
 def save_favorites(favs: list[dict]) -> None:
     FAVORITES_FILE.write_text(json.dumps(favs, indent=2))
     load_favorites.clear()
+
+
+@st.cache_data(show_spinner=False)
+def load_ablations() -> list[dict]:
+    if ABLATIONS_FILE.exists():
+        try:
+            return json.loads(ABLATIONS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def save_ablations(abls: list[dict]) -> None:
+    ABLATIONS_FILE.write_text(json.dumps(abls, indent=2))
+    load_ablations.clear()
 
 
 from plotly.subplots import make_subplots
@@ -2824,6 +2840,358 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     st.plotly_chart(fig_e, use_container_width=True, key=f"fav_dbg_e_{sel_idx}")
 
 
+_RUNS_PER_INSTANCE = 10   # nb_restarts de main_expe_overall : raw_scores est rangé instance par instance
+
+
+def _instance_means(scores: pd.Series | None) -> list[float]:
+    """Moyenne par instance de test (blocs consécutifs de _RUNS_PER_INSTANCE runs)."""
+    if scores is None:
+        return []
+    v = scores.to_numpy(dtype=float)
+    n = len(v) // _RUNS_PER_INSTANCE
+    return [float(v[i * _RUNS_PER_INSTANCE:(i + 1) * _RUNS_PER_INSTANCE].mean()) for i in range(n)]
+
+
+def _paired_wilcoxon(a: list[float], b: list[float]) -> float | None:
+    """p-valeur du Wilcoxon apparié sur les moyennes par instance (comme main_table.py)."""
+    n = min(len(a), len(b))
+    if n < 2:
+        return None
+    d = np.asarray(a[:n]) - np.asarray(b[:n])
+    if np.allclose(d, 0):
+        return 1.0
+    try:
+        from scipy.stats import wilcoxon
+        return float(wilcoxon(a[:n], b[:n]).pvalue)
+    except Exception:
+        return None
+
+
+def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
+    """Comme Favoris, mais les configs ne sont comparées qu'entre elles (pas aux concurrents)."""
+    abls        = load_ablations()
+    all_configs = all_df["config"].tolist()
+    sel_idx     = st.session_state.get("abl_sel_idx")
+
+    # ── Vue liste ─────────────────────────────────────────────────────────────
+    if sel_idx is None or sel_idx >= len(abls):
+        h1, h2 = st.columns([6, 1])
+        h1.markdown("#### 🧪 Études d'ablation")
+        if h2.button("+ Nouvelle", key="abl_new", use_container_width=True):
+            abls.append({"name": f"Ablation {len(abls) + 1}", "configs": [],
+                         "aliases": {}, "instances": [], "ref": None})
+            save_ablations(abls)
+            st.session_state["abl_sel_idx"] = len(abls) - 1
+            st.rerun()
+        if not abls:
+            st.info("Aucune étude. Cliquez sur « + Nouvelle » pour commencer.")
+            return
+        grid = st.columns(3)
+        for i, abl in enumerate(abls):
+            with grid[i % 3]:
+                with st.container(border=True):
+                    t1, t2 = st.columns([5, 1])
+                    if t1.button(f"🧪 {abl['name']}", key=f"abl_sel_{i}", use_container_width=True):
+                        st.session_state["abl_sel_idx"] = i
+                        st.rerun()
+                    if t2.button("🗑", key=f"abl_del_{i}"):
+                        abls.pop(i)
+                        save_ablations(abls)
+                        st.rerun()
+                    n_cfg = len(abl.get("configs", []))
+                    st.caption(f"{n_cfg} config{'s' if n_cfg > 1 else ''}")
+        return
+
+    # ── Vue détail ────────────────────────────────────────────────────────────
+    abl = abls[sel_idx]
+    hd1, hd2 = st.columns([1, 8])
+    if hd1.button("← Retour", key="abl_back"):
+        st.session_state.pop("abl_sel_idx", None)
+        st.rerun()
+    hd2.markdown(f"#### 🧪 {abl['name']}")
+
+    new_name = st.text_input("Nom de l'étude", value=abl["name"], key=f"abl_name_{sel_idx}")
+    if new_name and new_name != abl["name"]:
+        abls[sel_idx]["name"] = new_name
+        save_ablations(abls)
+
+    st.divider()
+    st.markdown("##### Variantes")
+    configs = abl.get("configs", [])
+    aliases = abl.setdefault("aliases", {})
+    ac1, ac2 = st.columns([4, 1])
+    add_cfg = ac1.selectbox("Ajouter une config", [""] + [c for c in all_configs if c not in configs],
+                            key=f"abl_add_{sel_idx}")
+    if ac2.button("Ajouter", key=f"abl_add_btn_{sel_idx}", use_container_width=True, disabled=not add_cfg):
+        abls[sel_idx]["configs"].append(add_cfg)
+        save_ablations(abls)
+        st.rerun()
+
+    if not configs:
+        st.info("Aucune config ajoutée.")
+        return
+
+    for cfg in list(configs):
+        r1, r2, r3 = st.columns([3, 3, 1])
+        r1.code(cfg, language=None)
+        alias = r2.text_input("Alias", value=aliases.get(cfg, ""), key=f"abl_alias_{sel_idx}_{cfg}",
+                              placeholder="nom de la variante", label_visibility="collapsed")
+        if alias != aliases.get(cfg, ""):
+            abls[sel_idx]["aliases"][cfg] = alias
+            save_ablations(abls)
+        if r3.button("✕", key=f"abl_rm_{sel_idx}_{cfg}", use_container_width=True):
+            abls[sel_idx]["configs"].remove(cfg)
+            abls[sel_idx]["aliases"].pop(cfg, None)
+            if abls[sel_idx].get("ref") == cfg:
+                abls[sel_idx]["ref"] = None
+            save_ablations(abls)
+            st.rerun()
+
+    def _lbl(cfg: str) -> str:
+        if aliases.get(cfg):
+            return aliases[cfg]
+        row_df = all_df[all_df["config"] == cfg]
+        return _config_label(row_df.iloc[0]) if not row_df.empty else cfg[-30:]
+
+    ref = abl.get("ref") if abl.get("ref") in configs else configs[0]
+    new_ref = st.selectbox("Référence (écarts et Wilcoxon calculés par rapport à elle)", configs,
+                           index=configs.index(ref), format_func=_lbl, key=f"abl_ref_{sel_idx}")
+    if new_ref != abl.get("ref"):
+        abls[sel_idx]["ref"] = new_ref
+        save_ablations(abls)
+    ref = new_ref
+
+    # ── Instances ─────────────────────────────────────────────────────────────
+    saved_insts = [i for i in abl.get("instances", []) if i in sorted_instances] or list(sorted_instances)
+    instances = st.multiselect("Instances", sorted_instances, default=saved_insts, key=f"abl_inst_{sel_idx}")
+    if instances != abl.get("instances"):
+        abls[sel_idx]["instances"] = instances
+        save_ablations(abls)
+    if not instances:
+        st.info("Sélectionnez au moins une instance.")
+        return
+
+    # ── Données ───────────────────────────────────────────────────────────────
+    _PROB_ORDER = {"NK": 0, "NK3": 1, "QUBO": 2}
+    short = {cfg: "ABCDEFGHIJ"[i] for i, cfg in enumerate(configs)}
+    rows = []
+    for inst in instances:
+        m = INSTANCE_RE.match(inst)
+        prob, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
+        r = {"inst": inst, "prob": prob, "dim": dim, "t": t, "score": {}, "ham": {}, "means": {}}
+        for cfg in configs:
+            curve = load_curve(cfg, inst)
+            if curve is not None:
+                r["score"][cfg] = abs(float(curve["best_fitness"].iloc[-1]))
+                if "avg_hamming" in curve.columns:
+                    r["ham"][cfg] = float(curve["avg_hamming"].iloc[-1])
+            r["means"][cfg] = _instance_means(load_raw_scores(cfg, inst))
+        rows.append(r)
+    rows.sort(key=lambda r: (_PROB_ORDER.get(r["prob"], 99), r["dim"], r["t"]))
+
+    for r in rows:
+        present = [c for c in configs if c in r["score"]]
+        order = sorted(present, key=lambda c: -r["score"][c])
+        r["rank"] = {c: order.index(c) + 1 for c in present}
+        r["gap"] = ({c: (r["score"][c] - r["score"][ref]) / abs(r["score"][ref]) * 100 for c in present}
+                    if ref in r["score"] else {})
+        r["p"] = {c: _paired_wilcoxon(r["means"][c], r["means"][ref]) for c in configs if c != ref}
+
+    # ── Résumé ────────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### 📊 Résumé")
+    n_ok = len(rows)
+    mcols = st.columns(len(configs))
+    for col, cfg in zip(mcols, configs):
+        wins  = sum(1 for r in rows if r["rank"].get(cfg) == 1)
+        rks   = [r["rank"][cfg] for r in rows if cfg in r["rank"]]
+        grk   = [_get_rank(r["prob"], r["dim"], r["t"], r["score"][cfg]) for r in rows if cfg in r["score"]]
+        grk   = [g for g in grk if g is not None]
+        with col.container(border=True):
+            st.markdown(f"**{short[cfg]} — {_lbl(cfg)}**" + (" · réf." if cfg == ref else ""))
+            st.metric("Meilleure des variantes", f"{wins} / {n_ok}")
+            st.metric("Rang moyen entre variantes", f"{np.mean(rks):.2f}" if rks else "—")
+            st.metric("Rang moyen vs concurrents", f"{np.mean(grk):.1f}" if grk else "—")
+            if cfg != ref:
+                better = sum(1 for r in rows if r["p"].get(cfg) is not None and r["p"][cfg] < 0.05
+                             and r["gap"].get(cfg, 0) > 0)
+                worse  = sum(1 for r in rows if r["p"].get(cfg) is not None and r["p"][cfg] < 0.05
+                             and r["gap"].get(cfg, 0) < 0)
+                st.caption(f"vs réf. (Wilcoxon p<0.05) : ▲ {better} · ▼ {worse}")
+
+    # Écart moyen à la référence par famille × dimension
+    st.markdown(f"##### Écart moyen à la référence ({_lbl(ref)}) par famille et dimension")
+    gap_rows = []
+    for prob in ["NK", "NK3", "QUBO"]:
+        for dim in [64, 128, 256, 512]:
+            sub = [r for r in rows if r["prob"] == prob and r["dim"] == dim]
+            if not sub:
+                continue
+            line = {"Famille": prob, "n": dim}
+            for cfg in configs:
+                if cfg == ref:
+                    continue
+                g = [r["gap"][cfg] for r in sub if cfg in r["gap"]]
+                line[f"{short[cfg]} — {_lbl(cfg)}"] = f"{np.mean(g):+.2f} %" if g else ""
+            gap_rows.append(line)
+    if gap_rows:
+        st.dataframe(pd.DataFrame(gap_rows), hide_index=True, use_container_width=True)
+
+    # ── Tableau par instance : un tableau par problème, comme Favoris ─────────
+    st.markdown("##### Par instance")
+    for cfg in configs:
+        st.caption(f"{short[cfg]} = {_lbl(cfg)}" + ("  (référence)" if cfg == ref else ""))
+    st.caption("Vert = meilleur score · rouge = pire · Écart = vs référence, ▲/▼ = significatif "
+               "(Wilcoxon apparié sur les moyennes par instance, p<0.05)")
+
+    col_specs: list[tuple[str, str, str]] = []   # (entête, config, type)
+    for cfg in configs:
+        s_ = _lbl(cfg)
+        col_specs.append((f"Score {s_}", cfg, "score"))
+        if cfg != ref:
+            col_specs.append((f"Écart {s_}", cfg, "gap"))
+
+    th   = "padding:8px 28px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
+    th_l = "padding:8px 28px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
+    td_l = "padding:7px 28px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;"
+    td_r = "padding:7px 28px;border-bottom:1px solid #f0f0f0;white-space:nowrap;font-size:18px;text-align:right;"
+    td_sep = "padding:18px 10px 5px;font-weight:bold;font-size:19px;color:#333;border-top:2px solid #bbb;"
+
+    active_probs = [p for p in ["NK", "NK3", "QUBO"] if any(r["prob"] == p for r in rows)]
+    # Empilés (pas côte à côte) : avec 4 variantes, ~11 colonnes par problème ne tiennent pas en 3 colonnes
+    for prob in active_probs:
+        prob_rows = [r for r in rows if r["prob"] == prob]
+        fmt = ".2f" if prob == "QUBO" else ".4f"
+        with st.container():
+            st.markdown(f"##### {prob}")
+            ncols = 1 + len(col_specs)
+            html = '<table style="border-collapse:collapse;">'
+            html += f'<thead><tr><th style="{th_l}">Instance</th>'
+            for hdr, _, _ in col_specs:
+                html += f'<th style="{th}">{hdr}</th>'
+            html += "</tr></thead><tbody>"
+            current_dim = None
+            for r in prob_rows:
+                if r["dim"] != current_dim:
+                    current_dim = r["dim"]
+                    html += f'<tr><td colspan="{ncols}" style="{td_sep}">DIM {current_dim}</td></tr>'
+                html += f'<tr><td style="{td_l}">{r["inst"]}</td>'
+                for _, cfg, kind in col_specs:
+                    if kind == "score":
+                        v = r["score"].get(cfg)
+                        cell = "" if v is None else format(v, fmt)
+                        n_present = len(r["rank"])
+                        if v is not None and n_present > 1 and r["rank"].get(cfg) == 1:
+                            cell = f'<b style="color:#2ca02c">{cell}</b>'
+                        elif v is not None and n_present > 1 and r["rank"].get(cfg) == n_present:
+                            cell = f'<b style="color:#d62728">{cell}</b>'
+                    elif kind == "gap":
+                        g, pv = r["gap"].get(cfg), r["p"].get(cfg)
+                        cell = "" if g is None else f"{g:+.2f}%"
+                        if g is not None and pv is not None and pv < 0.05:
+                            cell += (' <span style="color:#2ca02c">▲</span>' if g > 0
+                                     else ' <span style="color:#d62728">▼</span>')
+                    else:
+                        h = r["ham"].get(cfg)
+                        cell = "" if h is None else f"{h:.2f}"
+                    html += f'<td style="{td_r}">{cell}</td>'
+                html += "</tr>"
+            html += "</tbody></table>"
+            st.markdown(f'<div style="overflow-x:auto;margin-bottom:18px;">{html}</div>',
+                        unsafe_allow_html=True)
+
+    # ── Courbes : même sélecteur que Favoris (puces par problème / dimension) ─
+    st.divider()
+    st.markdown("#### 📈 Courbes")
+    st.markdown("**Instance à visualiser**")
+    st.markdown(
+        "<style>"
+        '[data-testid="stPills"] button,'
+        '[data-testid="stBaseButton-pills"],'
+        '[data-testid="stBaseButton-pillsActive"]{'
+        'padding:0.4rem 0.95rem !important;border-radius:10px !important;'
+        'min-height:2.2rem !important;}'
+        '[data-testid="stPills"] button p,'
+        '[data-testid="stBaseButton-pills"] p,'
+        '[data-testid="stBaseButton-pillsActive"] p{'
+        'font-size:1.15rem !important;font-weight:600 !important;}'
+        ".fav-curve-hdr{font-size:1.5rem;font-weight:700;margin:6px 0 2px;}"
+        ".fav-curve-dim{font-size:1.2rem;font-weight:600;color:#555;margin:10px 0 2px;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    _iprob = lambda i: INSTANCE_RE.match(i).group("problem")
+    _idim  = lambda i: int(INSTANCE_RE.match(i).group("dim"))
+    _it    = lambda i: int(INSTANCE_RE.match(i).group("t"))
+    probs_curve = [p for p in ["NK", "NK3", "QUBO"] if any(_iprob(i) == p for i in instances)]
+    sel_key = f"abl_curve_sel_{sel_idx}"
+    all_pick_keys = [
+        f"abl_curve_pick_{sel_idx}_{p}_{d}"
+        for p in probs_curve
+        for d in sorted({_idim(i) for i in instances if _iprob(i) == p})
+    ]
+
+    def _abl_pick_cb(changed: str):
+        v = st.session_state.get(changed)
+        st.session_state[sel_key] = v or None
+        if v:                                   # un clic sélectionne → vide les autres groupes
+            for k in all_pick_keys:
+                if k != changed:
+                    st.session_state[k] = None
+
+    for pcol, p in zip(st.columns(len(probs_curve), gap="large"), probs_curve):
+        with pcol:
+            st.markdown(f'<div class="fav-curve-hdr">{p}</div>', unsafe_allow_html=True)
+            _plbl = "t" if p == "QUBO" else "K"
+            p_insts = [i for i in instances if _iprob(i) == p]
+            for d in sorted({_idim(i) for i in p_insts}):
+                d_insts = sorted((i for i in p_insts if _idim(i) == d), key=_it)
+                wkey = f"abl_curve_pick_{sel_idx}_{p}_{d}"
+                st.markdown(f'<div class="fav-curve-dim">DIM {d}</div>', unsafe_allow_html=True)
+                st.pills(
+                    wkey, d_insts, selection_mode="single", key=wkey,
+                    format_func=lambda i, _l=_plbl: f"{_l}{_it(i)}",
+                    on_change=_abl_pick_cb, args=(wkey,),
+                    label_visibility="collapsed",
+                )
+
+    inst = st.session_state.get(sel_key)
+    if not inst:
+        st.info("Sélectionnez une instance ci-dessus pour afficher ses courbes.")
+        return
+    curves = {cfg: load_curve(cfg, inst) for cfg in configs}
+    raws   = {cfg: load_raw_scores(cfg, inst) for cfg in configs}
+    has_ham = any(c is not None and "avg_hamming" in c.columns for c in curves.values())
+    titles = ["Convergence"] + (["Hamming (diversité)"] if has_ham else []) + ["Distribution finale"]
+    n_rows = len(titles)
+    fig = make_subplots(rows=n_rows, cols=1, subplot_titles=titles, vertical_spacing=0.09,
+                        row_heights=[0.40, 0.25, 0.35] if n_rows == 3 else [0.6, 0.4])
+    for i, cfg in enumerate(configs):
+        color = COLORS[i % len(COLORS)]
+        c = curves[cfg]
+        if c is not None:
+            fig.add_trace(go.Scatter(x=c["step"], y=_norm(c["best_fitness"]), name=_lbl(cfg),
+                                     mode="lines", line=dict(color=color, width=2)), row=1, col=1)
+            if has_ham and "avg_hamming" in c.columns:
+                fig.add_trace(go.Scatter(x=c["step"], y=c["avg_hamming"], name=_lbl(cfg), mode="lines",
+                                         line=dict(color=color, width=2, dash="dot"), showlegend=False),
+                              row=2, col=1)
+        s = raws[cfg]
+        if s is not None:
+            fig.add_trace(go.Box(y=s, x=[_lbl(cfg)] * len(s), name=_lbl(cfg), marker_color=color,
+                                 boxpoints="outliers", boxmean=True, showlegend=False), row=n_rows, col=1)
+    fig.update_xaxes(title_text="Évaluations", row=1, col=1)
+    fig.update_yaxes(title_text="Score", row=1, col=1)
+    if has_ham:
+        fig.update_xaxes(title_text="Évaluations", row=2, col=1)
+        fig.update_yaxes(title_text="Hamming moy.", row=2, col=1)
+    fig.update_xaxes(type="category", row=n_rows, col=1)
+    fig.update_yaxes(title_text="Score final", row=n_rows, col=1)
+    fig.update_layout(height=1150 if n_rows == 3 else 850, margin=dict(r=20, t=40, b=10),
+                      legend=dict(orientation="h", yanchor="top", y=-0.08))
+    st.plotly_chart(fig, use_container_width=True, key=f"abl_fig_{sel_idx}_{inst}")
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="SVGD-EDA Dashboard", layout="wide", page_icon="📊")
@@ -2948,8 +3316,8 @@ def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
 sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["📋 Classement", "📈 Courbes", "📦 Boxplots", "🔍 Analyse", "⚖️ Comparaison", "⭐ Favoris"]
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+    ["📋 Classement", "📈 Courbes", "📦 Boxplots", "🔍 Analyse", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation"]
 )
 
 with tab1:
@@ -2969,3 +3337,6 @@ with tab5:
 
 with tab6:
     tab_favoris(df, sorted_instances)
+
+with tab7:
+    tab_ablation(df, sorted_instances)
