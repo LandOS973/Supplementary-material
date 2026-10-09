@@ -23,9 +23,14 @@ INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)
 # écartées quand on classe nos configs sur le pool seul (cache, Classement, Sensi qui remet la méthode
 # adverse lui-même), gardées dans l'onglet Favoris = classement commun du papier (§5.1).
 REFERENCE_ALGOS = {"svgd-eda", "se-svgd-eda"}
+SVGD_EDA_CONFIG = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"   # config PPSN
 SKIP_ALGOS = {"ppo-eda", "tabu"} | REFERENCE_ALGOS
-def _skip_algos(include_svgd: bool) -> set[str]:
-    return SKIP_ALGOS - REFERENCE_ALGOS if include_svgd else SKIP_ALGOS
+def _skip_algos(include_svgd) -> set[str]:
+    """include_svgd : False (pool seul), True (les deux méthodes), ou l'ensemble des méthodes
+    de référence à garder (ex. {"svgd-eda"} pour l'onglet Ablation)."""
+    if include_svgd is True:
+        return SKIP_ALGOS - REFERENCE_ALGOS
+    return SKIP_ALGOS - set(include_svgd or ())
 
 # Ordre important : les préfixes les plus spécifiques d'abord (le 1er match gagne).
 # "kt" (seuil KL TRPO) doit passer avant "k" (kernel), sinon "kt0p01" écrase le kernel.
@@ -90,7 +95,13 @@ def _norm(series: pd.Series) -> pd.Series:
     return series.abs()
 
 
-def _get_rank(problem: str, dim: int, t: int, score: float, include_svgd: bool = False) -> int | None:
+def _common_rivals(cfg: str) -> set[str]:
+    """Classement commun du papier (§5.1) : toute config est classée contre le pool + SVGD-EDA (elle prend
+    la place de SE-SVGD-EDA) ; la config SVGD-EDA elle-même (PPSN) affronte SE-SVGD-EDA."""
+    return {"se-svgd-eda"} if cfg == SVGD_EDA_CONFIG else {"svgd-eda"}
+
+
+def _get_rank(problem: str, dim: int, t: int, score: float, include_svgd=False) -> int | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     path = RANKING_DIR / fname
     if not path.exists():
@@ -314,7 +325,7 @@ def load_raw_scores(config: str, instance: str) -> pd.Series | None:
 
 
 @st.cache_data(show_spinner=False)
-def load_ranking(problem: str, dim: int, t: int, include_svgd: bool = False) -> pd.DataFrame | None:
+def load_ranking(problem: str, dim: int, t: int, include_svgd=False) -> pd.DataFrame | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     p = RANKING_DIR / fname
     try:
@@ -1544,14 +1555,15 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         lb = float(cb["avg_l1"].iloc[-1]) if "avg_l1" in cb.columns else None
         m_inst = INSTANCE_RE.match(inst)
         prob, dim, t = m_inst.group("problem"), int(m_inst.group("dim")), int(m_inst.group("t"))
-        ra = _get_rank(prob, dim, t, sa)
-        rb = _get_rank(prob, dim, t, sb)
+        ra = _get_rank(prob, dim, t, sa, include_svgd=_common_rivals(cfg_a))   # classement commun (§5.1)
+        rb = _get_rank(prob, dim, t, sb, include_svgd=_common_rivals(cfg_b))
         summary_rows.append({
             "Instance":     inst,
             "_prob": prob, "_dim": dim, "_t": t,
             col_score_a:    round(sa, 4),
             col_score_b:    round(sb, 4),
             "Gap %":        round(gap, 2),
+            "_gap":         gap,
             col_hamming_a:  round(ha, 2) if ha is not None else None,
             col_hamming_b:  round(hb, 2) if hb is not None else None,
             "_l1_a":        round(la, 2) if la is not None else None,
@@ -1596,6 +1608,13 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 prob_gaps = [r["Gap %"] for r in summary_rows if r["_prob"] == prob]
                 if prob_gaps:
                     stat_rows.append((f"Gap {prob}", f"{sum(prob_gaps)/len(prob_gaps):+.2f}%", ""))
+            # Test global, même méthode que l'onglet Ablation (un seul test ici : pas de Holm)
+            g = _global_wilcoxon(r["_gap"] for r in summary_rows)
+            if g:
+                verdict = ((f"{label_a} meilleure" if g["median"] > 0 else f"{label_b} meilleure")
+                           if g["p"] < 0.05 else "pas de différence globale")
+                stat_rows.append((f"Wilcoxon global ({g['n']} classes)",
+                                  f"p = {g['p']:.2g} · écart médian {g['median']:+.2f}%", verdict))
 
             html_stats = '<table style="border-collapse:collapse;margin-bottom:16px;">'
             html_stats += (f'<thead><tr>'
@@ -1806,7 +1825,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 scores_a = load_raw_scores(cfg_a, instance)
                 scores_b = load_raw_scores(cfg_b, instance)
 
-                ranking = load_ranking(problem, dim, t) if show_top5 else None
+                ranking = load_ranking(problem, dim, t, include_svgd={"svgd-eda"}) if show_top5 else None
                 top5 = []
                 if ranking is not None:
                     for _, row in ranking.nlargest(5, "score").iterrows():
@@ -2847,16 +2866,52 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     st.plotly_chart(fig_e, use_container_width=True, key=f"fav_dbg_e_{sel_idx}")
 
 
-_RUNS_PER_INSTANCE = 10   # nb_restarts de main_expe_overall : raw_scores est rangé instance par instance
+_INSTANCES_PER_CLASS = 10   # nb_instances_test de main_expe_overall
 
 
 def _instance_means(scores: pd.Series | None) -> list[float]:
-    """Moyenne par instance de test (blocs consécutifs de _RUNS_PER_INSTANCE runs)."""
+    """Moyenne par instance de test. raw_scores est rangé instance par instance : 10 blocs
+    consécutifs de nb_restarts runs. nb_restarts vaut 10 en général, moins après un repli OOM
+    (ex. 80 scores = 8 restarts) : la taille des blocs se déduit donc du nombre de scores."""
     if scores is None:
         return []
     v = scores.to_numpy(dtype=float)
-    n = len(v) // _RUNS_PER_INSTANCE
-    return [float(v[i * _RUNS_PER_INSTANCE:(i + 1) * _RUNS_PER_INSTANCE].mean()) for i in range(n)]
+    if len(v) == 0 or len(v) % _INSTANCES_PER_CLASS:
+        return []   # fichier incomplet ou corrompu : pas d'appariement fiable
+    return v.reshape(_INSTANCES_PER_CLASS, -1).mean(axis=1).tolist()
+
+
+def _global_wilcoxon(gaps) -> dict | None:
+    """Test global : Wilcoxon signé sur les écarts relatifs (%) par classe, une paire par classe
+    (les 10 instances d'une classe ne sont pas indépendantes : pas de test sur 560 paires).
+    -> {n, median, p} ou None. Même méthode dans les onglets Ablation et Comparaison."""
+    from scipy.stats import wilcoxon
+    gaps = np.asarray(list(gaps), dtype=float)
+    if len(gaps) < 2:
+        return None
+    # Bilatéral : on teste « différent de la référence », le sens est donné par l'écart médian
+    p = 1.0 if np.allclose(gaps, 0) else float(wilcoxon(gaps, alternative="two-sided").pvalue)
+    return {"n": len(gaps), "median": float(np.median(gaps)), "p": p}
+
+
+def _ablation_global_tests(rows: list[dict], configs: list[str], ref: str) -> dict:
+    """Test global par variante : Wilcoxon signé sur les écarts relatifs (%) à la référence, un par
+    classe (les 10 instances d'une classe ne sont pas indépendantes : pas de test sur 560 paires),
+    puis correction de Holm sur l'ensemble des variantes. -> {cfg: {n, median, p, p_holm}}."""
+    out = {}
+    for cfg in configs:
+        if cfg == ref:
+            continue
+        g = _global_wilcoxon(r["gap"][cfg] for r in rows if cfg in r.get("gap", {}))
+        if g:
+            out[cfg] = g
+    # Holm : p triées croissantes, p_(i) * (m - i), puis maximum cumulé, borné à 1
+    order = sorted(out, key=lambda c: out[c]["p"])
+    m, running = len(order), 0.0
+    for i, cfg in enumerate(order):
+        running = max(running, min(1.0, (m - i) * out[cfg]["p"]))
+        out[cfg]["p_holm"] = running
+    return out
 
 
 def _paired_wilcoxon(a: list[float], b: list[float]) -> float | None:
@@ -2869,7 +2924,7 @@ def _paired_wilcoxon(a: list[float], b: list[float]) -> float | None:
         return 1.0
     try:
         from scipy.stats import wilcoxon
-        return float(wilcoxon(a[:n], b[:n]).pvalue)
+        return float(wilcoxon(a[:n], b[:n], alternative="two-sided").pvalue)
     except Exception:
         return None
 
@@ -3381,11 +3436,13 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
     st.divider()
     st.markdown("#### 📊 Résumé")
     n_ok = len(rows)
+    glob = _ablation_global_tests(rows, configs, ref)
     mcols = st.columns(len(configs))
     for col, cfg in zip(mcols, configs):
         wins  = sum(1 for r in rows if r["rank"].get(cfg) == 1)
         rks   = [r["rank"][cfg] for r in rows if cfg in r["rank"]]
-        grk   = [_get_rank(r["prob"], r["dim"], r["t"], r["score"][cfg]) for r in rows if cfg in r["score"]]
+        grk   = [_get_rank(r["prob"], r["dim"], r["t"], r["score"][cfg], include_svgd=_common_rivals(cfg))
+                 for r in rows if cfg in r["score"]]
         grk   = [g for g in grk if g is not None]
         with col.container(border=True):
             st.markdown(f"**{short[cfg]} — {_lbl(cfg)}**" + (" · réf." if cfg == ref else ""))
@@ -3398,6 +3455,11 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 worse  = sum(1 for r in rows if r["p"].get(cfg) is not None and r["p"][cfg] < 0.05
                              and r["gap"].get(cfg, 0) < 0)
                 st.caption(f"vs réf. (Wilcoxon p<0.05) : ▲ {better} · ▼ {worse}")
+                g = glob.get(cfg)
+                if g:
+                    arrow = ("▲" if g["median"] > 0 else "▼") if g["p_holm"] < 0.05 else "="
+                    st.caption(f"Global ({g['n']} classes, Holm) : {arrow} p = {g['p_holm']:.2g} · "
+                               f"écart médian {g['median']:+.2f} %")
 
     # Écart moyen à la référence par famille × dimension
     st.markdown(f"##### Écart moyen à la référence ({_lbl(ref)}) par famille et dimension")
