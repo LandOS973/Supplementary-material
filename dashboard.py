@@ -19,18 +19,10 @@ RANKING_DIR = ROOT / "additional_results" / "global_ranking"
 BEAST_DIR = ROOT / "results" / "the beast"
 
 INSTANCE_RE = re.compile(r"^(?P<problem>QUBO|NK|NK3)_dim(?P<dim>\d+)_t(?P<t>\d+)$")
-# Nos deux méthodes de référence (configs par défaut), présentes dans les fichiers de rang :
-# écartées quand on classe nos configs sur le pool seul (cache, Classement, Sensi qui remet la méthode
-# adverse lui-même), gardées dans l'onglet Favoris = classement commun du papier (§5.1).
-REFERENCE_ALGOS = {"svgd-eda", "se-svgd-eda"}
-SVGD_EDA_CONFIG = "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01"   # config PPSN
-SKIP_ALGOS = {"ppo-eda", "tabu"} | REFERENCE_ALGOS
-def _skip_algos(include_svgd) -> set[str]:
-    """include_svgd : False (pool seul), True (les deux méthodes), ou l'ensemble des méthodes
-    de référence à garder (ex. {"svgd-eda"} pour l'onglet Ablation)."""
-    if include_svgd is True:
-        return SKIP_ALGOS - REFERENCE_ALGOS
-    return SKIP_ALGOS - set(include_svgd or ())
+# Partout dans le dashboard, chaque config SVGD est classée seule contre un pool FIXE de concurrents
+# externes (82, 80 sur NK3) : aucune méthode SVGD ni variante dans le pool. Nos deux méthodes de
+# référence figurent dans les fichiers de rang (tableaux du papier) : on les écarte ici.
+SKIP_ALGOS = {"ppo-eda", "tabu", "svgd-eda", "se-svgd-eda"}
 
 # Ordre important : les préfixes les plus spécifiques d'abord (le 1er match gagne).
 # "kt" (seuil KL TRPO) doit passer avant "k" (kernel), sinon "kt0p01" écrase le kernel.
@@ -58,18 +50,7 @@ COLORS = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 
-CURVE_PARAMS = [
-    ("ppo_epochs",        "ppo_epochs"),
-    ("clip_eps",          "clip_eps"),
-    ("epsilon_svgd",      "epsilon_svgd"),
-    ("gamma",             "gamma"),
-    ("M",                 "M"),
-    ("lambda",            "lambda"),
-    ("kernel",            "kernel"),
-    ("advantage",         "advantage"),
-    ("decay_start_ratio", "decay_start_ratio"),
-    ("decay_min_factor",  "decay_min_factor"),
-]
+
 
 
 def _deslug(s: str) -> float:
@@ -95,20 +76,14 @@ def _norm(series: pd.Series) -> pd.Series:
     return series.abs()
 
 
-def _common_rivals(cfg: str) -> set[str]:
-    """Classement commun du papier (§5.1) : toute config est classée contre le pool + SVGD-EDA (elle prend
-    la place de SE-SVGD-EDA) ; la config SVGD-EDA elle-même (PPSN) affronte SE-SVGD-EDA."""
-    return {"se-svgd-eda"} if cfg == SVGD_EDA_CONFIG else {"svgd-eda"}
-
-
-def _get_rank(problem: str, dim: int, t: int, score: float, include_svgd=False) -> int | None:
+def _get_rank(problem: str, dim: int, t: int, score: float) -> int | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     path = RANKING_DIR / fname
     if not path.exists():
         return None
     try:
         df = pd.read_csv(path)
-        df = df[~df["name_algo"].str.lower().isin(_skip_algos(include_svgd))]
+        df = df[~df["name_algo"].str.lower().isin(SKIP_ALGOS)]
         return int(1 + (df["score"] > score).sum())
     except Exception:
         return None
@@ -121,6 +96,7 @@ INSTANCES_FILE   = DASHBOARD_DIR / "instances.parquet"
 COMPARISONS_FILE = DASHBOARD_DIR / "comparisons.json"
 FAVORITES_FILE   = DASHBOARD_DIR / "favorites.json"
 ABLATIONS_FILE   = DASHBOARD_DIR / "ablations.json"
+SENSI_FILE       = DASHBOARD_DIR / "sensi.json"   # méthodes, noms et paramètre de l'onglet Sensi
 
 # Migrate old files from previous locations
 _old_cache = RESULTS_DIR / ".dashboard_cache.parquet"
@@ -325,14 +301,14 @@ def load_raw_scores(config: str, instance: str) -> pd.Series | None:
 
 
 @st.cache_data(show_spinner=False)
-def load_ranking(problem: str, dim: int, t: int, include_svgd=False) -> pd.DataFrame | None:
+def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     p = RANKING_DIR / fname
     try:
         df = pd.read_csv(p) if p.exists() else None
         if df is None:
             return None
-        return df[~df["name_algo"].str.lower().isin(_skip_algos(include_svgd))]
+        return df[~df["name_algo"].str.lower().isin(SKIP_ALGOS)]
     except Exception:
         return None
 
@@ -562,6 +538,17 @@ def load_ablations() -> list[dict]:
         except Exception:
             return []
     return []
+
+
+def load_sensi() -> dict:
+    try:
+        return json.loads(SENSI_FILE.read_text()) if SENSI_FILE.exists() else {}
+    except Exception:
+        return {}
+
+
+def save_sensi(state: dict) -> None:
+    SENSI_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
 
 
 def save_ablations(abls: list[dict]) -> None:
@@ -837,77 +824,6 @@ def _diff_labels(cfg_a: str, cfg_b: str) -> tuple[str, str]:
     return _label(pa), _label(pb)
 
 
-def _vs_top5_figure(sel_cfg: str, instance: str, label: str,
-                    problem: str, dim: int, t: int) -> go.Figure | None:
-    """Combined curve (top) + boxplot (bottom) figure vs global top 5."""
-    curve  = load_curve(sel_cfg, instance)
-    scores = load_raw_scores(sel_cfg, instance)
-    if curve is None and scores is None:
-        return None
-
-    ranking = load_ranking(problem, dim, t)
-    top5 = []
-    if ranking is not None:
-        for _, row in ranking.nlargest(5, "score").iterrows():
-            top5.append((row["name_algo"], float(row["score"])))
-
-    has_box = scores is not None
-    n_rows  = 2 if (curve is not None and has_box) else 1
-    titles  = []
-    if curve is not None:
-        titles.append("Convergence")
-    if has_box:
-        titles.append("Distribution finale")
-
-    fig = make_subplots(
-        rows=n_rows, cols=1,
-        subplot_titles=titles,
-        row_heights=[0.6, 0.4] if n_rows == 2 else [1.0],
-        vertical_spacing=0.12,
-    )
-    curve_row = 1
-    box_row   = 2 if (curve is not None and has_box) else 1
-
-    # ── Curve panel ──────────────────────────────────────────────────────────
-    if curve is not None:
-        fig.add_trace(go.Scatter(
-            x=curve["step"], y=_norm(curve["best_fitness"]),
-            name=label, line=dict(color=COLORS[0], width=3), mode="lines",
-        ), row=curve_row, col=1)
-        for j, (algo, score) in enumerate(top5):
-            color = COLORS[(j + 1) % len(COLORS)]
-            fig.add_trace(go.Scatter(
-                x=[curve["step"].iloc[0], curve["step"].iloc[-1]],
-                y=[score, score],
-                name=algo, mode="lines",
-                line=dict(dash="dash", color=color, width=1.5),
-            ), row=curve_row, col=1)
-        fig.update_xaxes(title_text="Évaluations", row=curve_row, col=1)
-        fig.update_yaxes(title_text="Score",        row=curve_row, col=1)
-
-    # ── Boxplot panel ─────────────────────────────────────────────────────────
-    if has_box:
-        fig.add_trace(go.Box(
-            y=scores, name=label,
-            marker_color=COLORS[0], boxpoints="outliers", showlegend=False,
-        ), row=box_row, col=1)
-        for j, (algo, score) in enumerate(top5):
-            color = COLORS[(j + 1) % len(COLORS)]
-            fig.add_hline(
-                y=score, row=box_row, col=1,
-                line=dict(dash="dash", color=color, width=1.5),
-                annotation_text=algo, annotation_position="bottom right",
-            )
-        fig.update_yaxes(title_text="Score final", row=box_row, col=1)
-
-    fig.update_layout(
-        height=720 if n_rows == 2 else 440,
-        margin=dict(r=140, t=40, b=10),
-        legend=dict(orientation="v", x=1.02, y=1),
-    )
-    return fig
-
-
 # ── Tab fragments ─────────────────────────────────────────────────────────────
 # Each tab is a @st.fragment: interacting with its widgets re-runs only that
 # function, not the full script — other tabs are unaffected.
@@ -1000,401 +916,6 @@ def tab_classement(filtered: pd.DataFrame) -> None:
     sel_rows = event.selection.rows if event and hasattr(event, "selection") else []
     if sel_rows and "config" in display_reset.columns:
         st.code(display_reset["config"].iloc[sel_rows[0]], language=None)
-
-
-@st.fragment
-def tab_courbes(filtered: pd.DataFrame, sorted_instances: list) -> None:
-    # Reset in-tab widgets when the parent filtered set changes
-    sig = tuple(filtered["config"].tolist())
-    if st.session_state.get("_curve_sig") != sig:
-        st.session_state["_curve_sig"] = sig
-        for _, col in CURVE_PARAMS:
-            st.session_state.pop(f"curve_{col}", None)
-        st.session_state.pop("curve_inst", None)
-        st.session_state.pop("curve_vs_inst", None)
-
-    mode = st.radio("Mode", ["Multi-config", "vs Top 5"], horizontal=True, key="curve_mode")
-
-    # ── Mode vs Top 5 ──────────────────────────────────────────────────────────
-    if mode == "vs Top 5":
-        cfg_list = filtered["config"].tolist()
-        if not cfg_list:
-            st.info("Aucune config disponible.")
-            return
-
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            labels = [_config_label(filtered[filtered["config"] == c].iloc[0]) for c in cfg_list]
-            sel_idx = st.selectbox(
-                "Config", range(len(cfg_list)),
-                format_func=lambda i: labels[i],
-                key="curve_vs_idx",
-            )
-            sel_cfg = cfg_list[sel_idx]
-        with c2:
-            vs_inst = st.selectbox("Instance", sorted_instances, key="curve_vs_inst")
-
-        if not vs_inst:
-            return
-        m = INSTANCE_RE.match(vs_inst)
-        problem, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
-
-        fig = _vs_top5_figure(sel_cfg, vs_inst, labels[sel_idx], problem, dim, t)
-        if fig is None:
-            st.warning("Pas de données pour cette config / cette instance.")
-        else:
-            st.plotly_chart(fig, use_container_width=True)
-        return
-
-    # ── Mode Multi-config ──────────────────────────────────────────────────────
-    st.markdown("##### Filtres configs")
-    filter_cols = st.columns(5)
-    curve_mask = pd.Series(True, index=filtered.index)
-    active_filters: dict[str, list] = {}
-
-    for idx, (label, col) in enumerate(CURVE_PARAMS):
-        if col not in filtered.columns:
-            continue
-        vals = sorted(filtered[col].dropna().unique().tolist())
-        if len(vals) <= 1:
-            continue
-        with filter_cols[idx % 5]:
-            sel = st.multiselect(label, vals, default=vals, key=f"curve_{col}")
-        if not sel:
-            sel = vals
-        curve_mask &= filtered[col].isin(sel) | filtered[col].isna()
-        active_filters[col] = sel
-
-    curve_filtered = filtered[curve_mask]
-    sel_configs = curve_filtered["config"].tolist()
-    st.caption(f"{len(sel_configs)} configs sélectionnées")
-
-    varying = [col for col, sel in active_filters.items() if len(sel) > 1 and col in filtered.columns]
-
-    def curve_label(cfg_row: pd.Series) -> str:
-        if not varying:
-            return cfg_row["config"][-50:]
-        return "  ".join(f"{p}={cfg_row[p]}" for p in varying if pd.notna(cfg_row.get(p)))
-
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        instance = st.selectbox("Instance", sorted_instances, key="curve_inst")
-    with c2:
-        show_top5 = st.checkbox("Top 5 classement global", value=True)
-
-    if sel_configs and instance:
-        m = INSTANCE_RE.match(instance)
-        problem, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
-
-        fig = go.Figure()
-        for i, cfg in enumerate(sel_configs):
-            curve = load_curve(cfg, instance)
-            if curve is None:
-                continue
-            row = curve_filtered[curve_filtered["config"] == cfg].iloc[0]
-            label = curve_label(row)
-            fig.add_trace(go.Scatter(
-                x=curve["step"],
-                y=_norm(curve["best_fitness"]),
-                name=label,
-                line=dict(color=COLORS[i % len(COLORS)], width=2),
-                mode="lines",
-            ))
-
-        if show_top5:
-            ranking = load_ranking(problem, dim, t)
-            if ranking is not None:
-                for _, row in ranking.nlargest(5, "score").iterrows():
-                    fig.add_hline(
-                        y=row["score"],
-                        line=dict(dash="dash", color="gray", width=1),
-                        annotation_text=row["name_algo"],
-                        annotation_position="bottom right",
-                    )
-
-        fig.update_layout(
-            xaxis_title="Évaluations",
-            yaxis_title="Score",
-            legend=dict(orientation="h", yanchor="top", y=-0.15),
-            height=520,
-            margin=dict(r=20, t=20),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-
-@st.fragment
-def tab_boxplots(filtered: pd.DataFrame, sorted_instances: list) -> None:
-    # Reset in-tab widgets when the parent filtered set changes
-    sig = tuple(filtered["config"].tolist())
-    if st.session_state.get("_box_sig") != sig:
-        st.session_state["_box_sig"] = sig
-        for _, col in CURVE_PARAMS:
-            st.session_state.pop(f"box_{col}", None)
-        st.session_state.pop("box_inst", None)
-        st.session_state.pop("box_vs_inst", None)
-
-    mode = st.radio("Mode", ["Multi-config", "vs Top 5"], horizontal=True, key="box_mode")
-
-    # ── Mode vs Top 5 ──────────────────────────────────────────────────────────
-    if mode == "vs Top 5":
-        cfg_list = filtered["config"].tolist()
-        if not cfg_list:
-            st.info("Aucune config disponible.")
-            return
-
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            labels = [_config_label(filtered[filtered["config"] == c].iloc[0]) for c in cfg_list]
-            sel_idx = st.selectbox(
-                "Config", range(len(cfg_list)),
-                format_func=lambda i: labels[i],
-                key="box_vs_idx",
-            )
-            sel_cfg = cfg_list[sel_idx]
-        with c2:
-            vs_inst = st.selectbox("Instance", sorted_instances, key="box_vs_inst")
-
-        if not vs_inst:
-            return
-        m = INSTANCE_RE.match(vs_inst)
-        problem, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
-
-        fig = _vs_top5_figure(sel_cfg, vs_inst, labels[sel_idx], problem, dim, t)
-        if fig is None:
-            st.warning("Pas de données pour cette config / cette instance.")
-        else:
-            st.plotly_chart(fig, use_container_width=True)
-        return
-
-    # ── Mode Multi-config ──────────────────────────────────────────────────────
-    st.markdown("##### Filtres configs")
-    box_filter_cols = st.columns(5)
-    box_mask = pd.Series(True, index=filtered.index)
-    box_active: dict[str, list] = {}
-
-    for idx, (label, col) in enumerate(CURVE_PARAMS):
-        if col not in filtered.columns:
-            continue
-        vals = sorted(filtered[col].dropna().unique().tolist())
-        if len(vals) <= 1:
-            continue
-        with box_filter_cols[idx % 5]:
-            sel = st.multiselect(label, vals, default=vals, key=f"box_{col}")
-        if not sel:
-            sel = vals
-        box_mask &= filtered[col].isin(sel) | filtered[col].isna()
-        box_active[col] = sel
-
-    box_filtered = filtered[box_mask]
-    box_configs = box_filtered["config"].tolist()
-    box_varying = [col for col, sel in box_active.items() if len(sel) > 1 and col in filtered.columns]
-
-    def box_label(cfg_row: pd.Series) -> str:
-        if not box_varying:
-            return cfg_row["config"][-40:]
-        return "  ".join(f"{p}={cfg_row[p]}" for p in box_varying if pd.notna(cfg_row.get(p)))
-
-    box_instance = st.selectbox("Instance", sorted_instances, key="box_inst")
-
-    if box_configs and box_instance:
-        # Only show configs that have raw_scores.csv for this instance
-        available = [cfg for cfg in box_configs
-                     if (RESULTS_DIR / cfg / box_instance / "raw_scores.csv").exists()]
-        st.caption(f"{len(available)}/{len(box_configs)} configs ont des scores bruts pour cette instance")
-
-        if not available:
-            st.warning("Aucun fichier `raw_scores.csv` pour ces configs / cette instance.")
-        else:
-            fig = go.Figure()
-            for i, cfg in enumerate(available):
-                scores = load_raw_scores(cfg, box_instance)
-                if scores is None:
-                    continue
-                row = box_filtered[box_filtered["config"] == cfg].iloc[0]
-                label = box_label(row)
-                fig.add_trace(go.Box(
-                    y=scores,
-                    name=label,
-                    marker_color=COLORS[i % len(COLORS)],
-                    boxpoints="outliers",
-                ))
-            fig.update_layout(
-                yaxis_title="Score final",
-                height=520,
-                showlegend=False,
-                margin=dict(t=20),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-
-@st.fragment
-def tab_analyse(filtered: pd.DataFrame) -> None:
-    # ── Selectors ─────────────────────────────────────────────────────────────
-    sc1, sc2, sc3 = st.columns([2, 1, 3])
-    with sc1:
-        problem_sel = st.radio(
-            "Problème", ["Tous", "NK", "NK3", "QUBO"],
-            horizontal=True, key="analyse_problem",
-        )
-
-    # Load per-instance data for size filtering
-    inst_all = pd.DataFrame()
-    if INSTANCES_FILE.exists():
-        try:
-            inst_all = pd.read_parquet(INSTANCES_FILE)
-            inst_all = inst_all[inst_all["config"].isin(filtered["config"])]
-        except Exception:
-            pass
-
-    if not inst_all.empty:
-        if problem_sel != "Tous":
-            inst_prob = inst_all[inst_all["problem"] == problem_sel]
-        else:
-            inst_prob = inst_all
-        avail_dims = sorted(inst_prob["dim"].unique().tolist())
-    else:
-        inst_prob = pd.DataFrame()
-        avail_dims = []
-
-    with sc2:
-        dim_sel = st.selectbox(
-            "Taille",
-            ["Toutes"] + [str(d) for d in avail_dims],
-            key="analyse_dim",
-        )
-
-    rank_col    = {"Tous": "mean_rank",      "NK": "mean_rank_NK",      "NK3": "mean_rank_NK3",      "QUBO": "mean_rank_QUBO"}[problem_sel]
-    top1_col    = {"Tous": "top1",           "NK": "top1_NK",           "NK3": "top1_NK3",           "QUBO": "top1_QUBO"}[problem_sel]
-    hamming_col = {"Tous": "mean_hamming",   "NK": "mean_hamming_NK",   "NK3": "mean_hamming_NK3",   "QUBO": "mean_hamming_QUBO"}[problem_sel]
-
-    analyse_df = filtered.dropna(subset=[rank_col])
-    available = [(lbl, col) for lbl, col in CURVE_PARAMS
-                 if col in analyse_df.columns and analyse_df[col].nunique() > 1]
-
-    if not available:
-        st.info("Pas assez de variabilité dans les configs filtrées pour une analyse.")
-        return
-
-    with sc3:
-        param_sel = st.selectbox(
-            "Paramètre à analyser",
-            [lbl for lbl, _ in available],
-            key="analyse_param",
-        )
-
-    param_col = next(col for lbl, col in available if lbl == param_sel)
-
-    # ── Aggregation ───────────────────────────────────────────────────────────
-    use_inst = dim_sel != "Toutes" and not inst_prob.empty
-
-    if use_inst:
-        # Per-instance aggregation filtered by size
-        inst_filtered = inst_prob[inst_prob["dim"] == int(dim_sel)]
-        inst_joined = inst_filtered.merge(
-            filtered[["config", param_col]].drop_duplicates(), on="config"
-        )
-        agg_dict: dict = {
-            "rank_moy": ("rank", "mean"),
-            "top1_moy": ("rank", lambda x: int((x == 1).sum())),
-            "n":        ("config", "nunique"),
-        }
-        has_hamming = "hamming" in inst_joined.columns and inst_joined["hamming"].notna().any()
-        if has_hamming:
-            agg_dict["hamming_moy"] = ("hamming", "mean")
-        grp = (
-            inst_joined.groupby(param_col)
-            .agg(**agg_dict)
-            .round(2)
-            .reset_index()
-            .sort_values("rank_moy")
-        )
-    else:
-        agg_dict = {
-            "rank_moy": (rank_col, "mean"),
-            "top1_moy": (top1_col, "mean"),
-            "n":        ("config", "count"),
-        }
-        has_hamming = hamming_col in analyse_df.columns and analyse_df[hamming_col].notna().any()
-        if has_hamming:
-            agg_dict["hamming_moy"] = (hamming_col, "mean")
-        grp = (
-            analyse_df.groupby(param_col)
-            .agg(**agg_dict)
-            .round(2)
-            .reset_index()
-            .sort_values("rank_moy")
-        )
-
-    x = grp[param_col].astype(str)
-    bar_colors = [COLORS[i % len(COLORS)] for i in range(len(grp))]
-
-    # ── Charts ────────────────────────────────────────────────────────────────
-    chart_specs = [
-        ("rank_moy",  "Rank moyen"),
-        ("top1_moy",  "Top 1 moyen"),
-    ]
-    if has_hamming:
-        chart_specs.append(("hamming_moy", "Hamming moyen"))
-
-    n_charts = len(chart_specs)
-    tick_angle = -35 if len(grp) > 4 else 0
-
-    fig = make_subplots(
-        rows=1, cols=n_charts,
-        subplot_titles=[t for _, t in chart_specs],
-        horizontal_spacing=0.10,
-    )
-    for ci, (y_col, y_title) in enumerate(chart_specs, 1):
-        vals = grp[y_col].tolist()
-        fig.add_trace(go.Bar(
-            x=x,
-            y=vals,
-            text=[f"{v:.2f}" for v in vals],
-            textposition="outside",
-            textfont=dict(size=11, color="#444"),
-            marker=dict(color=bar_colors, opacity=0.85, line=dict(width=0)),
-            hovertemplate="%{x}<br><b>" + y_title + "</b>: %{y:.3f}<extra></extra>",
-            showlegend=False,
-        ), row=1, col=ci)
-        fig.update_yaxes(
-            title_text=y_title, row=1, col=ci,
-            gridcolor="#ebebeb", showgrid=True, zeroline=False,
-            title_font=dict(size=12, color="#555"),
-        )
-        fig.update_xaxes(
-            tickangle=tick_angle, row=1, col=ci,
-            showgrid=False, tickfont=dict(size=11),
-        )
-
-    fig.update_layout(
-        height=480,
-        margin=dict(t=60, b=10, l=10, r=10),
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        font=dict(family="sans-serif", size=12),
-        bargap=0.32,
-    )
-    for ann in fig.layout.annotations:
-        ann.update(font=dict(size=14, color="#333", family="sans-serif"), y=ann.y + 0.02)
-
-    st.plotly_chart(fig, use_container_width=True, key="analyse_fig")
-
-    # ── Summary table ─────────────────────────────────────────────────────────
-    st.divider()
-    rename_map = {param_col: param_sel, "rank_moy": "Rank moy", "top1_moy": "Top 1 moy", "n": "N configs"}
-    if has_hamming:
-        rename_map["hamming_moy"] = "Hamming moy"
-    col_cfg: dict = {
-        "Rank moy":    st.column_config.NumberColumn("Rank moy",    format="%.2f"),
-        "Top 1 moy":   st.column_config.NumberColumn("Top 1 moy",   format="%.2f"),
-        "Hamming moy": st.column_config.NumberColumn("Hamming moy", format="%.2f"),
-    }
-    st.dataframe(
-        grp.rename(columns=rename_map),
-        use_container_width=True,
-        hide_index=True,
-        column_config=col_cfg,
-    )
 
 
 @st.fragment
@@ -1555,8 +1076,8 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         lb = float(cb["avg_l1"].iloc[-1]) if "avg_l1" in cb.columns else None
         m_inst = INSTANCE_RE.match(inst)
         prob, dim, t = m_inst.group("problem"), int(m_inst.group("dim")), int(m_inst.group("t"))
-        ra = _get_rank(prob, dim, t, sa, include_svgd=_common_rivals(cfg_a))   # classement commun (§5.1)
-        rb = _get_rank(prob, dim, t, sb, include_svgd=_common_rivals(cfg_b))
+        ra = _get_rank(prob, dim, t, sa)
+        rb = _get_rank(prob, dim, t, sb)
         summary_rows.append({
             "Instance":     inst,
             "_prob": prob, "_dim": dim, "_t": t,
@@ -1825,7 +1346,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 scores_a = load_raw_scores(cfg_a, instance)
                 scores_b = load_raw_scores(cfg_b, instance)
 
-                ranking = load_ranking(problem, dim, t, include_svgd={"svgd-eda"}) if show_top5 else None
+                ranking = load_ranking(problem, dim, t) if show_top5 else None
                 top5 = []
                 if ranking is not None:
                     for _, row in ranking.nlargest(5, "score").iterrows():
@@ -2080,7 +1601,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             curve = load_curve(cfg, inst)
             if curve is not None:
                 score = abs(float(curve["best_fitness"].iloc[-1]))
-                rank  = _get_rank(prob, dim, t, score, include_svgd=True)
+                rank  = _get_rank(prob, dim, t, score)
                 row[f"Score {short}"] = round(score, 4)
                 row[f"Rang {short}"]  = rank
                 ham = float(curve["avg_hamming"].iloc[-1]) if "avg_hamming" in curve.columns else None
@@ -2386,8 +1907,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
         with _pl:
             _rm = INSTANCE_RE.match(instance)
-            _rk_df = load_ranking(_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")),
-                                  include_svgd=True)
+            _rk_args = (_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")))
+            _rk_df = load_ranking(*_rk_args)
             if _rk_df is None or _rk_df.empty:
                 st.caption("Pas de classement pour cette instance.")
             else:
@@ -2413,7 +1934,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 comp_curves: dict = {}   # algo -> (x, y)
                 comp_boxes:  dict = {}   # algo -> stats dict
                 if fav_top5:
-                    ranking = load_ranking(prob, dim, t, include_svgd=True)
+                    ranking = load_ranking(prob, dim, t)
                     if ranking is not None:
                         for _, rk in ranking.nlargest(5, "score").iterrows():
                             algo = rk["name_algo"]
@@ -2931,10 +2452,12 @@ def _paired_wilcoxon(a: list[float], b: list[float]) -> float | None:
 
 # Paramètres balayables dans l'onglet Sensi (ordre d'affichage, clés de parse_config_name)
 SENSI_PARAMS = list(dict.fromkeys(key for _, key, _ in PARSERS))
-SENSI_DEFAULTS = (
-    "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01",
-    "krbf__advperagentrankweighted__M7__L13__eps0p06__g0p01__ds1__dm0p01__ppokl__pe6__b0p1",
+SENSI_DEFAULTS = (   # (config, nom) proposés par défaut pour les méthodes 1, 2, 3
+    ("krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01", "PPSN"),
+    ("krbf__advperagentrankweighted__M7__L13__eps0p06__g0p01__ds1__dm0p01__ppokl__pe6__b0p1", "EvoCOP"),
+    ("krbf__advperagentrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01", "PPSN + rang/agent"),
 )
+SENSI_MAX_METHODS = 6
 
 
 def _sensi_variants(ref_cfg: str, param: str, all_configs: list[str]) -> dict:
@@ -2952,9 +2475,9 @@ def _sensi_variants(ref_cfg: str, param: str, all_configs: list[str]) -> dict:
 
 
 # Slots 1-2 de la palette catégorielle de référence (validée CVD)
-SENSI_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+SENSI_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
 # Forme de marqueur par méthode : l'identité ne repose pas que sur la couleur (impression N&B, daltonisme)
-SENSI_SYMBOLS = ["circle", "square", "diamond", "triangle-up"]
+SENSI_SYMBOLS = ["circle", "square", "diamond", "triangle-up", "cross", "star"]
 # Export PDF : même ratio que dans le dashboard (≈ 1060×640 px en demi-largeur, ratio 1,66) et
 # mêmes tailles en px. 880×530 px -> page 660×398 pt ; avec \includegraphics[width=12cm] l'échelle
 # est 0,52 : texte export 26 px -> ≈ 10 pt. Marges nulles (automargin garde graduations et titres)
@@ -2968,6 +2491,12 @@ SENSI_PDF_FONT = "Latin Modern Roman"   # police LaTeX/LNCS ; un seul nom : une 
 def _hex_rgba(hex_color: str, alpha: float) -> str:
     h = hex_color.lstrip("#")
     return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def _default_label_y(n_methods: int) -> float:
+    """Hauteur (repère papier) de l'étiquette « default » : tout en haut avec 2 méthodes ; sous la
+    légende au-delà, quand la légende horizontale s'étend jusqu'au-dessus de la bande grise."""
+    return 0.995 if n_methods <= 2 else 0.88
 
 
 def _sensi_caption(inst: str) -> str:
@@ -3013,7 +2542,7 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
         fig.add_vrect(x0=k - 0.5, x1=k + 0.5, fillcolor="rgba(128,128,128,0.13)", line_width=0,
                       layer="below")
         # En haut de la bande, dans la marge réservée en haut de l'axe y (au-dessus des courbes)
-        fig.add_annotation(x=rv, y=0.995, yref="paper", yanchor="top", text="default", showarrow=False,
+        fig.add_annotation(x=rv, y=_default_label_y(len(stats)), yref="paper", yanchor="top", text="default", showarrow=False,
                            font=dict(size=22 if export else 19, color="rgba(110,110,110,1)"))
 
     fs = 26 if export else 22   # export : ≈ 10 pt une fois inclus à 12 cm
@@ -3040,7 +2569,7 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
         yaxis=dict(title=dict(text="Final score", standoff=8), automargin=True, showgrid=True,
                    gridcolor="rgba(128,128,128,0.2)", zeroline=False, showline=False,
                    tickformat=".2f" if y_max < 10 else "~s", tickfont=dict(size=fs - 1),
-                   range=[y_lo - 0.04 * pad, y_hi + 0.2 * pad]),
+                   range=[y_lo - 0.04 * pad, y_hi + (0.2 if len(stats) <= 2 else 0.32) * pad]),
         # Légende dans la zone de tracé, en haut à droite (les courbes y sont basses : grands m)
         legend=dict(orientation="h", y=0.99, yanchor="top", x=0.99, xanchor="right",
                     bgcolor="rgba(255,255,255,0.75)" if not dark or export else "rgba(14,17,23,0.75)",
@@ -3076,7 +2605,7 @@ def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals
     for rv in ref_vals & set(cats):
         k = cats.index(rv)
         fig.add_vrect(x0=k - 0.5, x1=k + 0.5, fillcolor="rgba(128,128,128,0.13)", line_width=0, layer="below")
-        fig.add_annotation(x=rv, y=0.995, yref="paper", yanchor="top", text="default", showarrow=False,
+        fig.add_annotation(x=rv, y=_default_label_y(len(labels)), yref="paper", yanchor="top", text="default", showarrow=False,
                            font=dict(size=22 if export else 19, color="rgba(110,110,110,1)"))
     y_hi = float(np.nanmax(df[[f"{l} · rang moy" for l in labels if f"{l} · rang moy" in df]].to_numpy()))
     step = 2 if len(cats) > 15 else 1
@@ -3119,22 +2648,8 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
     scope = st.radio("Périmètre du récap", ["Tout", "QUBO", "NK", "NK3"], horizontal=True,
                      key="sensi_scope")
     key = ["problem", "dim", "t"]
-    # Classement commun (§5.2) : à chaque valeur du paramètre, les deux méthodes sont classées
-    # ensemble contre le pool (chacune a l'autre, à la même valeur, pour concurrent). Rang du cache =
-    # pool seul, +1 si l'autre méthode fait strictement mieux. À la valeur par défaut = rangs du §5.1.
-    inst = inst[inst["config"].isin({c for _, variants in series for c in variants.values()})].copy()
-    if len(series) == 2:
-        by_cfg = {c: g.set_index(key)["score"] for c, g in inst.groupby("config")}
-        for i, (_, variants) in enumerate(series):
-            other_variants = series[1 - i][1]
-            for v, cfg in variants.items():
-                other = by_cfg.get(other_variants.get(v))
-                if other is None:   # pas de variante adverse à cette valeur : pool seul
-                    continue
-                mine = inst["config"] == cfg
-                idx = pd.MultiIndex.from_frame(inst.loc[mine, key])
-                beats = other.reindex(idx).to_numpy() > inst.loc[mine, "score"].to_numpy()
-                inst.loc[mine, "rank"] = inst.loc[mine, "rank"] + beats.astype(int)
+    # Rang du cache : chaque variante seule contre le pool fixe de concurrents externes
+    inst = inst[inst["config"].isin({c for _, variants in series for c in variants.values()})]
     if scope != "Tout":
         inst = inst[inst["problem"] == scope]
     vals = sorted({v for _, variants in series for v in variants})
@@ -3148,15 +2663,18 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
             row[f"{label} · rang moy"] = round(float(sub["rank"].mean()), 1) if len(sub) else None
             row[f"{label} · top 1"] = int((sub["rank"] == 1).sum()) if len(sub) else None
             row[f"{label} · top 3"] = int((sub["rank"] <= 3).sum()) if len(sub) else None
-        if len(series) == 2 and len(per[0]) and len(per[1]):
-            a, b = per[0].align(per[1], join="inner")
-            row[f"{series[1][0]} > {series[0][0]}"] = f"{int((b > a).sum())}/{len(a)}"
-            # Écart de score moyen B vs A par famille (en %, > 0 : B meilleur)
+        # Duel et écart par famille de chaque méthode vs la première (référence ; > 0 : meilleure)
+        for j in range(1, len(series)):
+            if not (len(per[0]) and len(per[j])):
+                continue
+            a, b = per[0].align(per[j], join="inner")
+            sfx = "" if len(series) == 2 else f" ({series[j][0]})"
+            row[f"{series[j][0]} > {series[0][0]}"] = f"{int((b > a).sum())}/{len(a)}"
             gap = (b / a - 1) * 100
             fams = gap.index.get_level_values("problem")
             for fam in ("QUBO", "NK", "NK3"):
                 if (fams == fam).any():
-                    row[f"Δ {fam} %"] = float(gap[fams == fam].mean())
+                    row[f"Δ {fam} %{sfx}"] = float(gap[fams == fam].mean())
         rows.append(row)
     df = pd.DataFrame(rows)
 
@@ -3197,10 +2715,10 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
         hide_index=True, use_container_width=True,
         height=640,
     )
-    gap_txt = (f" Δ famille % : écart de score moyen de {series[1][0]} par rapport à {series[0][0]} "
-               f"(> 0 : {series[1][0]} meilleur)." if len(series) == 2 else "")
-    right.caption("Rang dans le classement commun : pool + l'autre méthode à la même valeur du paramètre "
-                  "(83 concurrents, 81 sur NK3 ; 1 = meilleur). En gras : meilleure valeur de chaque colonne ; "
+    gap_txt = (f" Δ famille % : écart de score moyen de chaque méthode par rapport à {series[0][0]} "
+               f"(> 0 : meilleure que {series[0][0]}).")
+    right.caption("Rang contre le pool fixe de concurrents externes (82, 80 sur NK3 ; aucune méthode SVGD ; "
+                  "1 = meilleur). En gras : meilleure valeur de chaque colonne ; "
                "ligne grisée : valeur par défaut." + gap_txt)
     rank_name = f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf"
     return rank_name, lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True)
@@ -3208,23 +2726,44 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
 
 @st.fragment
 def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
-    """Sensibilité à un paramètre : deux configs de référence et toutes leurs variantes."""
+    """Sensibilité à un paramètre : N configs de référence (méthodes) et toutes leurs variantes.
+    La première méthode sert de référence pour les duels et les écarts par famille."""
     all_configs = all_df["config"].tolist()
     if not all_configs:
         st.info("Aucune config disponible.")
         return
 
-    c1, c2, c3 = st.columns([5, 5, 2])
+    # Choix sauvegardés dans dashboard/sensi.json : ils survivent au rechargement de la page
+    saved = load_sensi()
+    saved_methods = saved.get("methods", [])
+    h1, h2 = st.columns([2, 2])
+    n_methods = int(h1.number_input("Nombre de méthodes", 2, SENSI_MAX_METHODS,
+                                    min(max(int(saved.get("n", 2)), 2), SENSI_MAX_METHODS), key="sensi_n"))
+    saved_param = saved.get("param", "M")
+    param = h2.selectbox("Paramètre", SENSI_PARAMS,
+                         index=SENSI_PARAMS.index(saved_param if saved_param in SENSI_PARAMS else "M"),
+                         key="sensi_param")
     sel = []
-    for col, key, default, name in ((c1, "sensi_a", SENSI_DEFAULTS[0], "PPSN"),
-                                    (c2, "sensi_b", SENSI_DEFAULTS[1], "EvoCOP")):
-        with col:
+    cols = st.columns(min(n_methods, 3))
+    for i in range(n_methods):
+        letter = "abcdefgh"[i]
+        if i < len(saved_methods):
+            default, name = saved_methods[i]["config"], saved_methods[i]["name"]
+        elif i < len(SENSI_DEFAULTS):
+            default, name = SENSI_DEFAULTS[i]
+        else:
+            default, name = all_configs[0], f"Méthode {i + 1}"
+        with cols[i % len(cols)]:
             idx = all_configs.index(default) if default in all_configs else 0
-            cfg = st.selectbox(f"Config {key[-1].upper()}", all_configs, index=idx, key=key)
-            label = st.text_input("Nom", name, key=f"{key}_label")
+            cfg = st.selectbox(f"Config {letter.upper()}" + (" (réf.)" if i == 0 else ""), all_configs,
+                               index=idx, key=f"sensi_{letter}")
+            label = st.text_input("Nom", name, key=f"sensi_{letter}_label")
             sel.append((cfg, label))
-    with c3:
-        param = st.selectbox("Paramètre", SENSI_PARAMS, index=SENSI_PARAMS.index("M"), key="sensi_param")
+    # Les méthodes au-delà de n_methods restent mémorisées (repasser de 2 à 3 les retrouve)
+    methods = [{"config": c, "name": l} for c, l in sel] + saved_methods[n_methods:]
+    state = {"n": n_methods, "param": param, "methods": methods}
+    if state != saved:
+        save_sensi(state)
 
     series = []
     for cfg, label in sel:
@@ -3441,7 +2980,7 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
     for col, cfg in zip(mcols, configs):
         wins  = sum(1 for r in rows if r["rank"].get(cfg) == 1)
         rks   = [r["rank"][cfg] for r in rows if cfg in r["rank"]]
-        grk   = [_get_rank(r["prob"], r["dim"], r["t"], r["score"][cfg], include_svgd=_common_rivals(cfg))
+        grk   = [_get_rank(r["prob"], r["dim"], r["t"], r["score"][cfg])
                  for r in rows if cfg in r["score"]]
         grk   = [g for g in grk if g is not None]
         with col.container(border=True):
@@ -3758,22 +3297,12 @@ def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
 sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
-    ["📋 Classement", "📈 Courbes", "📦 Boxplots", "🔍 Analyse", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation",
-     "🎚️ Sensi"]
+tab1, tab5, tab6, tab7, tab8 = st.tabs(
+    ["📋 Classement", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi"]
 )
 
 with tab1:
     tab_classement(filtered)
-
-with tab2:
-    tab_courbes(filtered, sorted_instances)
-
-with tab3:
-    tab_boxplots(filtered, sorted_instances)
-
-with tab4:
-    tab_analyse(filtered)
 
 with tab5:
     tab_comparaison(df, sorted_instances)

@@ -1,0 +1,18 @@
+{
+  "n": 3,
+  "param": "M",
+  "methods": [
+    {
+      "config": "krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01",
+      "name": "SVGD-EDA"
+    },
+    {
+      "config": "krbf__advperagentrankweighted__M7__L13__eps0p06__g0p01__ds1__dm0p01__ppokl__pe6__b0p1",
+      "name": "SE-SVGD-EDA"
+    },
+    {
+      "config": "krbf__advperagentrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01",
+      "name": "SVGD-EDA + rang/agent"
+    }
+  ]
+}

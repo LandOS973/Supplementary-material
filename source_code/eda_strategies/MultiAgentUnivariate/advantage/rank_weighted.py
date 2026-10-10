@@ -30,12 +30,11 @@ class GlobalRankWeightedAdvantage(AdvantageStrategy):
         reshaped = fitness.view(nb_instances, num_agents, lambda_per_agent)
         per_instance = reshaped.view(nb_instances, -1)                 
 
-        num_individuals = per_instance.shape[1]
         total_individuals = lambda_per_agent * num_agents
-        greater_counts = (per_instance[:, :, None] < per_instance[:, None, :]).sum(dim=2)
-        ranks = greater_counts
-        ranks = ranks.to(dtype=fitness.dtype)
-        ranked = 1.0 - 2.0 * (ranks / total_individuals)
+        greater = (per_instance[:, :, None] < per_instance[:, None, :]).sum(dim=2)
+        equal = (per_instance[:, :, None] == per_instance[:, None, :]).sum(dim=2)
+        ranks = (greater + (equal - 1) / 2.0).to(dtype=fitness.dtype)
+        ranked = 1.0 - 2.0 * ranks / max(total_individuals - 1, 1)
         return ranked.view(BM, lambda_per_agent)
 
 
