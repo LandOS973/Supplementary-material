@@ -3,6 +3,7 @@ from .baseline import BaselineAdvantage
 from .rank_weighted import (
     GlobalRankWeightedAdvantage,
     NormalizedFitnessAdvantage,
+    PerAgentCenteredGlobalRankWeightedAdvantage,
     PerAgentRankWeightedAdvantage,
 )
 from .base import AdvantageStrategy
@@ -12,6 +13,7 @@ __all__ = [
     "BaselineAdvantage",
     "GlobalRankWeightedAdvantage",
     "PerAgentRankWeightedAdvantage",
+    "PerAgentCenteredGlobalRankWeightedAdvantage",
     "NormalizedFitnessAdvantage",
     "AdvantageStrategy",
 ]

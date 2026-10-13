@@ -31,32 +31,35 @@ from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 DEFAULTS = dict(
     seed=0,
     nb_instances_test=10,
+    # Dossier des instances sous source_code/ ; main() le bascule sur instances_tuning
+    # avec --instances tuning (rang contre le pool desactive : ses scores n'existent
+    # que sur les instances de test).
+    instances_dir="instances",
+    pool_ranking=True,
     nb_restarts=10,
     budget=50000,
     visualization=False,
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
+# Config SE-SVGD-EDA du papier EvoCOP (M=7, λ=13, ε=0.06, γ=0.01 constant via ds=1,
+# E=6, β=0.1), avec le score par agent de référence et le score global centré par agent.
 DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
-        advantages=["peragentrankweighted"],
-        M_values=[10],
-        lambda_values=[10],
-        epsilon_svgd=[0.03, 0.06, 0.1, 0.15, 0.2],
-        gamma=[0.003, 0.006, 0.01, 0.015],
-        decay_start_ratio=[0.03, 1],
+        advantages=["peragentcenteredglobalrankweighted"],
+        M_values=[7],
+        lambda_values=[13],
+        epsilon_svgd=[0.06],
+        gamma=[0.01],
+        decay_start_ratio=[1],
         decay_min_factor=[0.01],
         ppo_variants=[
-            dict(mode="kl", ppo_epochs=[2, 4, 6], kl_beta=[0.01, 0.1, 0.5]),
+            dict(mode="kl", ppo_epochs=[6], kl_beta=[0.1]),
         ],
     )
 ]
 
 
-# Config exacte du papier PPSN (commit 4a990591d), pour reproduire
-# krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01 a n=512
-# (deja presente pour n=64/128/256 sous results/config/<ce nom>/). Selectionnable
-# via --grid ppsn_baseline, sans toucher au grid de travail ci-dessus.
 PPSN_BASELINE_GRID = [
     dict(
         kernels=["rbf"],
@@ -70,9 +73,16 @@ PPSN_BASELINE_GRID = [
     )
 ]
 
+# Meme config PPSN, avec le score global centre par agent a la place du rang global.
+# Selectionnable via --grid ppsn_centered.
+PPSN_CENTERED_GRID = [
+    dict(PPSN_BASELINE_GRID[0], advantages=["peragentcenteredglobalrankweighted"])
+]
+
 GRID_PRESETS = {
     "wip": DEFAULT_GRIDS,
     "ppsn_baseline": PPSN_BASELINE_GRID,
+    "ppsn_centered": PPSN_CENTERED_GRID,
 }
 
 _PPO_INACTIVE = dict(
@@ -368,7 +378,7 @@ def _load_instances(problem_cfg, device):
     type_instance = int(problem_cfg["type_instance"])
 
     if name == "QUBO":
-        instance_path = os.path.join(script_dir, "instances", "QUBO") + os.sep
+        instance_path = os.path.join(script_dir, DEFAULTS["instances_dir"], "QUBO") + os.sep
         tensor_Q_test = getTensorInstances_QUBO(
             instance_path,
             DEFAULTS["nb_instances_test"],
@@ -397,7 +407,7 @@ def _load_instances(problem_cfg, device):
             vectorIndex[vi] = D ** (type_instance - vi)
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
         subdir = "nk" if name == "NK" else "nk3"
-        base_path = os.path.join(script_dir, "instances", subdir, str(dim), str(type_instance)) + os.sep
+        base_path = os.path.join(script_dir, DEFAULTS["instances_dir"], subdir, str(dim), str(type_instance)) + os.sep
         return dict(
             type_problem=name,
             dim=dim,
@@ -710,6 +720,8 @@ def _parse_summary_config(summary_path: Path):
 def _rank_vs_global_ranking_excluding_ppo(
     repo_root: str, problem: str, dim: int, type_instance: int, my_score: float, exclude_algo: str = "PPO-EDA"
 ):
+    if not DEFAULTS["pool_ranking"]:
+        return None, None, None, 0, None, None, None
     problem = (problem or "").upper()
     if problem in ("QUBO", "UBQP"):
         filename = f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
@@ -845,7 +857,8 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
 
     ranking_dir = Path(repo_root) / "additional_results" / "global_ranking"
     expected_instances = []
-    for rank_file in ranking_dir.glob("*_ranks.csv"):
+    rank_files = ranking_dir.glob("*_ranks.csv") if DEFAULTS["pool_ranking"] else []
+    for rank_file in rank_files:
         match = re.match(r"^(?P<problem>UBQP|NK|NK3)_N_(?P<dim>\d+)_K_(?P<t>\d+)_ranks\.csv$", rank_file.name)
         if not match:
             continue
@@ -1011,7 +1024,17 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
 
 def main():
     parser = argparse.ArgumentParser(description="Overall PPO-EDA decay grid (QUBO + NK).")
-    parser.add_argument("--outdir", type=str, default=None, help="Root output dir (default: results/config).")
+    parser.add_argument(
+        "--outdir", type=str, default=None,
+        help="Root output dir (default: results/tuning with --instances tuning, results/config with test).",
+    )
+    parser.add_argument(
+        "--instances",
+        choices=["tuning", "test"],
+        default="tuning",
+        help="tuning = source_code/instances_tuning (3 instances par classe, pas de rang contre le pool), "
+             "test = source_code/instances (10 instances par classe, rang contre le pool).",
+    )
     parser.add_argument(
         "-m",
         "--m-values",
@@ -1024,13 +1047,17 @@ def main():
         "--grid",
         type=str,
         default="wip",
-        help="Grid to run: a preset name (wip = DEFAULT_GRIDS, ppsn_baseline = exact PPSN "
+        help="Grid to run: a preset name (wip = DEFAULT_GRIDS, ppsn_centered = PPSN config with "
+        "per-agent centred global rank, ppsn_baseline = exact PPSN "
              "config) or a path to a JSON grid file, e.g. jeanzay/grids/m7_core.json.",
     )
     args = parser.parse_args()
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    out_root = args.outdir or os.path.join(repo_root, "results", "config")
+    if args.instances == "tuning":
+        DEFAULTS.update(instances_dir="instances_tuning", nb_instances_test=3, pool_ranking=False)
+    out_root = args.outdir or os.path.join(repo_root, "results", "tuning" if args.instances == "tuning" else "config")
+    print(f"[INFO] instances={args.instances} ({DEFAULTS['instances_dir']}) -> {out_root}")
     Path(out_root).mkdir(parents=True, exist_ok=True)
 
     grids = _apply_m_override(_load_grids(args.grid), args.m_values)
@@ -1041,7 +1068,7 @@ def main():
     total_configs = sum(1 for grid in grids for _ in _expand_grid(grid))
     print(f"[INFO] {total_configs} configs a tester")
 
-    instances_root = Path(repo_root) / "source_code" / "instances"
+    instances_root = Path(repo_root) / "source_code" / DEFAULTS["instances_dir"]
     qubo_instances = _discover_qubo_instances(instances_root / "QUBO", DEFAULTS["nb_instances_test"])
     nk_instances = _discover_nk_instances(instances_root / "nk", DEFAULTS["nb_instances_test"])
     nk3_instances = _discover_nk3_instances(instances_root / "nk3", DEFAULTS["nb_instances_test"])
