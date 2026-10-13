@@ -15,6 +15,7 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
 RESULTS_DIR = ROOT / "results" / "config"
+TUNING_DIR = ROOT / "results" / "tuning"     # recherche d'hyperparams sur les instances de reglage
 RANKING_DIR = ROOT / "additional_results" / "global_ranking"
 BEAST_DIR = ROOT / "results" / "the beast"
 
@@ -3175,6 +3176,161 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
+# ── Tuning ────────────────────────────────────────────────────────────────────
+# Configs de results/tuning/ (instances de reglage, 3 par classe). Pas de pool sur ces
+# instances : chaque config est classee contre les autres configs de tuning, classe par
+# classe (rang 1 = meilleur score), et son ecart relatif au meilleur score de la classe.
+
+def _tuning_signature() -> tuple:
+    """Change des qu'une instance est ajoutee a une config (mtime du dossier)."""
+    if not TUNING_DIR.exists():
+        return ()
+    return tuple(sorted((d.name, d.stat().st_mtime) for d in TUNING_DIR.iterdir() if d.is_dir()))
+
+
+TUNING_MODES = ["SVGD-EDA", "SE-SVGD-EDA"]
+
+
+def _tuning_mode(params: dict) -> str:
+    return "SE-SVGD-EDA" if params.get("ppo_mode") else "SVGD-EDA"
+
+
+@st.cache_data(show_spinner="Lecture de results/tuning…")
+def load_tuning(signature: tuple) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """-> (une ligne par config, une ligne par (config, classe)). Rangs et ecarts
+    calcules au sein de chaque methode : une config n'est classee que contre les
+    configs de la meme methode."""
+    inst_rows = []
+    for name, _ in signature:
+        mode = _tuning_mode(parse_config_name(name))
+        for inst_dir in (TUNING_DIR / name).iterdir():
+            m = INSTANCE_RE.match(inst_dir.name)
+            metrics = inst_dir / "best_metrics.csv"
+            if not m or not metrics.exists():
+                continue
+            try:
+                df = pd.read_csv(metrics)
+                score = abs(float(df["best_fitness"].iloc[-1]))
+            except Exception:
+                continue
+            inst_rows.append({"config": name, "mode": mode, "problem": m.group("problem"),
+                              "dim": int(m.group("dim")), "t": int(m.group("t")), "score": score})
+    inst = pd.DataFrame(inst_rows)
+    if inst.empty:
+        return pd.DataFrame(), inst
+
+    by_class = inst.groupby(["mode", "problem", "dim", "t"])["score"]
+    inst["rank"] = by_class.rank(ascending=False, method="min")
+    inst["gap"] = 100.0 * (inst["score"] / by_class.transform("max") - 1.0)
+
+    rows = []
+    for name, sub in inst.groupby("config"):
+        params = parse_config_name(name)
+        row = {
+            "config": name,
+            "mode": _tuning_mode(params),
+            **params,
+            "mean_rank": sub["rank"].mean(),
+            "mean_gap": sub["gap"].mean(),
+            "top1": int((sub["rank"] == 1).sum()),
+            "top3": int((sub["rank"] <= 3).sum()),
+            "n_classes": len(sub),
+        }
+        for prob in ("NK", "NK3", "QUBO"):
+            p = sub[sub["problem"] == prob]
+            row[f"mean_rank_{prob}"] = p["rank"].mean() if not p.empty else None
+            row[f"mean_gap_{prob}"] = p["gap"].mean() if not p.empty else None
+        rows.append(row)
+    return pd.DataFrame(rows), inst
+
+
+def _tuning_table(mode: str, summary: pd.DataFrame, inst: pd.DataFrame,
+                  sfx: str, complete_only: bool, n_total: int) -> None:
+    summary = summary[summary["mode"] == mode]
+    st.subheader(mode)
+    if summary.empty:
+        st.info(f"Aucune config {mode} terminée pour l'instant.")
+        return
+    n_done = int((summary["n_classes"] == n_total).sum())
+    st.caption(f"{n_done}/{len(summary)} configs complètes ({n_total} classes).")
+
+    display = summary[summary["n_classes"] == n_total] if complete_only else summary
+    display = display.sort_values([f"mean_rank{sfx}", f"mean_gap{sfx}"], ascending=[True, False])
+    cols = [c for c in [
+        f"mean_rank{sfx}", f"mean_gap{sfx}", "top1", "top3",
+        "mean_rank_NK", "mean_rank_NK3", "mean_rank_QUBO",
+        "M", "lambda", "epsilon_svgd", "gamma", "decay_start_ratio", "decay_min_factor",
+        "ppo_epochs", "kl_beta", "n_classes", "config",
+    ] if c in display.columns and display[c].notna().any()]
+    cols = list(dict.fromkeys(cols))
+    display_reset = display[cols].reset_index(drop=True)
+    event = st.dataframe(
+        display_reset,
+        use_container_width=True,
+        height=460,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"tun_table_{mode}",
+        column_config={
+            "mean_rank":      st.column_config.NumberColumn("Rank moy", format="%.2f"),
+            "mean_rank_NK":   st.column_config.NumberColumn("Rank NK", format="%.2f"),
+            "mean_rank_NK3":  st.column_config.NumberColumn("Rank NK3", format="%.2f"),
+            "mean_rank_QUBO": st.column_config.NumberColumn("Rank QUBO", format="%.2f"),
+            **{f"mean_gap{s}": st.column_config.NumberColumn(f"Écart{s.replace('_', ' ')} (%)", format="%.3f")
+               for s in ("", "_NK", "_NK3", "_QUBO")},
+            "ppo_epochs":     st.column_config.NumberColumn("E", format="%d"),
+            "kl_beta":        st.column_config.NumberColumn("β", format="%.4f"),
+            "epsilon_svgd":   st.column_config.NumberColumn("ε_svgd", format="%.4f"),
+            "gamma":          st.column_config.NumberColumn("γ", format="%.5f"),
+            "decay_start_ratio": st.column_config.NumberColumn("ds", format="%.4f"),
+            "decay_min_factor":  st.column_config.NumberColumn("dm", format="%.4f"),
+            "config":         st.column_config.TextColumn("Config", width="large"),
+        },
+    )
+    sel_rows = event.selection.rows if event and hasattr(event, "selection") else []
+    if sel_rows:
+        cfg = display_reset["config"].iloc[sel_rows[0]]
+        st.code(cfg, language=None)
+        detail = inst[inst["config"] == cfg].sort_values(["problem", "dim", "t"])
+        st.dataframe(
+            detail[["problem", "dim", "t", "score", "rank", "gap"]].reset_index(drop=True),
+            use_container_width=True, height=400,
+            column_config={
+                "score": st.column_config.NumberColumn("Score", format="%.6f"),
+                "rank":  st.column_config.NumberColumn("Rank", format="%d"),
+                "gap":   st.column_config.NumberColumn("Écart (%)", format="%.3f"),
+            },
+        )
+
+
+@st.fragment
+def tab_tuning() -> None:
+    signature = _tuning_signature()
+    if not signature:
+        st.info(f"Aucun résultat dans `{TUNING_DIR}`. Rapatrier depuis Jean Zay :  \n"
+                "`rsync -av jean-zay:/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/"
+                "results/tuning/ results/tuning/`")
+        return
+    summary, inst = load_tuning(signature)
+    if summary.empty:
+        st.info("Aucune instance terminée pour l'instant.")
+        return
+
+    n_total = inst[["problem", "dim", "t"]].drop_duplicates().shape[0]
+    c1, c2 = st.columns([3, 1])
+    problem_sel = c1.radio("Problème", ["Tous", "NK", "NK3", "QUBO"], horizontal=True, key="tun_problem")
+    complete_only = c2.checkbox("Complètes seulement", value=True, key="tun_complete",
+                                help=f"Configs ayant les {n_total} classes déjà terminées")
+    sfx = "" if problem_sel == "Tous" else f"_{problem_sel}"
+    st.caption(
+        "Chaque méthode est classée contre ses propres configs, classe par classe (rang 1 = "
+        "meilleur score parmi les configs de la méthode ayant fini la classe). Écart : % au "
+        "meilleur score de la méthode sur la classe (0 = meilleur). Tri : rang moyen, puis écart."
+    )
+    for mode in TUNING_MODES:
+        _tuning_table(mode, summary, inst, sfx, complete_only, n_total)
+
+
 st.set_page_config(page_title="SVGD-EDA Dashboard", layout="wide", page_icon="📊")
 st.title("SVGD-EDA — Grid Search Dashboard")
 
@@ -3297,8 +3453,8 @@ def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
 sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab5, tab6, tab7, tab8 = st.tabs(
-    ["📋 Classement", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi"]
+tab1, tab5, tab6, tab7, tab8, tab9 = st.tabs(
+    ["📋 Classement", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi", "🎯 Tuning"]
 )
 
 with tab1:
@@ -3315,3 +3471,6 @@ with tab7:
 
 with tab8:
     tab_sensi(df, sorted_instances)
+
+with tab9:
+    tab_tuning()
