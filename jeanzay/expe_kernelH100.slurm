@@ -60,4 +60,4 @@ echo "Job terminé à $(date)"
 
 # sbatch jeanzay/expe_kernelH100.slurm -m 10
 # sbatch jeanzay/expe_kernelH100.slurm -g wip
-# sbatch jeanzay/expe_kernelH100.slurm -g jeanzay/grids/m7_core.json
+# sbatch jeanzay/expe_kernelH100.slurm -g jeanzay/grids/ablation_evocop.json

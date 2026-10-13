@@ -225,7 +225,7 @@ def _expand_grid(grid: dict):
 
 def _load_grids(name: str = "wip"):
     # Either a preset name, or a path to a JSON file holding a list of grid dicts
-    # (same keys as DEFAULT_GRIDS), e.g. jeanzay/grids/m7_core.json.
+    # (same keys as DEFAULT_GRIDS), e.g. jeanzay/grids/ablation_evocop.json.
     if name in GRID_PRESETS:
         return GRID_PRESETS[name]
     path = Path(name)
@@ -1049,7 +1049,7 @@ def main():
         default="wip",
         help="Grid to run: a preset name (wip = DEFAULT_GRIDS, ppsn_centered = PPSN config with "
         "per-agent centred global rank, ppsn_baseline = exact PPSN "
-             "config) or a path to a JSON grid file, e.g. jeanzay/grids/m7_core.json.",
+             "config) or a path to a JSON grid file, e.g. jeanzay/grids/ablation_evocop.json.",
     )
     args = parser.parse_args()
 
