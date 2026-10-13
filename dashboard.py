@@ -829,96 +829,6 @@ def _diff_labels(cfg_a: str, cfg_b: str) -> tuple[str, str]:
 # Each tab is a @st.fragment: interacting with its widgets re-runs only that
 # function, not the full script — other tabs are unaffected.
 
-# Single benches shown as their own score/rank columns in the Classement tab
-BENCH_COLS = [("NK3", 512, 8), ("NK3", 256, 8)]
-
-
-@st.fragment
-def tab_classement(filtered: pd.DataFrame) -> None:
-    problem_sel = st.radio(
-        "Problème", ["Tous", "NK", "NK3", "QUBO"],
-        horizontal=True, key="class_problem",
-    )
-
-    stat_cols = {
-        "Tous": ["mean_rank", "median_rank", "top1", "top3", "top5", "top10",
-                 "top1_NK", "top1_NK3", "top1_QUBO"],
-        "NK":   ["mean_rank_NK",   "top1_NK",   "top3_NK"],
-        "NK3":  ["mean_rank_NK3",  "top1_NK3",  "top3_NK3"],
-        "QUBO": ["mean_rank_QUBO", "top1_QUBO", "top3_QUBO"],
-    }[problem_sel]
-
-    rank_col = {
-        "Tous": "mean_rank", "NK": "mean_rank_NK",
-        "NK3": "mean_rank_NK3", "QUBO": "mean_rank_QUBO",
-    }[problem_sel]
-
-    display = filtered.dropna(subset=[rank_col]) if rank_col in filtered.columns else filtered
-    display = display.sort_values(rank_col) if rank_col in display.columns else display
-
-    if "M" in display.columns:
-        m_excl = st.multiselect(
-            "Exclure M", sorted(display["M"].dropna().unique().tolist()),
-            default=[], key="class_m_excl",
-        )
-        if m_excl:
-            display = display[~display["M"].isin(m_excl)]
-
-    # Score / rank on single benches, to sort on them specifically
-    if INSTANCES_FILE.exists():
-        try:
-            inst = pd.read_parquet(INSTANCES_FILE)
-            for prob, dim, t in BENCH_COLS:
-                b = inst[(inst["problem"] == prob) & (inst["dim"] == dim) & (inst["t"] == t)]
-                sfx = f"{prob.lower()}_{dim}_{t}"
-                b = b[["config", "score", "rank"]].rename(
-                    columns={"score": f"score_{sfx}", "rank": f"rank_{sfx}"})
-                display = display.merge(b.drop_duplicates("config"), on="config", how="left")
-        except Exception:
-            pass
-
-    cols = [c for c in [
-        *stat_cols,
-        *[f"{k}_{p.lower()}_{d}_{t}" for p, d, t in BENCH_COLS for k in ("score", "rank")],
-        "ppo_mode", "ppo_epochs", "clip_eps", "kl_beta", "trpo_kl_threshold",
-        "epsilon_svgd", "gamma", "M", "lambda",
-        "kernel", "advantage",
-        "decay_start_ratio", "decay_min_factor",
-        "n_instances", "config",
-    ] if c in display.columns]
-
-    display_reset = display[cols].reset_index(drop=True)
-    event = st.dataframe(
-        display_reset,
-        use_container_width=True,
-        height=620,
-        on_select="rerun",
-        selection_mode="single-row",
-        column_config={
-            "config":         st.column_config.TextColumn("Config",     width="large"),
-            "mean_rank":      st.column_config.NumberColumn("Rank moy", format="%.2f"),
-            "mean_rank_NK":   st.column_config.NumberColumn("Rank NK",  format="%.2f"),
-            "mean_rank_NK3":  st.column_config.NumberColumn("Rank NK3", format="%.2f"),
-            "mean_rank_QUBO": st.column_config.NumberColumn("Rank QUBO",format="%.2f"),
-            "median_rank":    st.column_config.NumberColumn("Rank med", format="%.1f"),
-            **{f"score_{p.lower()}_{d}_{t}": st.column_config.NumberColumn(f"Score {p} {d} K{t}", format="%.6f")
-               for p, d, t in BENCH_COLS},
-            **{f"rank_{p.lower()}_{d}_{t}": st.column_config.NumberColumn(f"Rank {p} {d} K{t}", format="%d")
-               for p, d, t in BENCH_COLS},
-            "ppo_mode":       st.column_config.TextColumn("ppo mode", width="small"),
-            "ppo_epochs":     st.column_config.NumberColumn("ks",       format="%d"),
-            "clip_eps":       st.column_config.NumberColumn("ce",       format="%.2f"),
-            "kl_beta":        st.column_config.NumberColumn("β",        format="%.3f"),
-            "trpo_kl_threshold": st.column_config.NumberColumn("kt",    format="%.3f"),
-            "epsilon_svgd":   st.column_config.NumberColumn("ε_svgd",  format="%.4f"),
-            "gamma":          st.column_config.NumberColumn("γ",        format="%.4f"),
-        },
-    )
-    sel_rows = event.selection.rows if event and hasattr(event, "selection") else []
-    if sel_rows and "config" in display_reset.columns:
-        st.code(display_reset["config"].iloc[sel_rows[0]], language=None)
-
-
 @st.fragment
 def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
     comps = load_comparisons()
@@ -3205,12 +3115,14 @@ def load_tuning(signature: tuple) -> tuple[pd.DataFrame, pd.DataFrame]:
         mode = _tuning_mode(parse_config_name(name))
         for inst_dir in (TUNING_DIR / name).iterdir():
             m = INSTANCE_RE.match(inst_dir.name)
-            metrics = inst_dir / "best_metrics.csv"
-            if not m or not metrics.exists():
+            raw = inst_dir / "raw_scores.csv"
+            if not m or not raw.exists():
                 continue
+            # raw_scores.csv = score final de chaque run, pas greedy final compris ; la
+            # derniere ligne de best_metrics.csv precede ce pas et sous-estime les configs
+            # non convergees.
             try:
-                df = pd.read_csv(metrics)
-                score = abs(float(df["best_fitness"].iloc[-1]))
+                score = abs(float(pd.read_csv(raw)["score"].mean()))
             except Exception:
                 continue
             inst_rows.append({"config": name, "mode": mode, "problem": m.group("problem"),
@@ -3232,6 +3144,7 @@ def load_tuning(signature: tuple) -> tuple[pd.DataFrame, pd.DataFrame]:
             **params,
             "mean_rank": sub["rank"].mean(),
             "mean_gap": sub["gap"].mean(),
+            "worst_gap": sub["gap"].min(),
             "top1": int((sub["rank"] == 1).sum()),
             "top3": int((sub["rank"] <= 3).sum()),
             "n_classes": len(sub),
@@ -3255,9 +3168,9 @@ def _tuning_table(mode: str, summary: pd.DataFrame, inst: pd.DataFrame,
     st.caption(f"{n_done}/{len(summary)} configs complètes ({n_total} classes).")
 
     display = summary[summary["n_classes"] == n_total] if complete_only else summary
-    display = display.sort_values([f"mean_rank{sfx}", f"mean_gap{sfx}"], ascending=[True, False])
+    display = display.sort_values([f"mean_gap{sfx}", f"mean_rank{sfx}"], ascending=[False, True])
     cols = [c for c in [
-        f"mean_rank{sfx}", f"mean_gap{sfx}", "top1", "top3",
+        f"mean_gap{sfx}", f"mean_rank{sfx}", "worst_gap", "top1", "top3",
         "mean_rank_NK", "mean_rank_NK3", "mean_rank_QUBO",
         "M", "lambda", "epsilon_svgd", "gamma", "decay_start_ratio", "decay_min_factor",
         "ppo_epochs", "kl_beta", "n_classes", "config",
@@ -3276,6 +3189,7 @@ def _tuning_table(mode: str, summary: pd.DataFrame, inst: pd.DataFrame,
             "mean_rank_NK":   st.column_config.NumberColumn("Rank NK", format="%.2f"),
             "mean_rank_NK3":  st.column_config.NumberColumn("Rank NK3", format="%.2f"),
             "mean_rank_QUBO": st.column_config.NumberColumn("Rank QUBO", format="%.2f"),
+            "worst_gap":      st.column_config.NumberColumn("Pire écart (%)", format="%.2f"),
             **{f"mean_gap{s}": st.column_config.NumberColumn(f"Écart{s.replace('_', ' ')} (%)", format="%.3f")
                for s in ("", "_NK", "_NK3", "_QUBO")},
             "ppo_epochs":     st.column_config.NumberColumn("E", format="%d"),
@@ -3308,7 +3222,8 @@ def tab_tuning() -> None:
     signature = _tuning_signature()
     if not signature:
         st.info(f"Aucun résultat dans `{TUNING_DIR}`. Rapatrier depuis Jean Zay :  \n"
-                "`rsync -av jean-zay:/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/"
+                "`rsync -av --include='*/' --include='raw_scores.csv' --exclude='*' "
+                "jean-zay:/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/"
                 "results/tuning/ results/tuning/`")
         return
     summary, inst = load_tuning(signature)
@@ -3325,7 +3240,7 @@ def tab_tuning() -> None:
     st.caption(
         "Chaque méthode est classée contre ses propres configs, classe par classe (rang 1 = "
         "meilleur score parmi les configs de la méthode ayant fini la classe). Écart : % au "
-        "meilleur score de la méthode sur la classe (0 = meilleur). Tri : rang moyen, puis écart."
+        "meilleur score de la méthode sur la classe (0 = meilleur). Tri : écart moyen, puis rang."
     )
     for mode in TUNING_MODES:
         _tuning_table(mode, summary, inst, sfx, complete_only, n_total)
@@ -3361,78 +3276,11 @@ if df.empty:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("Filtres")
     if st.button("🔄 Recalculer le cache", help="Supprime le cache disque et recalcule tout"):
         if CACHE_FILE.exists():
             CACHE_FILE.unlink()
         st.rerun()
 
-    def multisel(label, col):
-        if col not in df.columns:
-            return None
-        vals = sorted(df[col].dropna().unique().tolist())
-        return st.multiselect(label, vals, default=vals)
-
-    pe_sel  = multisel("ppo_epochs",   "ppo_epochs")
-    ce_sel  = multisel("clip_eps",     "clip_eps")
-    eps_sel = multisel("epsilon_svgd", "epsilon_svgd")
-    k_sel   = multisel("Kernel",       "kernel")
-    m_sel   = multisel("M",            "M")
-    l_sel   = multisel("lambda",       "lambda")
-
-    max_rank = float(df["mean_rank"].max())
-    rank_lim = st.slider("Rank moyen ≤", 1.0, max_rank, max_rank, step=0.5)
-    show_n   = st.number_input("Configs max", 5, 2000, 200)
-
-# Apply filters
-mask = pd.Series(True, index=df.index)
-for sel, col in [
-    (pe_sel,  "ppo_epochs"),
-    (ce_sel,  "clip_eps"),
-    (eps_sel, "epsilon_svgd"),
-    (k_sel,   "kernel"),
-    (m_sel,   "M"),
-    (l_sel,   "lambda"),
-]:
-    if sel is not None and col in df.columns:
-        mask &= df[col].isin(sel) | df[col].isna()
-mask &= df["mean_rank"] <= rank_lim
-filtered = df[mask].head(int(show_n))
-
-# ── Sidebar stats ─────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.divider()
-    st.markdown("##### Résumé sélection")
-    st.metric("Configs", len(filtered))
-
-    if not filtered.empty:
-        c1, c2 = st.columns(2)
-        c1.metric("Rank moy",  f"{filtered['mean_rank'].mean():.1f}")
-        c2.metric("Top 1",     int(filtered["top1"].sum()))
-        c1.metric("Top 3",     int(filtered["top3"].sum()))
-        c2.metric("Top 5",     int(filtered["top5"].sum()))
-
-        if "ppo_epochs" in filtered.columns and filtered["ppo_epochs"].nunique() > 1:
-            st.markdown("**Rank moy par ppo_epochs**")
-            breakdown = (
-                filtered.groupby("ppo_epochs")[["mean_rank", "top1", "top3"]]
-                .mean()
-                .round(2)
-                .rename(columns={"mean_rank": "rank_moy", "top1": "top1_moy", "top3": "top3_moy"})
-            )
-            st.dataframe(breakdown, use_container_width=True)
-
-        if "epsilon_svgd" in filtered.columns and filtered["epsilon_svgd"].nunique() > 1:
-            st.markdown("**Rank moy par epsilon_svgd**")
-            breakdown_eps = (
-                filtered.groupby("epsilon_svgd")[["mean_rank", "top1"]]
-                .mean()
-                .round(2)
-                .rename(columns={"mean_rank": "rank_moy", "top1": "top1_moy"})
-            )
-            st.dataframe(breakdown_eps, use_container_width=True)
-
-st.caption(f"{len(filtered)} configs affichées sur {len(df)} disponibles")
 
 @st.cache_data(show_spinner=False)
 def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
@@ -3453,12 +3301,12 @@ def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
 sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab5, tab6, tab7, tab8, tab9 = st.tabs(
-    ["📋 Classement", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi", "🎯 Tuning"]
+tab9, tab5, tab6, tab7, tab8 = st.tabs(
+    ["🎯 Tuning", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi"]
 )
 
-with tab1:
-    tab_classement(filtered)
+with tab9:
+    tab_tuning()
 
 with tab5:
     tab_comparaison(df, sorted_instances)
@@ -3472,5 +3320,3 @@ with tab7:
 with tab8:
     tab_sensi(df, sorted_instances)
 
-with tab9:
-    tab_tuning()
