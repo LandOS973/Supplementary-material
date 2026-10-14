@@ -4,19 +4,6 @@
    {
     "kernel": "rbf",
     "advantage": "peragentrankweighted",
-    "M": 7,
-    "lambda": 13,
-    "epsilon_svgd": 0.06,
-    "gamma": 0.01,
-    "decay_start_ratio": 1.0,
-    "decay_min_factor": 0.01,
-    "ppo_active": true,
-    "ppo_epochs": 6,
-    "kl_beta": 0.1
-   },
-   {
-    "kernel": "rbf",
-    "advantage": "peragentrankweighted",
     "M": 5,
     "lambda": 6,
     "epsilon_svgd": 0.0955,
@@ -533,6 +520,19 @@
     "ppo_active": true,
     "ppo_epochs": 4,
     "kl_beta": 0.925
+   },
+    {
+    "kernel": "rbf",
+    "advantage": "peragentrankweighted",
+    "M": 7,
+    "lambda": 13,
+    "epsilon_svgd": 0.06,
+    "gamma": 0.01,
+    "decay_start_ratio": 1.0,
+    "decay_min_factor": 0.01,
+    "ppo_active": true,
+    "ppo_epochs": 6,
+    "kl_beta": 0.1
    },
    {
     "kernel": "rbf",

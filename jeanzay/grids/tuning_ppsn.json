@@ -4,16 +4,6 @@
    {
     "kernel": "rbf",
     "advantage": "globalrankweighted",
-    "M": 7,
-    "lambda": 13,
-    "epsilon_svgd": 0.08,
-    "gamma": 0.015,
-    "decay_start_ratio": 0.03,
-    "decay_min_factor": 0.01
-   },
-   {
-    "kernel": "rbf",
-    "advantage": "globalrankweighted",
     "M": 18,
     "lambda": 6,
     "epsilon_svgd": 0.0239,
@@ -130,6 +120,16 @@
     "gamma": 0.00113,
     "decay_start_ratio": 0.0632,
     "decay_min_factor": 0.246
+   },
+    {
+    "kernel": "rbf",
+    "advantage": "globalrankweighted",
+    "M": 7,
+    "lambda": 13,
+    "epsilon_svgd": 0.08,
+    "gamma": 0.015,
+    "decay_start_ratio": 0.03,
+    "decay_min_factor": 0.01
    },
    {
     "kernel": "rbf",
