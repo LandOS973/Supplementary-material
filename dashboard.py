@@ -97,6 +97,7 @@ COMPARISONS_FILE = DASHBOARD_DIR / "comparisons.json"
 FAVORITES_FILE   = DASHBOARD_DIR / "favorites.json"
 ABLATIONS_FILE   = DASHBOARD_DIR / "ablations.json"
 SENSI_FILE       = DASHBOARD_DIR / "sensi.json"   # méthodes, noms et paramètre de l'onglet Sensi
+ANYTIME_FILE     = DASHBOARD_DIR / "anytime.json" # méthodes, concurrents et classes de l'onglet Anytime
 
 # Migrate old files from previous locations
 _old_cache = RESULTS_DIR / ".dashboard_cache.parquet"
@@ -222,11 +223,13 @@ def load_summary() -> pd.DataFrame:
     # If instances file is missing or empty, rebuild it from all known configs (summary cache stays intact)
     _instances_ok = INSTANCES_FILE.exists() and INSTANCES_FILE.stat().st_size > 2048
     instances_only = False
-    if not new_dirs:
-        if _instances_ok:
-            return existing
+    if not _instances_ok:
+        # Fichier des instances absent ou vide : on recalcule toutes les configs, sinon il ne
+        # contiendrait que les nouvelles (ou rien) et tous les rangs par instance disparaîtraient
+        instances_only = not new_dirs
         new_dirs = all_dirs
-        instances_only = True
+    elif not new_dirs:
+        return existing
 
     # Load existing instances file
     existing_inst = pd.DataFrame()
@@ -291,23 +294,36 @@ def load_curve(config: str, instance: str) -> pd.DataFrame | None:
         return None
 
 
-@st.cache_data(show_spinner=False)
 def load_raw_scores(config: str, instance: str) -> pd.Series | None:
     p = RESULTS_DIR / config / instance / "raw_scores.csv"
+    # La date de modification fait partie de la clé du cache : un fichier relancé puis rapatrié
+    # (même nom de config) est relu au lieu de servir les anciens scores gardés en mémoire.
+    return _load_raw_scores_cached(str(p), p.stat().st_mtime if p.exists() else None)
+
+
+@st.cache_data(show_spinner=False)
+def _load_raw_scores_cached(path: str, mtime: float | None) -> pd.Series | None:
+    if mtime is None:
+        return None
     try:
-        return pd.read_csv(p)["score"].abs() if p.exists() else None
+        return pd.read_csv(path)["score"].abs()
     except Exception:
         return None
 
 
-@st.cache_data(show_spinner=False)
 def load_ranking(problem: str, dim: int, t: int) -> pd.DataFrame | None:
     fname = f"UBQP_N_{dim}_K_{t}_ranks.csv" if problem == "QUBO" else f"{problem}_N_{dim}_K_{t}_ranks.csv"
     p = RANKING_DIR / fname
+    # Clé de cache avec la date de modification : fichiers de rang régénérés -> relus
+    return _load_ranking_cached(str(p), p.stat().st_mtime if p.exists() else None)
+
+
+@st.cache_data(show_spinner=False)
+def _load_ranking_cached(path: str, mtime: float | None) -> pd.DataFrame | None:
+    if mtime is None:
+        return None
     try:
-        df = pd.read_csv(p) if p.exists() else None
-        if df is None:
-            return None
+        df = pd.read_csv(path)
         return df[~df["name_algo"].str.lower().isin(SKIP_ALGOS)]
     except Exception:
         return None
@@ -545,6 +561,17 @@ def load_sensi() -> dict:
         return json.loads(SENSI_FILE.read_text()) if SENSI_FILE.exists() else {}
     except Exception:
         return {}
+
+
+def load_anytime() -> dict:
+    try:
+        return json.loads(ANYTIME_FILE.read_text()) if ANYTIME_FILE.exists() else {}
+    except Exception:
+        return {}
+
+
+def save_anytime(state: dict) -> None:
+    ANYTIME_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n")
 
 
 def save_sensi(state: dict) -> None:
@@ -918,6 +945,76 @@ def tab_classement(filtered: pd.DataFrame) -> None:
         st.code(display_reset["config"].iloc[sel_rows[0]], language=None)
 
 
+def _comparison_markdown(name: str, cfg_a: str, cfg_b: str, label_a: str, label_b: str, rows: list[dict],
+                         col_score_a: str, col_score_b: str, col_rank_a: str, col_rank_b: str,
+                         col_hamming_a: str, col_hamming_b: str) -> str:
+    """Rapport Markdown autonome d'une comparaison A vs B, destiné à un LLM : il doit pouvoir
+    l'analyser sans connaître le dashboard (configs décodées, méthodologie, résumé, détail)."""
+    def fmt(v, nd=4):
+        return "—" if v is None else (f"{v:.{nd}f}" if isinstance(v, float) else str(v))
+
+    def params(cfg):
+        return ", ".join(f"{k}={v}" for k, v in parse_config_name(cfg).items())
+
+    n = len(rows)
+    wins_a = sum(r["_gap"] > 0 for r in rows); wins_b = sum(r["_gap"] < 0 for r in rows)
+    ra = [r[col_rank_a] for r in rows if r[col_rank_a] is not None]
+    rb = [r[col_rank_b] for r in rows if r[col_rank_b] is not None]
+    g = _global_wilcoxon(r["_gap"] for r in rows)
+    out = [f"# Comparaison : {name}", "",
+           f"- **A = {label_a}** : `{cfg_a}`", f"  - paramètres : {params(cfg_a)}",
+           f"- **B = {label_b}** : `{cfg_b}`", f"  - paramètres : {params(cfg_b)}", "",
+           "## Méthodologie", "",
+           "- Algorithmes : SVGD-EDA multi-agents (m agents × λ échantillons par agent), budget de "
+           "50 000 évaluations par run.",
+           "- Benchmark : 56 classes d'instances — QUBO (PUBOi, n ∈ {64,128,256,512}, types t = 0..5), "
+           "NK et NK3 (ternaire) (n ∈ {64,128,256,512}, K ∈ {1,2,4,8}). Chaque classe = 10 instances × "
+           "10 restarts = 100 runs.",
+           "- Score d'une classe : moyenne sur les 100 runs de la meilleure fitness finale (plus haut = "
+           "meilleur ; valeur absolue pour QUBO).",
+           "- Écart (Gap %) = (score A − score B) / |score B| × 100 ; > 0 : A meilleur.",
+           "- Rang : 1 + nombre de concurrents externes strictement meilleurs, contre un pool fixe de 82 "
+           "optimiseurs externes (80 sur NK3 : PBIL et PPBIL ne gèrent pas le ternaire) — 79 algorithmes "
+           "Nevergrad discrets + PBIL + PEDA + PPBIL. Aucune méthode SVGD dans le pool.",
+           "- p (classe) : Wilcoxon signé apparié bilatéral sur les 10 moyennes par instance (exact).",
+           "- Test global : Wilcoxon signé bilatéral sur les écarts relatifs, une paire par classe "
+           "(approximation normale pour n > 50).",
+           "- Hamming : distance de Hamming moyenne entre agents en fin de run (diversité).", "",
+           "## Résumé", "",
+           "| indicateur | A | B |", "|---|---|---|",
+           f"| victoires (meilleur score, sur {n} classes) | {wins_a} | {wins_b} |",
+           f"| top 1 vs pool | {sum(v == 1 for v in ra)} | {sum(v == 1 for v in rb)} |"]
+    if ra and rb:
+        out += [f"| rang moyen vs pool | {np.mean(ra):.2f} | {np.mean(rb):.2f} |",
+                f"| rang médian vs pool | {np.median(ra):.1f} | {np.median(rb):.1f} |"]
+    out.append("")
+    for fam in ("QUBO", "NK", "NK3"):
+        fg = [r["_gap"] for r in rows if r["_prob"] == fam]
+        if fg:
+            out.append(f"- Écart moyen {fam} : {np.mean(fg):+.3f} % (médian {np.median(fg):+.3f} %, "
+                       f"A meilleur sur {sum(x > 0 for x in fg)}/{len(fg)})")
+    if g:
+        verdict = ((f"A ({label_a}) meilleur" if g["median"] > 0 else f"B ({label_b}) meilleur")
+                   if g["p"] < 0.05 else "pas de différence globale significative")
+        out.append(f"- Test global ({g['n']} classes) : p = {g['p']:.3g}, écart médian {g['median']:+.3f} % "
+                   f"→ {verdict}")
+    out += ["", "## Détail par classe", "",
+            "| classe | problème | n | K/t | score A | score B | écart % | p (classe) | rang A | rang B | "
+            "Hamming A | Hamming B | meilleur concurrent externe (score) |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in sorted(rows, key=lambda r: ({"NK": 0, "NK3": 1, "QUBO": 2}.get(r["_prob"], 9), r["_dim"], r["_t"])):
+        inst = r["Instance"]
+        p = _paired_wilcoxon(_instance_means(load_raw_scores(cfg_a, inst)),
+                             _instance_means(load_raw_scores(cfg_b, inst)))
+        rk = load_ranking(r["_prob"], r["_dim"], r["_t"])
+        best = (f"{rk.iloc[rk['score'].argmax()]['name_algo']} ({rk['score'].max():.4f})"
+                if rk is not None and not rk.empty else "—")
+        out.append(f"| {inst} | {r['_prob']} | {r['_dim']} | {r['_t']} | {fmt(r[col_score_a])} | "
+                   f"{fmt(r[col_score_b])} | {r['_gap']:+.3f} | {fmt(p, 3)} | {fmt(r[col_rank_a])} | "
+                   f"{fmt(r[col_rank_b])} | {fmt(r[col_hamming_a], 2)} | {fmt(r[col_hamming_b], 2)} | {best} |")
+    return "\n".join(out) + "\n"
+
+
 @st.fragment
 def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
     comps = load_comparisons()
@@ -1095,6 +1192,14 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         })
 
     if summary_rows:
+        st.download_button(
+            "⬇️ Export", key=f"comp_llm_{sel_idx}", mime="text/markdown",
+            file_name=f"comparaison_{re.sub(r'[^A-Za-z0-9_-]+', '_', grp['name'])}.md",
+            help="Rapport autonome (configs, méthodologie, résumé, détail par classe) à donner à un LLM.",
+            data=lambda: _comparison_markdown(grp["name"], cfg_a, cfg_b, label_a, label_b, summary_rows,
+                                              col_score_a, col_score_b, col_rank_a, col_rank_b,
+                                              col_hamming_a, col_hamming_b),
+        )
         with st.expander("📊 Résumé", expanded=True):
             wins_a     = sum(1 for r in summary_rows if r["Résultat"] == f"{label_a} ✓")
             wins_b     = sum(1 for r in summary_rows if r["Résultat"] == f"{label_b} ✓")
@@ -2484,7 +2589,14 @@ SENSI_SYMBOLS = ["circle", "square", "diamond", "triangle-up", "cross", "star"]
 SENSI_PDF_W, SENSI_PDF_H = 880, 530
 # Place des graduations + titres d'axe (automargin mesure avant le chargement de Latin Modern et
 # sous-estime : titre y sur les graduations). Pas d'espace blanc au-delà.
-SENSI_PDF_ML, SENSI_PDF_MB = 108, 78
+SENSI_PDF_MB = 78
+
+
+def _pdf_left_margin(tick_labels: list[str]) -> int:
+    """Marge gauche (px) du PDF : titre de l'axe y (≈ 40 px) + graduations les plus larges
+    (≈ 0,55 em par caractère à 25 px) + 12 px d'écart. ≈ 107 px pour « 0.75 », 79 pour « 50 »."""
+    chars = max((len(t) for t in tick_labels), default=2)
+    return int(40 + chars * 0.55 * 25 + 12)
 SENSI_PDF_FONT = "Latin Modern Roman"   # police LaTeX/LNCS ; un seul nom : une liste fait retomber Chromium sur la serif par défaut
 
 
@@ -2507,7 +2619,7 @@ def _sensi_caption(inst: str) -> str:
 
 
 def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
-                  style: str, export: bool, dark: bool = False) -> go.Figure:
+                  style: str, export: bool, dark: bool = False, legend: bool = True) -> go.Figure:
     """stats : [(label, color, {valeur: scores})]. Sans titre (l'instance va dans la légende LaTeX)."""
     fig = go.Figure()
     for j, (label, color, per_val) in enumerate(stats):
@@ -2542,7 +2654,7 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
         fig.add_vrect(x0=k - 0.5, x1=k + 0.5, fillcolor="rgba(128,128,128,0.13)", line_width=0,
                       layer="below")
         # En haut de la bande, dans la marge réservée en haut de l'axe y (au-dessus des courbes)
-        fig.add_annotation(x=rv, y=_default_label_y(len(stats)), yref="paper", yanchor="top", text="default", showarrow=False,
+        fig.add_annotation(x=rv, y=_default_label_y(len(stats) if legend or not export else 0), yref="paper", yanchor="top", text="default", showarrow=False,
                            font=dict(size=22 if export else 19, color="rgba(110,110,110,1)"))
 
     fs = 26 if export else 22   # export : ≈ 10 pt une fois inclus à 12 cm
@@ -2569,7 +2681,9 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
         yaxis=dict(title=dict(text="Final score", standoff=8), automargin=True, showgrid=True,
                    gridcolor="rgba(128,128,128,0.2)", zeroline=False, showline=False,
                    tickformat=".2f" if y_max < 10 else "~s", tickfont=dict(size=fs - 1),
-                   range=[y_lo - 0.04 * pad, y_hi + (0.2 if len(stats) <= 2 else 0.32) * pad]),
+                   # Marge en haut pour la légende ; réduite quand le PDF est exporté sans légende
+                   range=[y_lo - 0.04 * pad,
+                          y_hi + ((0.2 if len(stats) <= 2 else 0.32) if legend or not export else 0.1) * pad]),
         # Légende dans la zone de tracé, en haut à droite (les courbes y sont basses : grands m)
         legend=dict(orientation="h", y=0.99, yanchor="top", x=0.99, xanchor="right",
                     bgcolor="rgba(255,255,255,0.75)" if not dark or export else "rgba(14,17,23,0.75)",
@@ -2577,15 +2691,88 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
         hoverlabel=dict(font_size=17), hovermode="x unified" if style != "Boîtes" else "closest",
     )
     if export:
-        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white",
-                          margin=dict(t=0, l=SENSI_PDF_ML, r=4, b=SENSI_PDF_MB))
+        widest = f"{y_hi:.2f}" if y_max < 10 else (f"{y_hi / 1000:.1f}k" if y_hi >= 1000 else f"{y_hi:.0f}")
+        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", showlegend=legend,
+                          margin=dict(t=0, l=_pdf_left_margin([widest]), r=4, b=SENSI_PDF_MB))
         fig.update_yaxes(gridcolor="rgba(0,0,0,0.12)")
         fig.update_xaxes(linecolor="rgba(0,0,0,0.5)")
     return fig
 
 
+# Légende seule, en bandeau, à placer une fois au-dessus des figures dans LaTeX. Pensée pour
+# \includegraphics[width=\textwidth] : 1000 px -> 750 pt, échelle ≈ 0,46 sur 12,2 cm -> texte ≈ 9 pt
+SENSI_LEGEND_H, SENSI_LEGEND_FS = 96, 26
+
+
+def _sensi_legend_width(labels: list[str]) -> int:
+    """Largeur (px) du bandeau : texte (~0,55 em par caractère) + marqueur et espacement par entrée,
+    avec une marge, pour qu'aucun nom ne soit coupé quel que soit le nombre de méthodes."""
+    chars = sum(len(l) for l in labels)
+    return int(chars * 0.55 * SENSI_LEGEND_FS + len(labels) * 110 + 80)
+
+
+def _crop_pdf(pdf: bytes, margin_pt: float = 2.0) -> bytes:
+    """Recadre un PDF au plus près de son contenu. Chromium (kaleido) peint toujours un fond blanc
+    sur toute la page, donc pdfcrop ne voit pas de marge : on cherche le contenu sur un rendu image
+    (pdftoppm), puis Ghostscript fixe la CropBox. Le PDF reste vectoriel. Inchangé en cas d'échec."""
+    import subprocess, tempfile
+    import numpy as np
+    from PIL import Image
+    dpi = 300
+    with tempfile.TemporaryDirectory() as d:
+        src, png, dst = Path(d) / "in.pdf", Path(d) / "page", Path(d) / "out.pdf"
+        src.write_bytes(pdf)
+        try:
+            subprocess.run(["pdftoppm", "-r", str(dpi), "-png", "-singlefile", str(src), str(png)],
+                           check=True, capture_output=True, timeout=60)
+            img = np.asarray(Image.open(f"{png}.png").convert("L"))
+            ys, xs = np.nonzero(img < 250)
+            if not len(xs):
+                return pdf
+            h = img.shape[0]
+            k = 72.0 / dpi                                  # px -> pt ; origine PDF en bas à gauche
+            box = [xs.min() * k - margin_pt, (h - 1 - ys.max()) * k - margin_pt,
+                   (xs.max() + 1) * k + margin_pt, (h - ys.min()) * k + margin_pt]
+            subprocess.run(["gs", "-q", "-o", str(dst), "-sDEVICE=pdfwrite", "-dUseCropBox",
+                            "-c", f"[/CropBox [{' '.join(f'{v:.2f}' for v in box)}] /PAGES pdfmark",
+                            "-f", str(src)], check=True, capture_output=True, timeout=60)
+            return dst.read_bytes()
+        except Exception:
+            return pdf
+
+
+def _sensi_pdf(fig: go.Figure) -> bytes:
+    """PDF d'une figure Sensi exportée, recadré au plus près du contenu (marge 2 pt)."""
+    return _crop_pdf(fig.to_image(format="pdf", width=fig.layout.width or SENSI_PDF_W,
+                                  height=fig.layout.height or SENSI_PDF_H))
+
+
+def _sensi_legend_pdf(labels: list[str]) -> bytes:
+    fig = _sensi_legend_figure(labels)
+    return _crop_pdf(fig.to_image(format="pdf", width=_sensi_legend_width(labels), height=SENSI_LEGEND_H))
+
+
+def _sensi_legend_figure(labels: list[str]) -> go.Figure:
+    fig = go.Figure()
+    for j, label in enumerate(labels):
+        color = SENSI_COLORS[j % len(SENSI_COLORS)]
+        fig.add_trace(go.Scatter(x=[None], y=[None], name=label, mode="lines+markers",
+                                 line=dict(color=color, width=2),
+                                 marker=dict(color=color, size=11, symbol=SENSI_SYMBOLS[j % len(SENSI_SYMBOLS)])))
+    fig.update_layout(
+        width=_sensi_legend_width(labels), height=SENSI_LEGEND_H, margin=dict(t=0, b=0, l=0, r=0),
+        # Fond transparent : sinon pdfcrop voit le fond blanc comme du contenu et ne recadre rien
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+        font=dict(family=SENSI_PDF_FONT, size=SENSI_LEGEND_FS, color="#262730"),
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=0.5, yanchor="middle",
+                    itemwidth=60, bgcolor="rgba(0,0,0,0)"),
+    )
+    return fig
+
+
 def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals: set[str],
-                       export: bool, dark: bool = False) -> go.Figure:
+                       export: bool, dark: bool = False, legend: bool = True) -> go.Figure:
     """Rang moyen (vs concurrents) en fonction du paramètre, axe y inversé (plus bas = meilleur)."""
     cats = [str(v) for v in df[param]]
     fs = 26 if export else 22   # export : ≈ 10 pt une fois inclus à 12 cm
@@ -2605,7 +2792,7 @@ def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals
     for rv in ref_vals & set(cats):
         k = cats.index(rv)
         fig.add_vrect(x0=k - 0.5, x1=k + 0.5, fillcolor="rgba(128,128,128,0.13)", line_width=0, layer="below")
-        fig.add_annotation(x=rv, y=_default_label_y(len(labels)), yref="paper", yanchor="top", text="default", showarrow=False,
+        fig.add_annotation(x=rv, y=_default_label_y(len(labels) if legend or not export else 0), yref="paper", yanchor="top", text="default", showarrow=False,
                            font=dict(size=22 if export else 19, color="rgba(110,110,110,1)"))
     y_hi = float(np.nanmax(df[[f"{l} · rang moy" for l in labels if f"{l} · rang moy" in df]].to_numpy()))
     step = 2 if len(cats) > 15 else 1
@@ -2621,7 +2808,7 @@ def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals
         # Inversé : rang 1 en haut. Bande vide au-dessus du rang 1 (≈ 25 % de la hauteur) pour la
         # légende et « default », que les courbes ne peuvent pas atteindre ; graduations ≥ 1 seulement
         yaxis=dict(title=dict(text="Mean rank", standoff=8), automargin=True,
-                   range=[y_hi * 1.04, 1 - 0.33 * (y_hi - 1)],
+                   range=[y_hi * 1.04, 1 - (0.33 if legend or not export else 0.12) * (y_hi - 1)],
                    tickvals=[1] + list(range(10, int(y_hi) + 1, 10)),
                    showgrid=True, gridcolor="rgba(128,128,128,0.2)", zeroline=False,
                    tickfont=dict(size=fs - 1)),
@@ -2631,13 +2818,15 @@ def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals
         hoverlabel=dict(font_size=17), hovermode="x unified",
     )
     if export:
-        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=0, l=SENSI_PDF_ML, r=4, b=SENSI_PDF_MB))
+        ticks = [str(v) for v in [1] + list(range(10, int(y_hi) + 1, 10))]
+        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", showlegend=legend,
+                          margin=dict(t=0, l=_pdf_left_margin(ticks), r=4, b=SENSI_PDF_MB))
         fig.update_yaxes(gridcolor="rgba(0,0,0,0.12)")
         fig.update_xaxes(linecolor="rgba(0,0,0,0.5)")
     return fig
 
 
-def _sensi_summary_table(series, param: str, ref_vals: set[str]):
+def _sensi_summary_table(series, param: str, ref_vals: set[str], pdf_legend: bool = True):
     """Renvoie la figure d'export du rang moyen (pour « Tout exporter »), ou None."""
     """Récap par valeur du paramètre : rang moyen / top-k vs concurrents, et duel entre les deux méthodes."""
     try:
@@ -2704,8 +2893,8 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
         st.download_button(
             "⬇️ PDF", key="sensi_rank_dl", mime="application/pdf",
             file_name=f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf",
-            data=lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True)
-            .to_image(format="pdf", width=SENSI_PDF_W, height=SENSI_PDF_H),
+            data=lambda: _sensi_pdf(_sensi_rank_figure(df, labels, param, ref_vals, export=True,
+                                                       legend=pdf_legend)),
         )
     right.markdown(f"##### Récap — {scope_txt} ({n_inst} instances)")
     right.dataframe(
@@ -2721,7 +2910,7 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str]):
                   "1 = meilleur). En gras : meilleure valeur de chaque colonne ; "
                "ligne grisée : valeur par défaut." + gap_txt)
     rank_name = f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf"
-    return rank_name, lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True)
+    return rank_name, lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True, legend=pdf_legend)
 
 
 @st.fragment
@@ -2775,7 +2964,17 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
         st.warning(f"Aucune variante trouvée en faisant varier `{param}`.")
         return
 
-    rank_export = _sensi_summary_table(series, param, {str(parse_config_name(cfg).get(param)) for cfg, _ in sel})
+    # Pour LaTeX : figures sans légende + une légende seule, placée une fois au-dessus
+    l1, l2 = st.columns([1, 1])
+    pdf_legend = l1.checkbox("Légende dans les PDF", value=True, key="sensi_pdf_legend",
+                             help="Décocher pour exporter les figures sans légende, et placer la légende "
+                                  "seule une fois au-dessus des figures dans LaTeX.")
+    legend_labels = [label for label, _ in series]
+    l2.download_button("⬇️ Légende seule (PDF)", key="sensi_legend_dl", mime="application/pdf",
+                       file_name=f"sensi_{param}_legend.pdf", use_container_width=True,
+                       data=lambda: _sensi_legend_pdf(legend_labels))
+    rank_export = _sensi_summary_table(series, param, {str(parse_config_name(cfg).get(param)) for cfg, _ in sel},
+                                       pdf_legend)
 
     groups = sorted({(m.group("problem"), int(m.group("dim")))
                      for m in map(INSTANCE_RE.match, sorted_instances) if m},
@@ -2821,8 +3020,8 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 "⬇️ PDF", key=f"sensi_dl_{inst}", mime="application/pdf",
                 file_name=f"sensi_{param}_{inst}{'_box' if style == 'Boîtes' else ''}.pdf",
                 # Généré au clic seulement (kaleido ~1 s par figure)
-                data=lambda st_=stats: _sensi_figure(st_, param, cats, ref_vals, style, export=True)
-                .to_image(format="pdf", width=SENSI_PDF_W, height=SENSI_PDF_H),
+                data=lambda st_=stats: _sensi_pdf(_sensi_figure(st_, param, cats, ref_vals, style,
+                                                                export=True, legend=pdf_legend)),
             )
 
     if export and figs:
@@ -2831,14 +3030,519 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
         with st.spinner(f"Export de {len(figs) + 1} PDF…"):
             if rank_export:
                 rank_name, make_rank = rank_export
-                make_rank().write_image(out_dir / rank_name, format="pdf",
-                                        width=SENSI_PDF_W, height=SENSI_PDF_H)
+                (out_dir / rank_name).write_bytes(_sensi_pdf(make_rank()))
             for inst, stats in figs:
-                fig = _sensi_figure(stats, param, cats, ref_vals, style, export=True)
-                fig.write_image(out_dir / f"sensi_{param}_{inst}{'_box' if style == 'Boîtes' else ''}.pdf",
-                                format="pdf",
-                                width=SENSI_PDF_W, height=SENSI_PDF_H)
+                fig = _sensi_figure(stats, param, cats, ref_vals, style, export=True, legend=pdf_legend)
+                (out_dir / f"sensi_{param}_{inst}{'_box' if style == 'Boîtes' else ''}.pdf").write_bytes(
+                    _sensi_pdf(fig))
         st.success(f"{len(figs) + bool(rank_export)} PDF écrits dans `{out_dir.relative_to(ROOT)}/`")
+
+
+# ── Anytime : meilleure fitness en fonction du nombre d'évaluations ────────────
+ANYTIME_BUDGET = 50000
+ANYTIME_TOP_COMPETITORS = 2      # concurrents externes affichés : les meilleurs de chaque classe
+ANYTIME_DEFAULT_CLASSES = ["NK_dim64_t1", "NK3_dim512_t8", "QUBO_dim512_t3"]
+# Concurrents : couleurs prises hors de celles des méthodes (jamais de collision), traits pointillés
+ANYTIME_COMP_DASH = ["dash", "dot", "dashdot", "longdash"]
+ANYTIME_COMP_EXTRA_COLORS = ["#7f7f7f", "#8c564b", "#17becf", "#bcbd22", "#000000", "#9467bd"]
+
+
+@st.cache_data(show_spinner=False)
+def _anytime_method_curve(config: str, instance: str, mtime: float | None):
+    """(évaluations, moyenne, q25, q75) de la meilleure fitness sur les 100 runs (best_metrics.csv).
+    Courbe = MOYENNE, comme le score final, les rangs et les courbes des concurrents (la médiane sur
+    10 instances d'optimums différents n'est pas comparable). QUBO stocké en négatif : valeur absolue."""
+    if mtime is None:
+        return None
+    try:
+        d = pd.read_csv(RESULTS_DIR / config / instance / "best_metrics.csv")
+        if d.empty or not {"step", "mean", "25%", "75%"} <= set(d.columns):
+            return None
+        q1, mean, q3 = d["25%"].abs().to_numpy(), d["mean"].abs().to_numpy(), d["75%"].abs().to_numpy()
+        x, m, lo, hi = d["step"].tolist(), mean.tolist(), np.minimum(q1, q3).tolist(), np.maximum(q1, q3).tolist()
+        # Dernière génération complète < budget (ex. 549 × 91 = 49 959) : les évaluations restantes
+        # servent aux solutions finales des agents ; la meilleure fitness ne peut que rester égale
+        if x and x[-1] < ANYTIME_BUDGET:
+            x, m, lo, hi = x + [ANYTIME_BUDGET], m + [m[-1]], lo + [lo[-1]], hi + [hi[-1]]
+        return x, m, lo, hi
+    except Exception:
+        return None
+
+
+def _anytime_curve(config: str, instance: str):
+    p = RESULTS_DIR / config / instance / "best_metrics.csv"
+    return _anytime_method_curve(config, instance, p.stat().st_mtime if p.exists() else None)
+
+
+def _short_algo(name: str) -> str:
+    """Nom court d'un concurrent Nevergrad pour les légendes : sans « Discrete », « OnePlusOne » -> « (1+1) »,
+    « Recombining » -> « Recomb ». Ex. HugeLognormalDiscreteOnePlusOne -> HugeLognormal (1+1)."""
+    n = name.strip()
+    if "OnePlusOne" not in n:          # DiscreteDE, PEDA, PPBIL… : nom inchangé (« DE » serait ambigu)
+        return n
+    n = n.replace("Discrete", "").replace("Recombining", "Recomb")
+    if n.endswith("OnePlusOne"):
+        n = n[: -len("OnePlusOne")] + " (1+1)"
+    elif "OnePlusOne" in n:
+        n = n.replace("OnePlusOne", " (1+1) ")
+    return n.strip() or name
+
+
+@st.cache_data(show_spinner=False)
+def _anytime_comp_style(all_instances: tuple[str, ...], n_methods: int) -> dict:
+    """Couleur et trait FIXES de chaque concurrent sur tout le benchmark : on parcourt les meilleurs
+    concurrents de toutes les classes ; un même concurrent a la même apparence dans chaque figure."""
+    from collections import Counter
+    cnt = Counter()
+    for inst in all_instances:
+        m = INSTANCE_RE.match(inst)
+        rk = load_ranking(m.group("problem"), int(m.group("dim")), int(m.group("t")))
+        if rk is not None and not rk.empty:
+            cnt.update(rk.nlargest(ANYTIME_TOP_COMPETITORS, "score")["name_algo"].tolist())
+    method_colors = {SENSI_COLORS[j % len(SENSI_COLORS)] for j in range(n_methods)}
+    colors = [c for c in SENSI_COLORS + ANYTIME_COMP_EXTRA_COLORS if c not in method_colors]
+    names = [a for a, _ in sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0]))]   # les plus fréquents d'abord
+    return {a: (colors[k % len(colors)], ANYTIME_COMP_DASH[(k // len(colors)) % len(ANYTIME_COMP_DASH)])
+            for k, a in enumerate(names)}
+
+
+ANYTIME_ZOOM_FROM = 40000   # encart : zoom sur la fin du run, de 40 000 à 50 000 évaluations
+
+
+def _add_end_zoom(fig: go.Figure, methods, comps, x0: float, fs: int, dark: bool, logx: bool = False) -> None:
+    """Encart en bas à droite avec les mêmes courbes sur [x0, budget] et un axe y resserré ;
+    rectangle pointillé sur la figure principale."""
+    series = ([(c[0], c[1], SENSI_COLORS[j % len(SENSI_COLORS)], "solid", 2.5) for j, (_, c) in enumerate(methods)]
+              + [(c[0], c[1], color, dash, 2) for _, c, color, dash in comps])
+    window = []
+    for x, y, color, dash, width in series:
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        keep = x >= x0
+        if keep.any():
+            i0 = max(int(np.argmax(keep)) - 1, 0)           # un point avant x0 : courbe continue au bord
+            window.append((x[i0:], y[i0:], color, dash, width))
+    if not window:
+        return
+    ys = np.concatenate([w[1][w[0] >= x0] for w in window])
+    lo, hi = float(ys.min()), float(ys.max())
+    pad = (hi - lo) * 0.12 or abs(hi) * 0.002 or 1e-3
+    lo, hi = lo - pad, hi + pad
+    for x, y, color, dash, width in window:
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", xaxis="x2", yaxis="y2", showlegend=False,
+                                 line=dict(color=color, width=width, dash=dash), hoverinfo="skip"))
+    dom_x, dom_y = [0.56, 0.98], [0.07, 0.47]
+    y_fmt = ".3f" if hi < 10 else "~s"
+    fig.update_layout(
+        xaxis2=dict(domain=dom_x, anchor="y2", range=[x0, ANYTIME_BUDGET * 1.01], showgrid=False,
+                    tickvals=[x0, (x0 + ANYTIME_BUDGET) / 2, ANYTIME_BUDGET],
+                    ticktext=[f"{x0 / 1000:g}k", f"{(x0 + ANYTIME_BUDGET) / 2000:g}k", f"{ANYTIME_BUDGET / 1000:g}k"],
+                    tickfont=dict(size=fs - 7), showline=True, mirror=True, linecolor="rgba(128,128,128,0.7)",
+                    ticks=""),
+        yaxis2=dict(domain=dom_y, anchor="x2", range=[lo, hi], tickformat=y_fmt, nticks=4,
+                    tickfont=dict(size=fs - 7), showgrid=True, gridcolor="rgba(128,128,128,0.15)",
+                    showline=True, mirror=True, linecolor="rgba(128,128,128,0.7)", zeroline=False),
+    )
+    bg = "white" if not dark else "#0e1117"
+    fig.add_shape(type="rect", xref="paper", yref="paper", x0=dom_x[0] - 0.07, x1=dom_x[1] + 0.005,
+                  y0=dom_y[0] - 0.06, y1=dom_y[1] + 0.01, fillcolor=bg, line_width=0, layer="below")
+    fig.add_shape(type="rect", xref="x", yref="y", x0=x0, x1=ANYTIME_BUDGET, y0=lo, y1=hi,
+                  line=dict(color="rgba(110,110,110,0.9)", width=1.5, dash="dot"), fillcolor="rgba(0,0,0,0)")
+
+
+def _panel_title(inst: str) -> str:
+    """Titre de panneau : « QUBO, n=256, type 5 » ou « NK3, n=128, K=8 »."""
+    m = INSTANCE_RE.match(inst)
+    pb, dim, t = m.group("problem"), m.group("dim"), m.group("t")
+    return f"{pb}, n={dim}, " + (f"type {t}" if pb == "QUBO" else f"K={t}")
+
+
+def _anytime_figure(methods, comps, logx: bool, export: bool, dark: bool = False,
+                    legend: bool = True, band: bool = False, zoom: bool = False,
+                    title: str | None = None) -> go.Figure:
+    """methods : [(nom, (x, moyenne, q1, q3))] ; comps : [(nom, (x, moyenne), couleur, trait)]. Toutes
+    les courbes sont des moyennes sur les runs. band : intervalle interquartile de nos méthodes."""
+    fs = 26 if export else 22
+    ink = "#262730" if export or not dark else "#e6e6e6"
+    fig = go.Figure()
+    for j, (label, (x, med, q1, q3)) in enumerate(methods):
+        color = SENSI_COLORS[j % len(SENSI_COLORS)]
+        if band:
+            fig.add_trace(go.Scatter(x=x, y=q3, mode="lines", line=dict(width=0), showlegend=False,
+                                     hoverinfo="skip", legendgroup=label))
+            fig.add_trace(go.Scatter(x=x, y=q1, mode="lines", line=dict(width=0), fill="tonexty",
+                                     fillcolor=_hex_rgba(color, 0.15), showlegend=False, hoverinfo="skip",
+                                     legendgroup=label))
+        fig.add_trace(go.Scatter(x=x, y=med, name=label, legendgroup=label, mode="lines",
+                                 line=dict(color=color, width=2.5),
+                                 hovertemplate=f"<b>{label}</b><br>%{{x}} évals<br>moyenne %{{y:.4g}}<extra></extra>"))
+    for label, (x, y), color, dash in comps:
+        fig.add_trace(go.Scatter(x=x, y=y, name=_short_algo(label), mode="lines",
+                                 line=dict(color=color, width=2, dash=dash),
+                                 hovertemplate=f"<b>{label}</b><br>%{{x}} évals<br>moyenne %{{y:.4g}}<extra></extra>"))
+    ys = [v for _, c in methods for v in c[1]] + [v for _, c, _, _ in comps for v in c[1]]
+    y_max = max(ys) if ys else 1.0
+    fig.update_layout(
+        height=700, margin=dict(t=44, l=80, r=36, b=150),   # r : place pour la graduation « 50k »
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(size=fs, color=ink, family=SENSI_PDF_FONT if export else None),
+        xaxis=dict(title=dict(text="Evaluations", standoff=8), type="log" if logx else "linear",
+                   tickvals=[100, 1000, 10000, 50000] if logx else [0, 10000, 20000, 30000, 40000, 50000],
+                   ticktext=["100", "1k", "10k", "50k"] if logx else ["0", "10k", "20k", "30k", "40k", "50k"],
+                   # Axe exactement jusqu'au budget (plotly : bornes en log10 sur un axe log)
+                   # (+1 % au-delà : sinon plotly masque la graduation « 50k » posée sur le bord)
+                   range=[2, np.log10(ANYTIME_BUDGET * 1.01)] if logx else [0, ANYTIME_BUDGET * 1.01],
+                   automargin=True, showgrid=False, showline=True, linecolor="rgba(128,128,128,0.6)",
+                   ticks="", tickfont=dict(size=fs - 1)),
+        yaxis=dict(title=dict(text="Best fitness", standoff=8), automargin=True, showgrid=True,
+                   gridcolor="rgba(128,128,128,0.2)", zeroline=False, tickfont=dict(size=fs - 1),
+                   tickformat=".2f" if y_max < 10 else "~s"),
+        # Sous la figure : selon la classe, les courbes occupent tous les coins (montée tôt ou tard)
+        legend=dict(orientation="h", y=-0.2, yanchor="top", x=0.5, xanchor="center",
+                    bgcolor="rgba(0,0,0,0)"),
+        hoverlabel=dict(font_size=17), hovermode="x unified",
+    )
+    if zoom:
+        _add_end_zoom(fig, methods, comps, ANYTIME_ZOOM_FROM, fs, dark and not export, logx)
+    if export:
+        widest = f"{y_max:.2f}" if y_max < 10 else (f"{y_max / 1000:.1f}k" if y_max >= 1000 else f"{y_max:.0f}")
+        # Légende (si incluse) sous le titre de l'axe x : la figure grandit vers le bas d'autant,
+        # la zone du graphique garde la taille qu'elle a sans légende
+        # Légende compacte (police 22 px, symboles serrés) ; lignes estimées d'après la longueur des noms
+        lfs = fs - 4
+        names = [l for l, _ in methods] + [_short_algo(l) for l, *_ in comps]
+        line_w = SENSI_PDF_W - _pdf_left_margin([widest]) - 36
+        n_rows, cur = 1, 0.0
+        for nm in names:
+            w = len(nm) * 0.5 * lfs + 52                       # texte + trait + espacement
+            if cur and cur + w > line_w:
+                n_rows, cur = n_rows + 1, 0.0
+            cur += w
+        extra = 34 * n_rows + 16 if legend else 0
+        fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", showlegend=legend,
+                          width=SENSI_PDF_W, height=SENSI_PDF_H + extra,
+                          margin=dict(t=6, l=_pdf_left_margin([widest]), r=36, b=SENSI_PDF_MB + extra),
+                          legend=dict(y=-(SENSI_PDF_MB + 8) / (SENSI_PDF_H - SENSI_PDF_MB - 6), yanchor="top",
+                                      font=dict(size=lfs), itemwidth=30, tracegroupgap=0))
+        fig.update_yaxes(gridcolor="rgba(0,0,0,0.12)")
+        fig.update_xaxes(linecolor="rgba(0,0,0,0.5)")
+    if title:
+        # Titre centré au-dessus du graphique, même police ; la figure grandit d'autant vers le haut
+        t_px = 44
+        fig.update_layout(title=dict(text=title, x=0.5, xanchor="center", xref="paper",
+                                     y=1.0, yanchor="bottom", yref="paper", pad=dict(b=8),
+                                     font=dict(size=fs, color="#262730" if export else None,
+                                               family=SENSI_PDF_FONT if export else None)),
+                          margin=dict(t=(fig.layout.margin.t or 0) + t_px),
+                          height=(fig.layout.height or SENSI_PDF_H) + (t_px if export else 0))
+    return fig
+
+
+ANYTIME_CHECKPOINTS = [1000, 5000, 10000, 20000, 30000, 40000, 50000]
+
+
+def _anytime_markdown(panels: list, sel: list) -> str:
+    """Rapport Markdown autonome (pour un LLM) des courbes anytime : panels = [(classe, méthodes, concurrents)]."""
+    def at(c, x):
+        xs, ys = c[0], c[1]
+        v = [y for xx, y in zip(xs, ys) if xx <= x]
+        return v[-1] if v else None
+
+    def reach(c, target):
+        return next((int(xx) for xx, y in zip(c[0], c[1]) if y >= target), None)
+
+    fmt = lambda v: "—" if v is None else (f"{v:.4f}" if abs(v) < 10 else f"{v:.1f}")
+    out = ["# Courbes anytime (meilleure fitness en fonction des évaluations)", "",
+           "## Méthodes SVGD", ""]
+    out += [f"- **{l}** : `{c}` — " + ", ".join(f"{k}={v}" for k, v in parse_config_name(c).items()) for c, l in sel]
+    out += ["", "## Méthodologie", "",
+            "- Courbe = moyenne, sur les 100 runs (10 instances × 10 restarts), de la meilleure fitness trouvée "
+            "jusqu'ici ; plus haut = meilleur (valeur absolue pour QUBO). Budget : 50 000 évaluations.",
+            "- Concurrents : les 2 meilleurs du pool externe (82 optimiseurs, 80 sur NK3 ; Nevergrad + PBIL/PEDA/PPBIL) "
+            "sur la classe, au score final ; courbe = moyenne de leurs runs.",
+            "- Rang final : 1 + nombre de concurrents externes strictement meilleurs.",
+            "- Hamming (méthodes SVGD seulement, colonne `avg_hamming` de best_metrics.csv) : distance de Hamming "
+            "*espérée* entre deux agents, calculée à chaque génération à partir de leurs distributions (pas sur des "
+            "solutions tirées). Pour deux agents i, j : somme sur les N variables de la probabilité que leurs "
+            "tirages diffèrent, soit p_i + p_j − 2 p_i p_j par variable binaire (QUBO, NK) et 1 − Σ_d p_i,d p_j,d "
+            "par variable ternaire (NK3). Moyenne sur toutes les paires d'agents i ≠ j, puis sur les 100 runs. "
+            "Va de 0 (agents identiques) à N ; vaut 0 pour m = 1. Mesure la diversité entre agents.", ""]
+    for inst, methods, comps in panels:
+        m = INSTANCE_RE.match(inst)
+        pb, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
+        ref = next((c for l, c in methods if l == sel[0][1]), None)
+        out += [f"## {_panel_title(inst)}", "",
+                "| méthode | " + " | ".join(f"{x // 1000}k" for x in ANYTIME_CHECKPOINTS) + " | rang final | "
+                f"évals pour atteindre le score final de {sel[0][1]} |",
+                "|---" * (len(ANYTIME_CHECKPOINTS) + 3) + "|"]
+        rows = [(l, c) for l, c in methods] + [(f"{a} ({_short_algo(a)})", c) for a, c, *_ in comps]
+        for label, c in rows:
+            r = _get_rank(pb, dim, t, c[1][-1])
+            e = reach(c, ref[1][-1]) if ref else None
+            out.append(f"| {label} | " + " | ".join(fmt(at(c, x)) for x in ANYTIME_CHECKPOINTS)
+                       + f" | {r if r else '—'} | {e if e is not None else 'jamais'} |")
+        out.append("")
+        # Diversité entre agents (Hamming espéré), méthodes SVGD seulement
+        ham_rows, ham_bad = [], []
+        for cfg, label in sel:
+            pth = RESULTS_DIR / cfg / inst / "best_metrics.csv"
+            try:
+                d = pd.read_csv(pth)
+            except Exception:
+                continue
+            if "avg_hamming" not in d.columns or d.empty:
+                continue
+            h = [d.loc[d["step"] <= x, "avg_hamming"].iloc[-1] if (d["step"] <= x).any() else None
+                 for x in ANYTIME_CHECKPOINTS]
+            # Contrôle : à la 1re génération les agents sont quasi uniformes -> ≈ N·(1 − 1/D). Un écart > 15 %
+            # signale un fichier calculé avec une ancienne formule (ex. SVGD-EDA sur NK3 n ≤ 256, runs de juin)
+            D_ = 3 if pb == "NK3" else 2
+            bad = abs(d["avg_hamming"].iloc[0] - dim * (1 - 1 / D_)) > 0.15 * dim * (1 - 1 / D_)
+            ham_rows.append(f"| {label}{' ⚠' if bad else ''} | "
+                            + " | ".join("—" if v is None else f"{v:.2f}" for v in h) + " |")
+            if bad:
+                ham_bad.append(label)
+        if ham_rows:
+            out += [f"Distance de Hamming moyenne entre agents (N = {dim}) :", "",
+                    "| méthode | " + " | ".join(f"{x // 1000}k" for x in ANYTIME_CHECKPOINTS) + " |",
+                    "|---" * (len(ANYTIME_CHECKPOINTS) + 1) + "|"] + ham_rows + [""]
+            if ham_bad:
+                out += ["⚠ **Ne pas s'appuyer sur la distance de Hamming de " + ", ".join(ham_bad) + " sur cette "
+                        "classe** : ces runs ont été produits avec une ancienne formule du Hamming pour les variables "
+                        "ternaires (valeur initiale incompatible avec la définition, jusqu'à dépasser N). Leurs scores "
+                        "et rangs ne sont pas concernés.", ""]
+    return "\n".join(out)
+
+
+@st.fragment
+def tab_anytime(all_df: pd.DataFrame, sorted_instances: list) -> None:
+    """Courbes de convergence : meilleure fitness en fonction des évaluations (médiane + IQR sur les
+    100 runs pour nos méthodes, moyenne pour les concurrents), et évaluations pour atteindre une cible."""
+    all_configs = all_df["config"].tolist()
+    saved = load_anytime()
+    # Par défaut, mêmes méthodes et mêmes noms que l'onglet Sensi (légendes identiques dans le papier)
+    saved_methods = (saved.get("methods") or load_sensi().get("methods")
+                     or [{"config": c, "name": n} for c, n in SENSI_DEFAULTS])
+
+    h1, h2, h3 = st.columns([2, 2, 2])
+    n_methods = int(h1.number_input("Nombre de méthodes", 1, SENSI_MAX_METHODS,
+                                    min(max(int(saved.get("n", 3)), 1), SENSI_MAX_METHODS), key="any_n"))
+    logx = h2.checkbox("Évaluations en échelle log", value=bool(saved.get("logx", False)), key="any_logx",
+                       help="Linéaire : axe de 0 à 50 000. Log : de 100 à 50 000 (log 0 n'existe pas).")
+    zoom = h3.checkbox(f"Zoom sur la fin ({ANYTIME_ZOOM_FROM // 1000}k → {ANYTIME_BUDGET // 1000}k)",
+                       value=bool(saved.get("zoom", True)), key="any_zoom")
+    band = h2.checkbox("Bande interquartile (nos méthodes)", value=bool(saved.get("band", False)), key="any_band",
+                       help="Quartiles des 100 runs : mélange les 10 instances de la classe, d'où une bande large.")
+
+    sel = []
+    cols = st.columns(min(n_methods, 3))
+    for i in range(n_methods):
+        letter = "abcdefgh"[i]
+        default, name = ((saved_methods[i]["config"], saved_methods[i]["name"]) if i < len(saved_methods)
+                         else (all_configs[0], f"Méthode {i + 1}"))
+        with cols[i % len(cols)]:
+            idx = all_configs.index(default) if default in all_configs else 0
+            cfg = st.selectbox(f"Config {letter.upper()}", all_configs, index=idx, key=f"any_{letter}")
+            label = st.text_input("Nom", name, key=f"any_{letter}_label")
+            sel.append((cfg, label))
+
+    # Sélection d'une seule classe, par puces groupées par problème et dimension (comme l'onglet Favoris)
+    st.markdown("**Classe à visualiser**")
+    st.markdown(
+        "<style>"
+        '[data-testid="stPills"] button,'
+        '[data-testid="stBaseButton-pills"],'
+        '[data-testid="stBaseButton-pillsActive"]{'
+        'padding:0.4rem 0.95rem !important;border-radius:10px !important;'
+        'min-height:2.2rem !important;}'
+        '[data-testid="stPills"] button p,'
+        '[data-testid="stBaseButton-pills"] p,'
+        '[data-testid="stBaseButton-pillsActive"] p{'
+        'font-size:1.15rem !important;font-weight:600 !important;}'
+        ".fav-curve-hdr{font-size:1.5rem;font-weight:700;margin:6px 0 2px;}"
+        ".fav-curve-dim{font-size:1.2rem;font-weight:600;color:#555;margin:10px 0 2px;}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    _iprob = lambda i: INSTANCE_RE.match(i).group("problem")
+    _idim = lambda i: int(INSTANCE_RE.match(i).group("dim"))
+    _it = lambda i: int(INSTANCE_RE.match(i).group("t"))
+    probs = [p for p in ["NK", "NK3", "QUBO"] if any(_iprob(i) == p for i in sorted_instances)]
+    pick_keys = {(p, d): f"any_pick_{p}_{d}" for p in probs
+                 for d in sorted({_idim(i) for i in sorted_instances if _iprob(i) == p})}
+    group_of = lambda c: pick_keys[(_iprob(c), _idim(c))]
+    # Jusqu'à 2 classes : 1 -> figure seule ; 2 -> figure double (gauche = 1er clic, droite = 2e clic)
+    if "any_sel" not in st.session_state:
+        init = saved.get("pair") or ([saved["class"]] if saved.get("class") else ANYTIME_DEFAULT_CLASSES[:1])
+        st.session_state["any_sel"] = [c for c in dict.fromkeys(init) if c in sorted_instances][:2]
+        for k in pick_keys.values():
+            st.session_state[k] = [c for c in st.session_state["any_sel"] if group_of(c) == k]
+
+    def _any_pick_cb(changed: str):
+        now = set(st.session_state.get(changed) or [])
+        order = [c for c in st.session_state["any_sel"] if group_of(c) != changed or c in now]
+        order += [c for c in sorted(now) if c not in order]           # clic ajouté en dernier
+        order = order[-2:]                                              # 3e clic : remplace le plus ancien
+        st.session_state["any_sel"] = order
+        for k in pick_keys.values():
+            st.session_state[k] = [c for c in order if group_of(c) == k]
+
+    for pcol, p in zip(st.columns(len(probs), gap="large"), probs):
+        with pcol:
+            st.markdown(f'<div class="fav-curve-hdr">{p}</div>', unsafe_allow_html=True)
+            lbl = "t" if p == "QUBO" else "K"
+            p_insts = [i for i in sorted_instances if _iprob(i) == p]
+            for d in sorted({_idim(i) for i in p_insts}):
+                wkey = pick_keys[(p, d)]
+                st.markdown(f'<div class="fav-curve-dim">DIM {d}</div>', unsafe_allow_html=True)
+                st.pills(wkey, sorted((i for i in p_insts if _idim(i) == d), key=_it), selection_mode="multi",
+                         key=wkey, format_func=lambda i, _l=lbl: f"{_l}{_it(i)}",
+                         on_change=_any_pick_cb, args=(wkey,), label_visibility="collapsed")
+    classes = list(st.session_state.get("any_sel", []))
+    comp_style = _anytime_comp_style(tuple(sorted_instances), n_methods)
+
+    state = {"n": n_methods, "logx": logx, "band": band, "zoom": zoom,
+             "class": classes[0] if classes else saved.get("class"), "pair": classes,
+             "methods": [{"config": c, "name": l} for c, l in sel] + saved_methods[n_methods:]}
+    if state != saved:
+        save_anytime(state)
+    if not classes:
+        st.info("Sélectionnez une ou deux classes ci-dessus (deux : figure double avec légende commune).")
+        return
+
+    def _panel(inst):
+        """(méthodes, concurrents) d'une classe, prêts pour _anytime_figure."""
+        m = INSTANCE_RE.match(inst)
+        pb, dim, t = m.group("problem"), int(m.group("dim")), int(m.group("t"))
+        rk = load_ranking(pb, dim, t)
+        top = [] if rk is None or rk.empty else rk.nlargest(ANYTIME_TOP_COMPETITORS, "score")["name_algo"].tolist()
+        methods = [(label, c) for cfg, label in sel if (c := _anytime_curve(cfg, inst)) is not None]
+        comps = [(algo, c, *comp_style[algo]) for algo in top
+                 if algo in comp_style and (c := load_competitor_curve(algo, pb, dim, t)) is not None]
+        return methods, comps
+
+    comp_names = list(dict.fromkeys(a for inst in classes for a, *_ in _panel(inst)[1]))
+    st.caption("Concurrents externes : les " + str(ANYTIME_TOP_COMPETITORS) + " meilleurs du pool sur chaque "
+               "classe (score final) — " + ", ".join(_short_algo(a) for a in comp_names))
+
+    if len(classes) == 1:
+        inst = classes[0]
+        pdf_legend = st.checkbox("Légende dans le PDF", value=True, key="any_pdf_legend")
+        methods, comps = _panel(inst)
+        # Aperçu = la figure exportée, aux dimensions du PDF : mêmes proportions, police, légende et zoom
+        fig = _anytime_figure(methods, comps, logx, export=True, band=band, zoom=zoom, legend=pdf_legend)
+        st.caption(_sensi_caption(inst) + " — aperçu à l'échelle du PDF")
+        st.plotly_chart(fig, use_container_width=False, theme=None, key=f"any_fig_{inst}",
+                        config={"displayModeBar": False})
+        st.download_button("⬇️ Export (Markdown)", key=f"any_md_{inst}", mime="text/markdown",
+                           file_name=f"anytime_{inst}.md",
+                           data=lambda: _anytime_markdown([(inst, methods, comps)], sel))
+        st.download_button(
+            "⬇️ PDF", key=f"any_dl_{inst}", mime="application/pdf", file_name=f"anytime_{inst}.pdf",
+            data=lambda: _sensi_pdf(_anytime_figure(methods, comps, logx, export=True,
+                                                    legend=pdf_legend, band=band, zoom=zoom)))
+        return
+
+    # Deux classes : figure double (gauche, droite) + légende commune dessous, aperçu = le PDF lui-même
+    left, right = classes
+    key = (left, right, logx, band, zoom, tuple(sel),
+           *(p.stat().st_mtime for c, _ in sel for inst in (left, right)
+             if (p := RESULTS_DIR / c / inst / "best_metrics.csv").exists()))
+    cache = st.session_state.setdefault("_any_double_cache", {})
+    if key not in cache:
+        with st.spinner("Composition de la figure double…"):
+            (ml, cl), (mr, cr) = _panel(left), _panel(right)
+            union = list(dict.fromkeys([a for a, *_ in cl] + [a for a, *_ in cr]))
+            # Légende sur deux lignes indépendantes (méthodes, puis concurrents), chacune à largeur naturelle :
+            # une seule légende repliée aligne les entrées sur la plus longue et coupe les concurrents en deux
+            method_entries = [(l, SENSI_COLORS[j % len(SENSI_COLORS)], "solid") for j, (_, l) in enumerate(sel)]
+            comp_entries = [(_short_algo(a), *comp_style[a]) for a in union]
+            legends = [_anytime_legend_pdf(e, max_width=100000) for e in (method_entries, comp_entries) if e]
+            pdf = _compose_double_pdf(
+                _sensi_pdf(_anytime_figure(ml, cl, logx, export=True, legend=False, band=band, zoom=zoom,
+                                           title=_panel_title(left))),
+                _sensi_pdf(_anytime_figure(mr, cr, logx, export=True, legend=False, band=band, zoom=zoom,
+                                           title=_panel_title(right))),
+                legends)
+            cache.clear()
+            cache[key] = (pdf, _pdf_to_png(pdf))
+    pdf, png = cache[key]
+    st.caption(f"{_sensi_caption(left)}  |  {_sensi_caption(right)} — aperçu du PDF")
+    st.image(png, width=1300)
+    # Correspondance des noms abrégés, à coller dans la légende LaTeX de la figure
+    shown = list(dict.fromkeys(a for inst in (left, right) for a, *_ in _panel(inst)[1]))
+    abbrev = [(_short_algo(a), a) for a in shown if _short_algo(a) != a]
+    if abbrev:
+        mapping = "; ".join(f"{short} = \\texttt{{{full}}}" for short, full in abbrev)
+        st.markdown("**Correspondance des noms abrégés** (à coller dans ta `\\caption{…}`) :")
+        st.code(f"Abbreviated Nevergrad names: {mapping}.", language="latex")
+    st.download_button("⬇️ Export (Markdown)", key="any_double_md", mime="text/markdown",
+                       file_name=f"anytime_{left}__{right}.md",
+                       data=lambda: _anytime_markdown([(c, *_panel(c)) for c in (left, right)], sel))
+    st.download_button("⬇️ Figure double + légende (PDF)", key="any_double_dl", mime="application/pdf",
+                       file_name=f"anytime_{left}__{right}.pdf", data=pdf,
+                       help="Un seul PDF, tout à la même échelle. Dans LaTeX : \\includegraphics[width=\\textwidth]{…}")
+
+
+def _pdf_to_png(pdf: bytes, dpi: int = 110) -> bytes | None:
+    """Rendu PNG d'un PDF (pdftoppm), pour l'aperçu exact dans le dashboard."""
+    import subprocess, tempfile
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "f.pdf").write_bytes(pdf)
+        try:
+            subprocess.run(["pdftoppm", "-cropbox", "-png", "-r", str(dpi), "-singlefile",
+                            str(Path(d) / "f.pdf"), str(Path(d) / "f")], check=True, capture_output=True, timeout=60)
+            return (Path(d) / "f.png").read_bytes()
+        except Exception:
+            return None
+
+
+def _compose_double_pdf(left: bytes, right: bytes, legend: bytes | list[bytes], gap_pt: int = 18) -> bytes:
+    """Assemble deux panneaux côte à côte et la légende commune centrée dessous, avec pdflatex
+    (classe standalone). Tout est inclus à sa taille naturelle : panneaux et légende gardent la même
+    échelle, donc des polices identiques ; on redimensionne ensuite la figure entière dans le papier."""
+    import subprocess, tempfile
+    legends = legend if isinstance(legend, list) else [legend]   # une ligne de légende par PDF, empilées
+    rows = r"\\[2pt]".join(r"\includegraphics{legend%d.pdf}" % k for k in range(len(legends)))
+    tex = (r"\documentclass[border=0pt]{standalone}\usepackage{graphicx}\begin{document}"
+           r"\begin{tabular}{@{}c@{}}"
+           r"\includegraphics{left.pdf}\hspace{" + str(gap_pt) + r"pt}\includegraphics{right.pdf}\\[6pt]"
+           + rows +
+           r"\end{tabular}\end{document}")
+    with tempfile.TemporaryDirectory() as d:
+        dd = Path(d)
+        (dd / "left.pdf").write_bytes(left); (dd / "right.pdf").write_bytes(right)
+        for k, lg in enumerate(legends):
+            (dd / f"legend{k}.pdf").write_bytes(lg)
+        (dd / "fig.tex").write_text(tex)
+        subprocess.run(["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "fig.tex"],
+                       cwd=d, check=True, capture_output=True, timeout=120)
+        return (dd / "fig.pdf").read_bytes()
+
+
+ANYTIME_LEGEND_MAX_W = 1150   # légende commune : au-delà, les entrées passent à la ligne
+
+
+def _anytime_legend_pdf(entries: list[tuple[str, str, str]], max_width: int = ANYTIME_LEGEND_MAX_W) -> bytes:
+    """Légende seule : (nom, couleur, trait) — traits pleins pour nos méthodes, pointillés pour les concurrents.
+    Largeur bornée : plusieurs lignes si besoin (sinon un bandeau trop large pour la page)."""
+    labels = [e[0] for e in entries]
+    width = min(_sensi_legend_width(labels), max_width)
+    # Légende repliée : plotly aligne les entrées en colonnes de largeur égale (celle du nom le plus long)
+    entry_w = max(len(l) for l in labels) * 0.55 * SENSI_LEGEND_FS + 110
+    per_row = max(1, int((width - 40) // entry_w)) if width < _sensi_legend_width(labels) else len(labels)
+    n_rows = -(-len(labels) // per_row)
+    height = 90 * n_rows + 80          # large : le recadrage (_crop_pdf) retire ensuite le blanc
+    fig = go.Figure()
+    for label, color, dash in entries:
+        fig.add_trace(go.Scatter(x=[None], y=[None], name=label, mode="lines",
+                                 line=dict(color=color, width=3, dash=dash)))
+    fig.update_layout(width=width, height=height, margin=dict(t=0, b=0, l=0, r=0),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      xaxis=dict(visible=False), yaxis=dict(visible=False),
+                      font=dict(family=SENSI_PDF_FONT, size=SENSI_LEGEND_FS, color="#262730"),
+                      legend=dict(orientation="h", x=0.5, xanchor="center", y=0.5, yanchor="middle",
+                                  itemwidth=60, bgcolor="rgba(0,0,0,0)"))
+    return _crop_pdf(fig.to_image(format="pdf", width=width, height=height))
 
 
 def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
@@ -3297,8 +4001,8 @@ def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
 sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab5, tab6, tab7, tab8 = st.tabs(
-    ["📋 Classement", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi"]
+tab1, tab5, tab6, tab7, tab8, tab9 = st.tabs(
+    ["📋 Classement", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi", "⏱️ Anytime"]
 )
 
 with tab1:
@@ -3315,3 +4019,6 @@ with tab7:
 
 with tab8:
     tab_sensi(df, sorted_instances)
+
+with tab9:
+    tab_anytime(df, sorted_instances)
