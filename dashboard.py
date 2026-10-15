@@ -15,6 +15,7 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
 RESULTS_DIR = ROOT / "results" / "config"
+TUNING_DIR = ROOT / "results" / "tuning"     # recherche d'hyperparams sur les instances de reglage
 RANKING_DIR = ROOT / "additional_results" / "global_ranking"
 BEAST_DIR = ROOT / "results" / "the beast"
 
@@ -242,7 +243,7 @@ def load_summary() -> pd.DataFrame:
     # Recompute only new/missing configs
     rows: list[dict] = []
     new_inst_rows: list[dict] = []
-    progress = st.progress(0, text="Mise à jour du cache…")
+    progress = st.progress(0, text="Updating cache…")
     for i, config_dir in enumerate(new_dirs):
         progress.progress(
             (i + 1) / max(len(new_dirs), 1),
@@ -377,7 +378,7 @@ def load_beast_optima(problem: str, dim: int, t: int, ti: int):
     return _load_beast_optima_cached(problem, *paths) if paths else None
 
 
-@st.cache_data(show_spinner="Chargement des optima « the beast »…")
+@st.cache_data(show_spinner="Loading « the beast » optima…")
 def _load_beast_optima_cached(problem: str, fp: str, sp: str):
     try:
         fit = np.atleast_1d(np.loadtxt(fp)).astype(np.float64)
@@ -1024,10 +1025,10 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
     # ── Vue liste (dossiers) ──────────────────────────────────────────────────
     if sel_idx is None or sel_idx >= len(comps):
         h1, h2 = st.columns([6, 1])
-        h1.markdown("#### 📁 Dossiers")
-        if h2.button("+ Nouveau", key="comp_new", use_container_width=True):
+        h1.markdown("#### 📁 Folders")
+        if h2.button("+ New", key="comp_new", use_container_width=True):
             comps.append({
-                "name": f"Comparaison {len(comps) + 1}",
+                "name": f"Comparison {len(comps) + 1}",
                 "config_a": "", "config_b": "", "instances": [],
             })
             save_comparisons(comps)
@@ -1035,7 +1036,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             st.rerun()
 
         if not comps:
-            st.info("Aucun dossier. Cliquez sur « + Nouveau » pour commencer.")
+            st.info("No folders yet. Click « + New » to get started.")
             return
 
         grid = st.columns(3)
@@ -1068,12 +1069,12 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
     grp = comps[sel_idx]
 
     hd1, hd2 = st.columns([1, 8])
-    if hd1.button("← Retour", key="comp_back"):
+    if hd1.button("← Back", key="comp_back"):
         st.session_state.pop("comp_sel_idx", None)
         st.rerun()
     hd2.markdown(f"#### 📂 {grp['name']}")
 
-    new_name = st.text_input("Nom", value=grp["name"], key=f"comp_name_{sel_idx}")
+    new_name = st.text_input("Name", value=grp["name"], key=f"comp_name_{sel_idx}")
     if new_name and new_name != grp["name"]:
         comps[sel_idx]["name"] = new_name
         save_comparisons(comps)
@@ -1096,13 +1097,13 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
         save_comparisons(comps)
 
     if not cfg_a or not cfg_b:
-        st.info("Sélectionnez deux configs pour afficher la comparaison.")
+        st.info("Select two configs to display the comparison.")
         return
 
     # Noms personnalisés
     nc1, nc2 = st.columns(2)
-    label_a = nc1.text_input("Nom Config A", value=grp.get("label_a", "Config A"), key=f"comp_label_a_{sel_idx}", placeholder="Config A")
-    label_b = nc2.text_input("Nom Config B", value=grp.get("label_b", "Config B"), key=f"comp_label_b_{sel_idx}", placeholder="Config B")
+    label_a = nc1.text_input("Config A name", value=grp.get("label_a", "Config A"), key=f"comp_label_a_{sel_idx}", placeholder="Config A")
+    label_b = nc2.text_input("Config B name", value=grp.get("label_b", "Config B"), key=f"comp_label_b_{sel_idx}", placeholder="Config B")
     label_a = label_a or "Config A"
     label_b = label_b or "Config B"
     if label_a != grp.get("label_a") or label_b != grp.get("label_b"):
@@ -1126,13 +1127,13 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
     qubo_insts = [i for i in sorted_instances if INSTANCE_RE.match(i).group("problem") == "QUBO"]
 
     b1, b2, b3 = st.columns(3)
-    if b1.button("+ Tout NK",   key=f"comp_nk_{sel_idx}",   use_container_width=True):
+    if b1.button("+ All NK",   key=f"comp_nk_{sel_idx}",   use_container_width=True):
         current = list(st.session_state.get(inst_key, saved_insts))
         st.session_state[inst_key] = sorted(set(current) | set(nk_insts),   key=sorted_instances.index)
-    if b2.button("+ Tout NK3",  key=f"comp_nk3_{sel_idx}",  use_container_width=True):
+    if b2.button("+ All NK3",  key=f"comp_nk3_{sel_idx}",  use_container_width=True):
         current = list(st.session_state.get(inst_key, saved_insts))
         st.session_state[inst_key] = sorted(set(current) | set(nk3_insts),  key=sorted_instances.index)
-    if b3.button("+ Tout QUBO", key=f"comp_qubo_{sel_idx}", use_container_width=True):
+    if b3.button("+ All QUBO", key=f"comp_qubo_{sel_idx}", use_container_width=True):
         current = list(st.session_state.get(inst_key, saved_insts))
         st.session_state[inst_key] = sorted(set(current) | set(qubo_insts), key=sorted_instances.index)
 
@@ -1188,7 +1189,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             "_l1_b":        round(lb, 2) if lb is not None else None,
             col_rank_a:     ra,
             col_rank_b:     rb,
-            "Résultat":     f"{label_a} ✓" if gap > 0 else (f"{label_b} ✓" if gap < 0 else "égalité"),
+            "Result":     f"{label_a} ✓" if gap > 0 else (f"{label_b} ✓" if gap < 0 else "tie"),
         })
 
     if summary_rows:
@@ -1200,9 +1201,9 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                                               col_score_a, col_score_b, col_rank_a, col_rank_b,
                                               col_hamming_a, col_hamming_b),
         )
-        with st.expander("📊 Résumé", expanded=True):
-            wins_a     = sum(1 for r in summary_rows if r["Résultat"] == f"{label_a} ✓")
-            wins_b     = sum(1 for r in summary_rows if r["Résultat"] == f"{label_b} ✓")
+        with st.expander("📊 Summary", expanded=True):
+            wins_a     = sum(1 for r in summary_rows if r["Result"] == f"{label_a} ✓")
+            wins_b     = sum(1 for r in summary_rows if r["Result"] == f"{label_b} ✓")
             mean_gap   = sum(r["Gap %"] for r in summary_rows) / len(summary_rows)
             ranks_a    = [r[col_rank_a]    for r in summary_rows if r[col_rank_a]    is not None]
             ranks_b    = [r[col_rank_b]    for r in summary_rows if r[col_rank_b]    is not None]
@@ -1214,11 +1215,11 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             s_td0 = "padding:7px 24px;font-size:17px;font-weight:600;border-bottom:1px solid #f0f0f0;white-space:nowrap;color:#555;"
             s_td  = "padding:7px 24px;font-size:18px;font-weight:700;border-bottom:1px solid #f0f0f0;text-align:center;white-space:nowrap;"
 
-            stat_rows = [("Victoires", wins_a, wins_b), ("Top 1", top1_a, top1_b)]
+            stat_rows = [("Wins", wins_a, wins_b), ("Top 1", top1_a, top1_b)]
             if ranks_a and ranks_b:
                 stat_rows += [
-                    ("Rank moy", f"{sum(ranks_a)/len(ranks_a):.1f}", f"{sum(ranks_b)/len(ranks_b):.1f}"),
-                    ("Rank méd", sorted(ranks_a)[len(ranks_a)//2],   sorted(ranks_b)[len(ranks_b)//2]),
+                    ("Mean rank", f"{sum(ranks_a)/len(ranks_a):.1f}", f"{sum(ranks_b)/len(ranks_b):.1f}"),
+                    ("Median rank", sorted(ranks_a)[len(ranks_a)//2],   sorted(ranks_b)[len(ranks_b)//2]),
                 ]
             for dim in [64, 128, 256, 512]:
                 dim_ha = [r[col_hamming_a] for r in summary_rows if r["_dim"] == dim and r[col_hamming_a] is not None]
@@ -1237,10 +1238,10 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             # Test global, même méthode que l'onglet Ablation (un seul test ici : pas de Holm)
             g = _global_wilcoxon(r["_gap"] for r in summary_rows)
             if g:
-                verdict = ((f"{label_a} meilleure" if g["median"] > 0 else f"{label_b} meilleure")
-                           if g["p"] < 0.05 else "pas de différence globale")
-                stat_rows.append((f"Wilcoxon global ({g['n']} classes)",
-                                  f"p = {g['p']:.2g} · écart médian {g['median']:+.2f}%", verdict))
+                verdict = ((f"{label_a} better" if g["median"] > 0 else f"{label_b} better")
+                           if g["p"] < 0.05 else "no overall difference")
+                stat_rows.append((f"Overall Wilcoxon ({g['n']} classes)",
+                                  f"p = {g['p']:.2g} · median gap {g['median']:+.2f}%", verdict))
 
             html_stats = '<table style="border-collapse:collapse;margin-bottom:16px;">'
             html_stats += (f'<thead><tr>'
@@ -1299,7 +1300,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
             data_cols_c = (
                 ["Instance", col_score_a, col_score_b, "Gap %"]
                 + ([col_hamming_a, col_hamming_b] if has_hamming else [])
-                + [col_rank_a, col_rank_b, "Résultat"]
+                + [col_rank_a, col_rank_b, "Result"]
             )
             # couleur par colonne
             col_colors = {
@@ -1381,7 +1382,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                          if (_conv_data.get((cfg_a, p)) or _conv_data.get((cfg_b, p)))]
         if _active_probs:
             st.divider()
-            st.markdown("#### 📈 Convergence moyenne par famille")
+            st.markdown("#### 📈 Mean convergence per family")
             fig_conv = make_subplots(
                 rows=1, cols=len(_active_probs),
                 subplot_titles=_active_probs,
@@ -1421,7 +1422,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     ), row=1, col=_ci)
                 fig_conv.update_yaxes(title_text="Score", row=1, col=_ci,
                                       gridcolor="#ebebeb", zeroline=False)
-                fig_conv.update_xaxes(title_text="Évaluations", row=1, col=_ci,
+                fig_conv.update_xaxes(title_text="Evaluations", row=1, col=_ci,
                                       gridcolor="#ebebeb")
             fig_conv.update_layout(
                 height=380,
@@ -1465,7 +1466,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 has_box     = scores_a is not None or scores_b is not None
 
                 if not has_curve and not has_hamming and not has_box:
-                    st.warning("Pas de données pour cette instance.")
+                    st.warning("No data for this instance.")
                     continue
 
                 # Assign subplot rows sequentially
@@ -1481,8 +1482,8 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 n_rows = row_idx - 1
                 titles = (
                     (["Convergence"]         if has_curve   else []) +
-                    (["Hamming (diversité)"] if has_hamming else []) +
-                    (["Distribution finale"] if has_box     else [])
+                    (["Hamming (diversity)"] if has_hamming else []) +
+                    (["Final distribution"] if has_box     else [])
                 )
                 row_heights = (
                     [0.40, 0.25, 0.35] if n_rows == 3 else
@@ -1511,7 +1512,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                             name=algo, mode="lines",
                             line=dict(dash="dash", color=COLORS[(j + 2) % len(COLORS)], width=1),
                         ), row=curve_row, col=1)
-                    fig.update_xaxes(title_text="Évaluations", row=curve_row, col=1)
+                    fig.update_xaxes(title_text="Evaluations", row=curve_row, col=1)
                     fig.update_yaxes(title_text="Score",        row=curve_row, col=1)
 
                 if has_hamming:
@@ -1523,8 +1524,8 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                             name=lbl, line=dict(color=color, width=2, dash="dot"),
                             mode="lines", showlegend=False,
                         ), row=hamming_row, col=1)
-                    fig.update_xaxes(title_text="Évaluations",  row=hamming_row, col=1)
-                    fig.update_yaxes(title_text="Hamming moy.", row=hamming_row, col=1)
+                    fig.update_xaxes(title_text="Evaluations",  row=hamming_row, col=1)
+                    fig.update_yaxes(title_text="Mean Hamming", row=hamming_row, col=1)
 
                 if has_box:
                     for scores, lbl, color in [(scores_a, label_a, COLOR_A), (scores_b, label_b, COLOR_B)]:
@@ -1540,7 +1541,7 @@ def tab_comparaison(all_df: pd.DataFrame, sorted_instances: list) -> None:
                             line=dict(dash="dash", color=COLORS[(j + 2) % len(COLORS)], width=1),
                             annotation_text=algo, annotation_position="bottom right",
                         )
-                    fig.update_yaxes(title_text="Score final", row=box_row, col=1)
+                    fig.update_yaxes(title_text="Final score", row=box_row, col=1)
 
                 fig.update_layout(
                     height={3: 960, 2: 720, 1: 440}.get(n_rows, 720),
@@ -1559,16 +1560,16 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
     # ── Vue liste (dossiers) ──────────────────────────────────────────────────
     if sel_idx is None or sel_idx >= len(favs):
         h1, h2 = st.columns([6, 1])
-        h1.markdown("#### ⭐ Dossiers favoris")
-        if h2.button("+ Nouveau", key="fav_new", use_container_width=True):
-            favs.append({"name": f"Favoris {len(favs) + 1}",
+        h1.markdown("#### ⭐ Favorite folders")
+        if h2.button("+ New", key="fav_new", use_container_width=True):
+            favs.append({"name": f"Favorites {len(favs) + 1}",
                          "configs": [], "aliases": {}, "instances": []})
             save_favorites(favs)
             st.session_state["fav_sel_idx"] = len(favs) - 1
             st.rerun()
 
         if not favs:
-            st.info("Aucun dossier. Cliquez sur « + Nouveau » pour commencer.")
+            st.info("No folders yet. Click « + New » to get started.")
             return
 
         grid = st.columns(3)
@@ -1599,25 +1600,25 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
     fav = favs[sel_idx]
 
     hd1, hd2 = st.columns([1, 8])
-    if hd1.button("← Retour", key="fav_back"):
+    if hd1.button("← Back", key="fav_back"):
         st.session_state.pop("fav_sel_idx", None)
         st.rerun()
     hd2.markdown(f"#### ⭐ {fav['name']}")
 
-    new_name = st.text_input("Nom du dossier", value=fav["name"], key=f"fav_name_{sel_idx}")
+    new_name = st.text_input("Folder name", value=fav["name"], key=f"fav_name_{sel_idx}")
     if new_name and new_name != fav["name"]:
         favs[sel_idx]["name"] = new_name
         save_favorites(favs)
 
     st.divider()
-    st.markdown("##### Configs sauvegardées")
+    st.markdown("##### Saved configs")
 
     # Ajouter une config
     existing_cfgs = fav.get("configs", [])
     available_cfgs = [c for c in all_configs if c not in existing_cfgs]
     ac1, ac2 = st.columns([4, 1])
-    add_cfg = ac1.selectbox("Ajouter une config", [""] + available_cfgs, key=f"fav_add_{sel_idx}")
-    if ac2.button("Ajouter", key=f"fav_add_btn_{sel_idx}", use_container_width=True, disabled=not add_cfg):
+    add_cfg = ac1.selectbox("Add a config", [""] + available_cfgs, key=f"fav_add_{sel_idx}")
+    if ac2.button("Add", key=f"fav_add_btn_{sel_idx}", use_container_width=True, disabled=not add_cfg):
         if add_cfg and add_cfg not in favs[sel_idx]["configs"]:
             favs[sel_idx]["configs"].append(add_cfg)
             save_favorites(favs)
@@ -1627,7 +1628,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
     aliases = fav.get("aliases", {})
 
     if not configs:
-        st.info("Aucune config ajoutée.")
+        st.info("No config added.")
         return
 
     for cfg in list(configs):
@@ -1668,13 +1669,13 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
     qubo_insts = [i for i in sorted_instances if INSTANCE_RE.match(i).group("problem") == "QUBO"]
 
     b1, b2, b3 = st.columns(3)
-    if b1.button("+ Tout NK",   key=f"fav_nk_{sel_idx}",   use_container_width=True):
+    if b1.button("+ All NK",   key=f"fav_nk_{sel_idx}",   use_container_width=True):
         cur = list(st.session_state.get(inst_key, saved_insts))
         st.session_state[inst_key] = sorted(set(cur) | set(nk_insts),   key=sorted_instances.index)
-    if b2.button("+ Tout NK3",  key=f"fav_nk3_{sel_idx}",  use_container_width=True):
+    if b2.button("+ All NK3",  key=f"fav_nk3_{sel_idx}",  use_container_width=True):
         cur = list(st.session_state.get(inst_key, saved_insts))
         st.session_state[inst_key] = sorted(set(cur) | set(nk3_insts),  key=sorted_instances.index)
-    if b3.button("+ Tout QUBO", key=f"fav_qubo_{sel_idx}", use_container_width=True):
+    if b3.button("+ All QUBO", key=f"fav_qubo_{sel_idx}", use_container_width=True):
         cur = list(st.session_state.get(inst_key, saved_insts))
         st.session_state[inst_key] = sorted(set(cur) | set(qubo_insts), key=sorted_instances.index)
 
@@ -1687,7 +1688,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
         save_favorites(favs)
 
     if not instances:
-        st.info("Sélectionnez au moins une instance.")
+        st.info("Select at least one instance.")
         return
 
     # ── Tableau récapitulatif ─────────────────────────────────────────────────
@@ -1708,21 +1709,21 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 score = abs(float(curve["best_fitness"].iloc[-1]))
                 rank  = _get_rank(prob, dim, t, score)
                 row[f"Score {short}"] = round(score, 4)
-                row[f"Rang {short}"]  = rank
+                row[f"Rank {short}"]  = rank
                 ham = float(curve["avg_hamming"].iloc[-1]) if "avg_hamming" in curve.columns else None
                 row[f"_ham_{short}"]  = round(ham, 2) if ham is not None else None
                 l1  = float(curve["avg_l1"].iloc[-1]) if "avg_l1" in curve.columns else None
                 row[f"_l1_{short}"]   = round(l1, 2) if l1 is not None else None
             else:
                 row[f"Score {short}"] = None
-                row[f"Rang {short}"]  = None
+                row[f"Rank {short}"]  = None
                 row[f"_ham_{short}"]  = None
                 row[f"_l1_{short}"]   = None
         summary_rows.append(row)
 
     summary_rows.sort(key=lambda r: (_PROB_ORDER.get(r["_prob"], 99), r["_dim"], r["_t"]))
 
-    st.markdown("#### 📊 Résumé")
+    st.markdown("#### 📊 Summary")
 
     # Légende #1 = …
     for cfg in configs:
@@ -1732,10 +1733,10 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
     for cfg in configs:
         lbl   = _fav_lbl(cfg)
         short = config_shorts[cfg]
-        ranks = [r[f"Rang {short}"] for r in summary_rows if r.get(f"Rang {short}") is not None]
-        top1  = sum(1 for r in summary_rows if r.get(f"Rang {short}") == 1)
+        ranks = [r[f"Rank {short}"] for r in summary_rows if r.get(f"Rank {short}") is not None]
+        top1  = sum(1 for r in summary_rows if r.get(f"Rank {short}") == 1)
         mc1, mc2 = st.columns(2)
-        mc1.metric(f"Rank moy — {lbl}", f"{sum(ranks)/len(ranks):.1f}" if ranks else "—")
+        mc1.metric(f"Mean rank — {lbl}", f"{sum(ranks)/len(ranks):.1f}" if ranks else "—")
         mc2.metric(f"Top 1 — {lbl}", top1)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1815,8 +1816,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     # Tous les tableaux sur une ligne, séparateur vert entre chaque type
     _flex_groups([
-        [_dim_html("Hamming moyen / dim", "_ham_", ".1f"),
-         _dim_html("L1 moyen / dim",      "_l1_",  ".2f")],
+        [_dim_html("Mean Hamming / dim", "_ham_", ".1f"),
+         _dim_html("Mean L1 / dim",      "_l1_",  ".2f")],
         [_k_html(f"Hamming / K — {p}", "_ham_", ".1f", p) for p in ["NK", "NK3", "QUBO"]],
         [_k_html(f"L1 / K — {p}",      "_l1_",  ".2f", p) for p in ["NK", "NK3", "QUBO"]],
     ])
@@ -1826,7 +1827,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
     for cfg in configs:
         s = config_shorts[cfg]
         col_specs.append((f"Score {s}",   f"Score {s}",  "score"))
-        col_specs.append((f"Rang {s}",    f"Rang {s}",   "rank"))
+        col_specs.append((f"Rank {s}",    f"Rank {s}",   "rank"))
         col_specs.append((f"Hamming {s}", f"_ham_{s}",   "ham"))
 
     th = "padding:8px 28px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
@@ -1874,15 +1875,15 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     # ── Courbes ──────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("#### 📈 Courbes")
+    st.markdown("#### 📈 Curves")
 
     o1, o2, o3 = st.columns(3)
-    fav_top5    = o1.checkbox("Concurrents top 5 (courbes + boxplot)", value=True, key=f"fav_top5_{sel_idx}")
-    fav_hamming = o2.checkbox("Hamming (diversité)",     value=True,  key=f"fav_ham_{sel_idx}")
-    fav_box     = o3.checkbox("Distribution finale",     value=True,  key=f"fav_box_{sel_idx}")
+    fav_top5    = o1.checkbox("Top-5 competitors (curves + boxplot)", value=True, key=f"fav_top5_{sel_idx}")
+    fav_hamming = o2.checkbox("Hamming (diversity)",     value=True,  key=f"fav_ham_{sel_idx}")
+    fav_box     = o3.checkbox("Final distribution",     value=True,  key=f"fav_box_{sel_idx}")
 
     # Sélecteur d'instance — colonne par problème, sous-groupe par dimension
-    st.markdown("**Instance à visualiser**")
+    st.markdown("**Instance to display**")
     st.markdown(
         "<style>"
         '[data-testid="stPills"] button,'
@@ -1938,7 +1939,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     sel_curve_inst = st.session_state.get(sel_key)
     if not sel_curve_inst:
-        st.info("Sélectionnez une instance ci-dessus pour afficher ses courbes.")
+        st.info("Select an instance above to display its curves.")
         return
 
     # ── Placement dans le classement global (cf. build_global_ranking_lines) ──
@@ -1978,7 +1979,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 continue
             name, score = entries[i]
             mine = (i == our)
-            disp = "Nous" if mine else name
+            disp = "Ours" if mine else name
             rstyle = (f'background:rgba(44,160,44,.12);' if mine else "")
             nstyle = (f'color:{_ACCENT};font-weight:800;' if mine else "font-weight:500;")
             marker = f'<span style="color:{_ACCENT};font-weight:800;">▸ </span>' if mine else ""
@@ -1996,13 +1997,13 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             f'<div style="padding:12px 20px;background:#fafafa;border-bottom:1px solid #eee;">'
             f'<div style="font-weight:700;font-size:18px;">{label}</div>'
             f'<div style="font-size:17px;margin-top:3px;">'
-            f'rang <b style="color:{_ACCENT};font-size:26px;">{our + 1}</b>'
+            f'rank <b style="color:{_ACCENT};font-size:26px;">{our + 1}</b>'
             f'<span style="color:#999;"> / {total}</span>'
             f'&nbsp;&nbsp;·&nbsp;&nbsp;score <b>{our_score:.4f}</b>'
             + (f'<span style="color:#999;"> ({gap_txt})</span>' if gap_txt else "")
             + f"</div></div>"
             f'<table style="border-collapse:collapse;width:100%;">'
-            f'<thead><tr><th style="{th}">#</th><th style="{th}">Algorithme</th>'
+            f'<thead><tr><th style="{th}">#</th><th style="{th}">Algorithm</th>'
             f'<th style="{th}text-align:right;">Score</th></tr></thead>'
             f"<tbody>{rows}</tbody></table></div>"
         )
@@ -2015,7 +2016,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             _rk_args = (_rm.group("problem"), int(_rm.group("dim")), int(_rm.group("t")))
             _rk_df = load_ranking(*_rk_args)
             if _rk_df is None or _rk_df.empty:
-                st.caption("Pas de classement pour cette instance.")
+                st.caption("No ranking for this instance.")
             else:
                 st.markdown(f"##### 🏅 Placement — {instance}")
                 for _cfg in configs:
@@ -2061,7 +2062,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 )
 
                 if not has_curve and not has_hamming and not has_box:
-                    st.warning("Pas de données pour cette instance.")
+                    st.warning("No data for this instance.")
                     continue
 
                 row_idx = 1
@@ -2076,8 +2077,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
                 titles = (
                     (["Convergence"]         if has_curve   else []) +
-                    (["Hamming (diversité)"] if has_hamming else []) +
-                    (["Distribution finale"] if has_box     else [])
+                    (["Hamming (diversity)"] if has_hamming else []) +
+                    (["Final distribution"] if has_box     else [])
                 )
                 row_heights = (
                     [0.40, 0.25, 0.35] if n_rows == 3 else
@@ -2119,7 +2120,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                                 name=algo, mode="lines",
                                 line=dict(dash="dot", color=ccol, width=1),
                             ), row=curve_row, col=1)
-                    fig.update_xaxes(title_text="Évaluations", row=curve_row, col=1)
+                    fig.update_xaxes(title_text="Evaluations", row=curve_row, col=1)
                     fig.update_yaxes(title_text="Score",       row=curve_row, col=1)
 
                 if has_hamming:
@@ -2133,8 +2134,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                             line=dict(color=COLORS[i % len(COLORS)], width=2, dash="dot"),
                             mode="lines", showlegend=False,
                         ), row=hamming_row, col=1)
-                    fig.update_xaxes(title_text="Évaluations",  row=hamming_row, col=1)
-                    fig.update_yaxes(title_text="Hamming moy.", row=hamming_row, col=1)
+                    fig.update_xaxes(title_text="Evaluations",  row=hamming_row, col=1)
+                    fig.update_yaxes(title_text="Mean Hamming", row=hamming_row, col=1)
 
                 if has_box:
                     for i, cfg in enumerate(configs):
@@ -2164,7 +2165,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                                 annotation_text=algo, annotation_position="bottom right",
                             )
                     fig.update_xaxes(type="category", row=box_row, col=1)
-                    fig.update_yaxes(title_text="Score final", row=box_row, col=1)
+                    fig.update_yaxes(title_text="Final score", row=box_row, col=1)
 
                 fig.update_layout(
                     height={3: 1240, 2: 880, 1: 520}.get(n_rows, 880),
@@ -2175,7 +2176,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
         st.divider()
         with st.container():
-            st.markdown("#### 🧬 Agents — génotype & rencontre du meilleur")
+            st.markdown("#### 🧬 Agents — genotype & time to best")
 
             def _render_beast(inst, ti_beast, g=None, sco=None, bi=None, key=""):
                 """Heatmap du meilleur génotype « the beast ». Si g/sco/bi fournis,
@@ -2184,13 +2185,13 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 beast = (load_beast_best(bm.group("problem"), int(bm.group("dim")),
                                          int(bm.group("t")), int(ti_beast)) if bm else None)
                 if beast is None:
-                    st.caption(f"« the beast » : aucun résultat rangé pour {inst} "
-                               f"(test #{ti_beast}). Vérifie `results/the beast/…` "
-                               f"puis `python reorganize.py --apply`.")
+                    st.caption(f"« the beast »: no stored result for {inst} "
+                               f"(test #{ti_beast}). Check `results/the beast/…` "
+                               f"then run `python reorganize.py --apply`.")
                     return
                 bg, bfit, bn = beast
-                title = (f"Génotype du meilleur trouvé par « the beast »  ·  "
-                         f"fitness = {bfit:.4f}  (sur {bn} solutions)")
+                title = (f"Genotype of the best found by « the beast »  ·  "
+                         f"fitness = {bfit:.4f}  (out of {bn} solutions)")
                 bh = None
                 if g is not None and sco is not None and bi is not None \
                         and bg.shape[0] == g.shape[1]:
@@ -2198,7 +2199,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     bclose = int(np.argmin(bh))
                     our_fit = abs(float(sco[ti_beast][bi]))
                     gap = bfit - our_fit
-                    title += (f"  ·  gap vs notre A{bi} = {gap:+.4f}  ·  "
+                    title += (f"  ·  gap vs our A{bi} = {gap:+.4f}  ·  "
                               f"Hamming = {bh[bi]} bits")
                 fig_b = go.Figure(go.Heatmap(
                     z=bg.reshape(1, -1), x=list(range(bg.shape[0])), y=["beast"],
@@ -2209,15 +2210,15 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 st.plotly_chart(fig_b, use_container_width=True, key=f"fav_dbg_beast_{key}")
                 if bh is not None:
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Gap de fitness (beast − nous)", f"{gap:+.4f}",
-                              help=f"beast {bfit:.4f}  vs  notre meilleur agent A{bi} {our_fit:.4f}")
-                    c2.metric(f"Hamming beast ↔ notre A{bi}", f"{bh[bi]} / {bg.shape[0]}")
-                    c3.metric("Agent le plus proche du beast", f"A{bclose}",
+                    c1.metric("Fitness gap (beast − ours)", f"{gap:+.4f}",
+                              help=f"beast {bfit:.4f}  vs  our best agent A{bi} {our_fit:.4f}")
+                    c2.metric(f"Hamming beast ↔ our A{bi}", f"{bh[bi]} / {bg.shape[0]}")
+                    c3.metric("Agent closest to the beast", f"A{bclose}",
                               f"{bh[bclose]} bits", delta_color="off")
-                    st.caption("Hamming beast ↔ chaque agent : "
+                    st.caption("Hamming beast ↔ each agent: "
                                + " · ".join(f"A{a}={d}" for a, d in enumerate(bh)))
                 elif g is not None:
-                    st.caption(f"Comparaison agents impossible : N beast = {bg.shape[0]} "
+                    st.caption(f"Cannot compare agents: N beast = {bg.shape[0]} "
                                f"≠ N run = {g.shape[1]}.")
 
             def _big_valley_plot(inst, ti_b, g=None, sco=None, bi=None, wi=None, key=""):
@@ -2234,8 +2235,8 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 fig.add_trace(go.Histogram2d(
                     x=bo["ham"], y=bo["fit"], colorscale="Blues",
                     xbins=dict(start=0, end=xN, size=max(1, xN // 70)),
-                    nbinsy=70, name="optima tabou",
-                    colorbar=dict(title="densité<br>d'optima", thickness=12),
+                    nbinsy=70, name="tabu optima",
+                    colorbar=dict(title="optima<br>density", thickness=12),
                     hovertemplate="Hamming=%{x:.0f} bits<br>fitness=%{y:.4g}"
                                   "<br>n=%{z}<extra></extra>",
                 ))
@@ -2260,20 +2261,20 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                         text=[f"A{a}" for a in range(g.shape[0])],
                         textposition="middle right",
                         marker=dict(size=13, color=cols, line=dict(width=1.5, color="white")),
-                        name="nos agents",
-                        hovertemplate="%{text}<br>Hamming au best=%{x:.0f} bits"
+                        name="our agents",
+                        hovertemplate="%{text}<br>Hamming to best=%{x:.0f} bits"
                                       "<br>fitness=%{y:.4g}<extra></extra>",
                     ))
                 fig.update_layout(
                     title=dict(
                         text=(f"Big-valley plot — {inst} (test #{ti_b})  ·  "
                               f"best-known = {bk:.4g}"
-                              + (f"  ·  {bo['n_bad']} corrompus exclus" if bo["n_bad"] else "")),
+                              + (f"  ·  {bo['n_bad']} corrupted excluded" if bo["n_bad"] else "")),
                         y=0.98, yanchor="top",
                     ),
-                    xaxis=dict(title="distance de Hamming au best-known (bits)",
+                    xaxis=dict(title="Hamming distance to best-known (bits)",
                                range=[0, xN], constrain="domain"),
-                    yaxis=dict(title="fitness (brute)", automargin=True),
+                    yaxis=dict(title="fitness (raw)", automargin=True),
                     height=540, margin=dict(l=55, r=10, t=40, b=70),
                     bargap=0, legend=dict(orientation="h", yanchor="top", y=-0.16, x=0),
                 )
@@ -2282,27 +2283,27 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 _n = bo["n"]
                 _ng = bo["n_global_opt"]
                 _pc = lambda v: f"{100 * v / _n:.1f}"
-                _lines = [f"<b>{bo['n_distinct']:,} optima distincts</b> trouvés "
-                          f"sur {_n:,} restarts."]
+                _lines = [f"<b>{bo['n_distinct']:,} distinct optima</b> found "
+                          f"over {_n:,} restarts."]
                 if _ng == 1:
                     _lines.append(
-                        f"<b>Optimum global</b> (fitness {bk:.4g}) : 1 seul génotype, "
-                        f"atteint par <b>{bo['n_at_best_fit']:,}</b> restarts "
+                        f"<b>Global optimum</b> (fitness {bk:.4g}): a single genotype, "
+                        f"reached by <b>{bo['n_at_best_fit']:,}</b> restarts "
                         f"({_pc(bo['n_at_best_fit'])}&nbsp;%)."
                     )
                 else:
                     _lines.append(
-                        f"<b>Optima globaux</b> (fitness {bk:.4g}) : "
-                        f"<b>{_ng:,}</b> génotypes distincts.  "
+                        f"<b>Global optima</b> (fitness {bk:.4g}): "
+                        f"<b>{_ng:,}</b> distinct genotypes.  "
                         f"<b>{bo['n_at_best_fit']:,}</b> restarts ({_pc(bo['n_at_best_fit'])}&nbsp;%) "
-                        f"finissent sur l'un d'eux ; le plus attractif en capte à lui seul "
+                        f"end on one of them; the most attractive alone captures "
                         f"<b>{bo['top_global_count']:,}</b> ({_pc(bo['top_global_count'])}&nbsp;%)."
                     )
                 if not np.isclose(bo["mode_fit"], bk):
                     _lines.append(
-                        f"⚠️ L'optimum au plus gros bassin n'est <b>pas</b> le meilleur : "
+                        f"⚠️ The optimum with the largest basin is <b>not</b> the best: "
                         f"<b>{bo['mode_count']:,}</b> restarts ({_pc(bo['mode_count'])}&nbsp;%) "
-                        f"convergent vers un optimum de fitness {bo['mode_fit']:.4g} "
+                        f"converge to an optimum with fitness {bo['mode_fit']:.4g} "
                         f"(&lt; {bk:.4g})."
                     )
                 st.markdown(
@@ -2320,10 +2321,10 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
             if not _dcfg:
                 pass
             elif not dbg or gkey not in dbg:
-                st.info("Pas de `agent_debug.npz` pour cette config / instance — "
-                        "relancer le grid-search (collecte debug dans main_expe_overall). "
-                        "Le génotype « the beast » reste affiché ci-dessous s'il est rangé.")
-                _tib = st.number_input("Instance de test (index)", min_value=0, max_value=99,
+                st.info("No `agent_debug.npz` for this config / instance — "
+                        "re-run the grid search (debug collection in main_expe_overall). "
+                        "The « the beast » genotype is still shown below if stored.")
+                _tib = st.number_input("Test instance (index)", min_value=0, max_value=99,
                                        value=0, step=1, key=f"fav_beast_ti_{sel_idx}")
                 _render_beast(instance, int(_tib), key=f"nodbg_{sel_idx}")
                 _big_valley_plot(instance, int(_tib), key=f"nodbg_{sel_idx}")
@@ -2336,11 +2337,11 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                 ti = 0
                 if geno.shape[0] > 1:
                     ti = st.pills(
-                        "Instance de test", list(range(geno.shape[0])),
+                        "Test instance", list(range(geno.shape[0])),
                         selection_mode="single", default=0,
                         format_func=lambda x: f"#{x}",
                         key=f"fav_dbg_ti_{sel_idx}",
-                        help=f"meilleur restart (score max) parmi {nb_r2}",
+                        help=f"best restart (max score) out of {nb_r2}",
                     )
                     if ti is None:
                         ti = 0
@@ -2366,9 +2367,9 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                         sco[ti] = _true_fit
                         _fit_recomputed = True
                 if not _fit_recomputed:
-                    st.caption("⚠️ Fitness recalculée indisponible (fichier d'instance "
-                               "introuvable) — les scores affichés restent la moyenne "
-                               "des restarts, pas la fitness du génotype montré.")
+                    st.caption("⚠️ Recomputed fitness unavailable (instance file "
+                               "not found) — displayed scores are the mean over "
+                               "restarts, not the fitness of the shown genotype.")
 
                 _sc = np.abs(np.asarray(sco[ti], float))
                 _bi = int(np.argmax(_sc)) if _sc.size else 0
@@ -2387,7 +2388,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                     colorscale="Blues", zmin=0, zmax=max(1, int(g.max())), showscale=False,
                 ))
                 fig_g.update_layout(
-                    title="Génotype final par agent", xaxis_title="Position",
+                    title="Final genotype per agent", xaxis_title="Position",
                     height=600, margin=dict(l=90, r=10, t=40, b=10),
                     yaxis=dict(autorange="reversed", tickmode="array",
                                tickvals=agents, ticktext=[_ylab(a) for a in range(g.shape[0])]),
@@ -2406,7 +2407,7 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                         text=H, texttemplate="%{text}", showscale=False,
                     ))
                     fig_h.update_layout(
-                        title="Hamming pairwise (solutions finales)",
+                        title="Pairwise Hamming (final solutions)",
                         height=560, margin=dict(l=10, r=10, t=40, b=10),
                         yaxis=dict(autorange="reversed"),
                     )
@@ -2483,9 +2484,9 @@ def tab_favoris(all_df: pd.DataFrame, sorted_instances: list) -> None:
                         text=txt_all, textposition="outside",
                     ))
                     fig_e.update_layout(
-                        title="Moment où chaque agent atteint son meilleur (≈ évaluations)  ·  "
-                              "vert = meilleur score · rouge = pire · orange = concurrent #1",
-                        yaxis=dict(title="Évaluations", range=[0, _COMPETITOR_BUDGET]),
+                        title="When each agent reaches its best (≈ evaluations)  ·  "
+                              "green = best score · red = worst · orange = competitor #1",
+                        yaxis=dict(title="Evaluations", range=[0, _COMPETITOR_BUDGET]),
                         xaxis=dict(tickmode="array", tickvals=x_all, ticktext=_ticktext),
                         height=560, margin=dict(l=10, r=10, t=40, b=30),
                     )
@@ -2560,7 +2561,7 @@ SENSI_PARAMS = list(dict.fromkeys(key for _, key, _ in PARSERS))
 SENSI_DEFAULTS = (   # (config, nom) proposés par défaut pour les méthodes 1, 2, 3
     ("krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01", "PPSN"),
     ("krbf__advperagentrankweighted__M7__L13__eps0p06__g0p01__ds1__dm0p01__ppokl__pe6__b0p1", "EvoCOP"),
-    ("krbf__advperagentrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01", "PPSN + rang/agent"),
+    ("krbf__advperagentrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01", "PPSN + per-agent rank"),
 )
 SENSI_MAX_METHODS = 6
 
@@ -2625,7 +2626,7 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
     for j, (label, color, per_val) in enumerate(stats):
         symbol = SENSI_SYMBOLS[j % len(SENSI_SYMBOLS)]
         xs = [v for v in cats if v in per_val]
-        if style == "Boîtes":
+        if style == "Boxes":
             fig.add_trace(go.Box(
                 x=[v for v in xs for _ in per_val[v]],
                 y=[y for v in xs for y in per_val[v].tolist()],
@@ -2646,7 +2647,7 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
             line=dict(color=color, width=2),
             marker=dict(color=color, size=9, symbol=symbol),
             customdata=[[q[v][0], q[v][2]] for v in xs],
-            hovertemplate=(f"<b>{label}</b><br>{param}=%{{x}}<br>médiane=%{{y:.4g}}"
+            hovertemplate=(f"<b>{label}</b><br>{param}=%{{x}}<br>median=%{{y:.4g}}"
                            "<br>IQR=[%{customdata[0]:.4g}, %{customdata[1]:.4g}]<extra></extra>"),
         ))
     for rv in ref_vals & set(cats):
@@ -2661,7 +2662,7 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
     ink = "#262730" if export or not dark else "#e6e6e6"   # texte : thème clair / sombre
     y_max = max(float(np.max(sc)) for _, _, pv in stats for sc in pv.values())
     # Étendue tracée (bande IQR ou boîtes), + marge en haut pour loger la légende sans recouvrement
-    lo_q, hi_q = (0, 100) if style == "Boîtes" else (25, 75)
+    lo_q, hi_q = (0, 100) if style == "Boxes" else (25, 75)
     y_lo = min(float(np.percentile(sc, lo_q)) for _, _, pv in stats for sc in pv.values())
     y_hi = max(float(np.percentile(sc, hi_q)) for _, _, pv in stats for sc in pv.values())
     pad = (y_hi - y_lo) or 1.0
@@ -2688,7 +2689,7 @@ def _sensi_figure(stats, param: str, cats: list[str], ref_vals: set[str],
         legend=dict(orientation="h", y=0.99, yanchor="top", x=0.99, xanchor="right",
                     bgcolor="rgba(255,255,255,0.75)" if not dark or export else "rgba(14,17,23,0.75)",
                     bordercolor="rgba(128,128,128,0.35)", borderwidth=1),
-        hoverlabel=dict(font_size=17), hovermode="x unified" if style != "Boîtes" else "closest",
+        hoverlabel=dict(font_size=17), hovermode="x unified" if style != "Boxes" else "closest",
     )
     if export:
         widest = f"{y_hi:.2f}" if y_max < 10 else (f"{y_hi / 1000:.1f}k" if y_hi >= 1000 else f"{y_hi:.0f}")
@@ -2779,7 +2780,7 @@ def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals
     ink = "#262730" if export or not dark else "#e6e6e6"
     fig = go.Figure()
     for j, label in enumerate(labels):
-        col = f"{label} · rang moy"
+        col = f"{label} · mean rank"
         if col not in df.columns:
             continue
         color = SENSI_COLORS[j % len(SENSI_COLORS)]
@@ -2787,14 +2788,14 @@ def _sensi_rank_figure(df: pd.DataFrame, labels: list[str], param: str, ref_vals
             x=cats, y=df[col], name=label, mode="lines+markers",
             line=dict(color=color, width=2),
             marker=dict(color=color, size=9, symbol=SENSI_SYMBOLS[j % len(SENSI_SYMBOLS)]),
-            hovertemplate=f"<b>{label}</b><br>{param}=%{{x}}<br>rang moyen=%{{y:.1f}}<extra></extra>",
+            hovertemplate=f"<b>{label}</b><br>{param}=%{{x}}<br>mean rank=%{{y:.1f}}<extra></extra>",
         ))
     for rv in ref_vals & set(cats):
         k = cats.index(rv)
         fig.add_vrect(x0=k - 0.5, x1=k + 0.5, fillcolor="rgba(128,128,128,0.13)", line_width=0, layer="below")
         fig.add_annotation(x=rv, y=_default_label_y(len(labels) if legend or not export else 0), yref="paper", yanchor="top", text="default", showarrow=False,
                            font=dict(size=22 if export else 19, color="rgba(110,110,110,1)"))
-    y_hi = float(np.nanmax(df[[f"{l} · rang moy" for l in labels if f"{l} · rang moy" in df]].to_numpy()))
+    y_hi = float(np.nanmax(df[[f"{l} · mean rank" for l in labels if f"{l} · mean rank" in df]].to_numpy()))
     step = 2 if len(cats) > 15 else 1
     fig.update_layout(
         height=640, margin=dict(t=44, l=80, r=10, b=70),
@@ -2832,14 +2833,14 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str], pdf_legend: boo
     try:
         inst = pd.read_parquet(INSTANCES_FILE)
     except Exception:
-        st.info("Récap indisponible (instances.parquet illisible).")
+        st.info("Summary unavailable (instances.parquet unreadable).")
         return None
-    scope = st.radio("Périmètre du récap", ["Tout", "QUBO", "NK", "NK3"], horizontal=True,
+    scope = st.radio("Summary scope", ["All", "QUBO", "NK", "NK3"], horizontal=True,
                      key="sensi_scope")
     key = ["problem", "dim", "t"]
     # Rang du cache : chaque variante seule contre le pool fixe de concurrents externes
     inst = inst[inst["config"].isin({c for _, variants in series for c in variants.values()})]
-    if scope != "Tout":
+    if scope != "All":
         inst = inst[inst["problem"] == scope]
     vals = sorted({v for _, variants in series for v in variants})
     rows = []
@@ -2849,7 +2850,7 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str], pdf_legend: boo
         for label, variants in series:
             sub = inst[inst["config"] == variants[v]] if v in variants else inst.iloc[0:0]
             per.append(sub.set_index(key)["score"])
-            row[f"{label} · rang moy"] = round(float(sub["rank"].mean()), 1) if len(sub) else None
+            row[f"{label} · mean rank"] = round(float(sub["rank"].mean()), 1) if len(sub) else None
             row[f"{label} · top 1"] = int((sub["rank"] == 1).sum()) if len(sub) else None
             row[f"{label} · top 3"] = int((sub["rank"] <= 3).sum()) if len(sub) else None
         # Duel et écart par famille de chaque méthode vs la première (référence ; > 0 : meilleure)
@@ -2867,7 +2868,7 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str], pdf_legend: boo
         rows.append(row)
     df = pd.DataFrame(rows)
 
-    rank_cols = [c for c in df.columns if c.endswith("rang moy")]
+    rank_cols = [c for c in df.columns if c.endswith("mean rank")]
     top_cols = [c for c in df.columns if "· top" in c]
     gap_cols = [c for c in df.columns if c.startswith("Δ ")]
 
@@ -2882,21 +2883,21 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str], pdf_legend: boo
         return out
 
     n_inst = inst[key].drop_duplicates().shape[0]
-    scope_txt = scope if scope != "Tout" else "toutes les instances"
+    scope_txt = scope if scope != "All" else "all instances"
     left, right = st.columns(2)
     with left:
-        st.markdown(f"##### Rang moyen — {scope_txt} ({n_inst} instances)")
+        st.markdown(f"##### Mean rank — {scope_txt} ({n_inst} instances)")
         dark = getattr(st.context.theme, "type", None) == "dark"
         labels = [label for label, _ in series]
         fig = _sensi_rank_figure(df, labels, param, ref_vals, export=False, dark=dark)
         st.plotly_chart(fig, use_container_width=True, theme=None, key="sensi_rank_fig")
         st.download_button(
             "⬇️ PDF", key="sensi_rank_dl", mime="application/pdf",
-            file_name=f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf",
+            file_name=f"sensi_{param}_mean_rank{'' if scope == 'All' else '_' + scope}.pdf",
             data=lambda: _sensi_pdf(_sensi_rank_figure(df, labels, param, ref_vals, export=True,
                                                        legend=pdf_legend)),
         )
-    right.markdown(f"##### Récap — {scope_txt} ({n_inst} instances)")
+    right.markdown(f"##### Summary — {scope_txt} ({n_inst} instances)")
     right.dataframe(
         df.style.apply(_style, axis=None).format(
             {c: "{:.1f}" for c in rank_cols} | {c: "{:.0f}" for c in top_cols}
@@ -2904,12 +2905,12 @@ def _sensi_summary_table(series, param: str, ref_vals: set[str], pdf_legend: boo
         hide_index=True, use_container_width=True,
         height=640,
     )
-    gap_txt = (f" Δ famille % : écart de score moyen de chaque méthode par rapport à {series[0][0]} "
-               f"(> 0 : meilleure que {series[0][0]}).")
-    right.caption("Rang contre le pool fixe de concurrents externes (82, 80 sur NK3 ; aucune méthode SVGD ; "
-                  "1 = meilleur). En gras : meilleure valeur de chaque colonne ; "
-               "ligne grisée : valeur par défaut." + gap_txt)
-    rank_name = f"sensi_{param}_mean_rank{'' if scope == 'Tout' else '_' + scope}.pdf"
+    gap_txt = (f" Δ family %: mean score gap of each method relative to {series[0][0]} "
+               f"(> 0: better than {series[0][0]}).")
+    right.caption("Rank against the fixed pool of external competitors (82, 80 on NK3; no SVGD method; "
+                  "1 = best). Bold: best value in each column; "
+               "grey row: default value." + gap_txt)
+    rank_name = f"sensi_{param}_mean_rank{'' if scope == 'All' else '_' + scope}.pdf"
     return rank_name, lambda: _sensi_rank_figure(df, labels, param, ref_vals, export=True, legend=pdf_legend)
 
 
@@ -2919,17 +2920,17 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
     La première méthode sert de référence pour les duels et les écarts par famille."""
     all_configs = all_df["config"].tolist()
     if not all_configs:
-        st.info("Aucune config disponible.")
+        st.info("No config available.")
         return
 
     # Choix sauvegardés dans dashboard/sensi.json : ils survivent au rechargement de la page
     saved = load_sensi()
     saved_methods = saved.get("methods", [])
     h1, h2 = st.columns([2, 2])
-    n_methods = int(h1.number_input("Nombre de méthodes", 2, SENSI_MAX_METHODS,
+    n_methods = int(h1.number_input("Number of methods", 2, SENSI_MAX_METHODS,
                                     min(max(int(saved.get("n", 2)), 2), SENSI_MAX_METHODS), key="sensi_n"))
     saved_param = saved.get("param", "M")
-    param = h2.selectbox("Paramètre", SENSI_PARAMS,
+    param = h2.selectbox("Parameter", SENSI_PARAMS,
                          index=SENSI_PARAMS.index(saved_param if saved_param in SENSI_PARAMS else "M"),
                          key="sensi_param")
     sel = []
@@ -2941,12 +2942,12 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
         elif i < len(SENSI_DEFAULTS):
             default, name = SENSI_DEFAULTS[i]
         else:
-            default, name = all_configs[0], f"Méthode {i + 1}"
+            default, name = all_configs[0], f"Method {i + 1}"
         with cols[i % len(cols)]:
             idx = all_configs.index(default) if default in all_configs else 0
-            cfg = st.selectbox(f"Config {letter.upper()}" + (" (réf.)" if i == 0 else ""), all_configs,
+            cfg = st.selectbox(f"Config {letter.upper()}" + (" (ref.)" if i == 0 else ""), all_configs,
                                index=idx, key=f"sensi_{letter}")
-            label = st.text_input("Nom", name, key=f"sensi_{letter}_label")
+            label = st.text_input("Name", name, key=f"sensi_{letter}_label")
             sel.append((cfg, label))
     # Les méthodes au-delà de n_methods restent mémorisées (repasser de 2 à 3 les retrouve)
     methods = [{"config": c, "name": l} for c, l in sel] + saved_methods[n_methods:]
@@ -2959,9 +2960,9 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
         variants = _sensi_variants(cfg, param, all_configs)
         series.append((label, variants))
         vals = ", ".join(str(v) for v in variants) or "—"
-        st.caption(f"**{label}** : {len(variants)} variantes ({param} = {vals})")
+        st.caption(f"**{label}**: {len(variants)} variants ({param} = {vals})")
     if not any(v for _, v in series):
-        st.warning(f"Aucune variante trouvée en faisant varier `{param}`.")
+        st.warning(f"No variant found when varying `{param}`.")
         return
 
     # Pour LaTeX : figures sans légende + une légende seule, placée une fois au-dessus
@@ -2980,7 +2981,7 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
                      for m in map(INSTANCE_RE.match, sorted_instances) if m},
                     key=lambda g: (["QUBO", "NK", "NK3"].index(g[0]), g[1]))
     g1, g2 = st.columns(2)
-    problem = g1.selectbox("Problème", sorted({g[0] for g in groups}, key=["QUBO", "NK", "NK3"].index),
+    problem = g1.selectbox("Problem", sorted({g[0] for g in groups}, key=["QUBO", "NK", "NK3"].index),
                            key="sensi_pb")
     dim = g2.selectbox("Dimension", [d for p, d in groups if p == problem], key="sensi_dim")
     instances = [i for i in sorted_instances
@@ -2993,9 +2994,9 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
     ref_vals = {str(parse_config_name(cfg).get(param)) for cfg, _ in sel}
 
     s1, s2 = st.columns([3, 2])
-    style = s1.radio("Style", ["Médiane + IQR", "Boîtes"], horizontal=True, key="sensi_style")
-    export = s2.button("📄 Tout exporter en PDF (12 cm)", key="sensi_export", use_container_width=True,
-                       help="Écrit un PDF par figure affichée dans figures/sensi/<paramètre>/")
+    style = s1.radio("Style", ["Median + IQR", "Boxes"], horizontal=True, key="sensi_style")
+    export = s2.button("📄 Export all as PDF (12 cm)", key="sensi_export", use_container_width=True,
+                       help="Writes one PDF per displayed figure to figures/sensi/<parameter>/")
 
     figs = []
     for inst in instances:
@@ -3018,7 +3019,7 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
             st.plotly_chart(fig, use_container_width=True, theme=None, key=f"sensi_fig_{inst}")
             st.download_button(
                 "⬇️ PDF", key=f"sensi_dl_{inst}", mime="application/pdf",
-                file_name=f"sensi_{param}_{inst}{'_box' if style == 'Boîtes' else ''}.pdf",
+                file_name=f"sensi_{param}_{inst}{'_box' if style == 'Boxes' else ''}.pdf",
                 # Généré au clic seulement (kaleido ~1 s par figure)
                 data=lambda st_=stats: _sensi_pdf(_sensi_figure(st_, param, cats, ref_vals, style,
                                                                 export=True, legend=pdf_legend)),
@@ -3027,15 +3028,15 @@ def tab_sensi(all_df: pd.DataFrame, sorted_instances: list) -> None:
     if export and figs:
         out_dir = ROOT / "figures" / "sensi" / param
         out_dir.mkdir(parents=True, exist_ok=True)
-        with st.spinner(f"Export de {len(figs) + 1} PDF…"):
+        with st.spinner(f"Exporting {len(figs) + 1} PDFs…"):
             if rank_export:
                 rank_name, make_rank = rank_export
                 (out_dir / rank_name).write_bytes(_sensi_pdf(make_rank()))
             for inst, stats in figs:
                 fig = _sensi_figure(stats, param, cats, ref_vals, style, export=True, legend=pdf_legend)
-                (out_dir / f"sensi_{param}_{inst}{'_box' if style == 'Boîtes' else ''}.pdf").write_bytes(
+                (out_dir / f"sensi_{param}_{inst}{'_box' if style == 'Boxes' else ''}.pdf").write_bytes(
                     _sensi_pdf(fig))
-        st.success(f"{len(figs) + bool(rank_export)} PDF écrits dans `{out_dir.relative_to(ROOT)}/`")
+        st.success(f"{len(figs) + bool(rank_export)} PDFs written to `{out_dir.relative_to(ROOT)}/`")
 
 
 # ── Anytime : meilleure fitness en fonction du nombre d'évaluations ────────────
@@ -3554,15 +3555,15 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
     # ── Vue liste ─────────────────────────────────────────────────────────────
     if sel_idx is None or sel_idx >= len(abls):
         h1, h2 = st.columns([6, 1])
-        h1.markdown("#### 🧪 Études d'ablation")
-        if h2.button("+ Nouvelle", key="abl_new", use_container_width=True):
+        h1.markdown("#### 🧪 Ablation studies")
+        if h2.button("+ New", key="abl_new", use_container_width=True):
             abls.append({"name": f"Ablation {len(abls) + 1}", "configs": [],
                          "aliases": {}, "instances": [], "ref": None})
             save_ablations(abls)
             st.session_state["abl_sel_idx"] = len(abls) - 1
             st.rerun()
         if not abls:
-            st.info("Aucune étude. Cliquez sur « + Nouvelle » pour commencer.")
+            st.info("No studies yet. Click « + New » to get started.")
             return
         grid = st.columns(3)
         for i, abl in enumerate(abls):
@@ -3583,37 +3584,37 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
     # ── Vue détail ────────────────────────────────────────────────────────────
     abl = abls[sel_idx]
     hd1, hd2 = st.columns([1, 8])
-    if hd1.button("← Retour", key="abl_back"):
+    if hd1.button("← Back", key="abl_back"):
         st.session_state.pop("abl_sel_idx", None)
         st.rerun()
     hd2.markdown(f"#### 🧪 {abl['name']}")
 
-    new_name = st.text_input("Nom de l'étude", value=abl["name"], key=f"abl_name_{sel_idx}")
+    new_name = st.text_input("Study name", value=abl["name"], key=f"abl_name_{sel_idx}")
     if new_name and new_name != abl["name"]:
         abls[sel_idx]["name"] = new_name
         save_ablations(abls)
 
     st.divider()
-    st.markdown("##### Variantes")
+    st.markdown("##### Variants")
     configs = abl.get("configs", [])
     aliases = abl.setdefault("aliases", {})
     ac1, ac2 = st.columns([4, 1])
-    add_cfg = ac1.selectbox("Ajouter une config", [""] + [c for c in all_configs if c not in configs],
+    add_cfg = ac1.selectbox("Add a config", [""] + [c for c in all_configs if c not in configs],
                             key=f"abl_add_{sel_idx}")
-    if ac2.button("Ajouter", key=f"abl_add_btn_{sel_idx}", use_container_width=True, disabled=not add_cfg):
+    if ac2.button("Add", key=f"abl_add_btn_{sel_idx}", use_container_width=True, disabled=not add_cfg):
         abls[sel_idx]["configs"].append(add_cfg)
         save_ablations(abls)
         st.rerun()
 
     if not configs:
-        st.info("Aucune config ajoutée.")
+        st.info("No config added.")
         return
 
     for cfg in list(configs):
         r1, r2, r3 = st.columns([3, 3, 1])
         r1.code(cfg, language=None)
         alias = r2.text_input("Alias", value=aliases.get(cfg, ""), key=f"abl_alias_{sel_idx}_{cfg}",
-                              placeholder="nom de la variante", label_visibility="collapsed")
+                              placeholder="variant name", label_visibility="collapsed")
         if alias != aliases.get(cfg, ""):
             abls[sel_idx]["aliases"][cfg] = alias
             save_ablations(abls)
@@ -3632,7 +3633,7 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
         return _config_label(row_df.iloc[0]) if not row_df.empty else cfg[-30:]
 
     ref = abl.get("ref") if abl.get("ref") in configs else configs[0]
-    new_ref = st.selectbox("Référence (écarts et Wilcoxon calculés par rapport à elle)", configs,
+    new_ref = st.selectbox("Reference (gaps and Wilcoxon computed against it)", configs,
                            index=configs.index(ref), format_func=_lbl, key=f"abl_ref_{sel_idx}")
     if new_ref != abl.get("ref"):
         abls[sel_idx]["ref"] = new_ref
@@ -3646,7 +3647,7 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
         abls[sel_idx]["instances"] = instances
         save_ablations(abls)
     if not instances:
-        st.info("Sélectionnez au moins une instance.")
+        st.info("Select at least one instance.")
         return
 
     # ── Données ───────────────────────────────────────────────────────────────
@@ -3677,7 +3678,7 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     # ── Résumé ────────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("#### 📊 Résumé")
+    st.markdown("#### 📊 Summary")
     n_ok = len(rows)
     glob = _ablation_global_tests(rows, configs, ref)
     mcols = st.columns(len(configs))
@@ -3688,31 +3689,31 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
                  for r in rows if cfg in r["score"]]
         grk   = [g for g in grk if g is not None]
         with col.container(border=True):
-            st.markdown(f"**{short[cfg]} — {_lbl(cfg)}**" + (" · réf." if cfg == ref else ""))
-            st.metric("Meilleure des variantes", f"{wins} / {n_ok}")
-            st.metric("Rang moyen entre variantes", f"{np.mean(rks):.2f}" if rks else "—")
-            st.metric("Rang moyen vs concurrents", f"{np.mean(grk):.1f}" if grk else "—")
+            st.markdown(f"**{short[cfg]} — {_lbl(cfg)}**" + (" · ref." if cfg == ref else ""))
+            st.metric("Best among variants", f"{wins} / {n_ok}")
+            st.metric("Mean rank among variants", f"{np.mean(rks):.2f}" if rks else "—")
+            st.metric("Mean rank vs competitors", f"{np.mean(grk):.1f}" if grk else "—")
             if cfg != ref:
                 better = sum(1 for r in rows if r["p"].get(cfg) is not None and r["p"][cfg] < 0.05
                              and r["gap"].get(cfg, 0) > 0)
                 worse  = sum(1 for r in rows if r["p"].get(cfg) is not None and r["p"][cfg] < 0.05
                              and r["gap"].get(cfg, 0) < 0)
-                st.caption(f"vs réf. (Wilcoxon p<0.05) : ▲ {better} · ▼ {worse}")
+                st.caption(f"vs ref. (Wilcoxon p<0.05): ▲ {better} · ▼ {worse}")
                 g = glob.get(cfg)
                 if g:
                     arrow = ("▲" if g["median"] > 0 else "▼") if g["p_holm"] < 0.05 else "="
-                    st.caption(f"Global ({g['n']} classes, Holm) : {arrow} p = {g['p_holm']:.2g} · "
-                               f"écart médian {g['median']:+.2f} %")
+                    st.caption(f"Overall ({g['n']} classes, Holm): {arrow} p = {g['p_holm']:.2g} · "
+                               f"median gap {g['median']:+.2f} %")
 
     # Écart moyen à la référence par famille × dimension
-    st.markdown(f"##### Écart moyen à la référence ({_lbl(ref)}) par famille et dimension")
+    st.markdown(f"##### Mean gap to reference ({_lbl(ref)}) per family and dimension")
     gap_rows = []
     for prob in ["NK", "NK3", "QUBO"]:
         for dim in [64, 128, 256, 512]:
             sub = [r for r in rows if r["prob"] == prob and r["dim"] == dim]
             if not sub:
                 continue
-            line = {"Famille": prob, "n": dim}
+            line = {"Family": prob, "n": dim}
             for cfg in configs:
                 if cfg == ref:
                     continue
@@ -3723,18 +3724,18 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
         st.dataframe(pd.DataFrame(gap_rows), hide_index=True, use_container_width=True)
 
     # ── Tableau par instance : un tableau par problème, comme Favoris ─────────
-    st.markdown("##### Par instance")
+    st.markdown("##### Per instance")
     for cfg in configs:
-        st.caption(f"{short[cfg]} = {_lbl(cfg)}" + ("  (référence)" if cfg == ref else ""))
-    st.caption("Vert = meilleur score · rouge = pire · Écart = vs référence, ▲/▼ = significatif "
-               "(Wilcoxon apparié sur les moyennes par instance, p<0.05)")
+        st.caption(f"{short[cfg]} = {_lbl(cfg)}" + ("  (reference)" if cfg == ref else ""))
+    st.caption("Green = best score · red = worst · Gap = vs reference, ▲/▼ = significant "
+               "(paired Wilcoxon on per-instance means, p<0.05)")
 
     col_specs: list[tuple[str, str, str]] = []   # (entête, config, type)
     for cfg in configs:
         s_ = _lbl(cfg)
         col_specs.append((f"Score {s_}", cfg, "score"))
         if cfg != ref:
-            col_specs.append((f"Écart {s_}", cfg, "gap"))
+            col_specs.append((f"Gap {s_}", cfg, "gap"))
 
     th   = "padding:8px 28px;text-align:right;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
     th_l = "padding:8px 28px;text-align:left;border-bottom:2px solid #ccc;white-space:nowrap;font-size:19px;"
@@ -3787,8 +3788,8 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     # ── Courbes : même sélecteur que Favoris (puces par problème / dimension) ─
     st.divider()
-    st.markdown("#### 📈 Courbes")
-    st.markdown("**Instance à visualiser**")
+    st.markdown("#### 📈 Curves")
+    st.markdown("**Instance to display**")
     st.markdown(
         "<style>"
         '[data-testid="stPills"] button,'
@@ -3842,12 +3843,12 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
     inst = st.session_state.get(sel_key)
     if not inst:
-        st.info("Sélectionnez une instance ci-dessus pour afficher ses courbes.")
+        st.info("Select an instance above to display its curves.")
         return
     curves = {cfg: load_curve(cfg, inst) for cfg in configs}
     raws   = {cfg: load_raw_scores(cfg, inst) for cfg in configs}
     has_ham = any(c is not None and "avg_hamming" in c.columns for c in curves.values())
-    titles = ["Convergence"] + (["Hamming (diversité)"] if has_ham else []) + ["Distribution finale"]
+    titles = ["Convergence"] + (["Hamming (diversity)"] if has_ham else []) + ["Final distribution"]
     n_rows = len(titles)
     fig = make_subplots(rows=n_rows, cols=1, subplot_titles=titles, vertical_spacing=0.09,
                         row_heights=[0.40, 0.25, 0.35] if n_rows == 3 else [0.6, 0.4])
@@ -3865,13 +3866,13 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
         if s is not None:
             fig.add_trace(go.Box(y=s, x=[_lbl(cfg)] * len(s), name=_lbl(cfg), marker_color=color,
                                  boxpoints="outliers", boxmean=True, showlegend=False), row=n_rows, col=1)
-    fig.update_xaxes(title_text="Évaluations", row=1, col=1)
+    fig.update_xaxes(title_text="Evaluations", row=1, col=1)
     fig.update_yaxes(title_text="Score", row=1, col=1)
     if has_ham:
-        fig.update_xaxes(title_text="Évaluations", row=2, col=1)
-        fig.update_yaxes(title_text="Hamming moy.", row=2, col=1)
+        fig.update_xaxes(title_text="Evaluations", row=2, col=1)
+        fig.update_yaxes(title_text="Mean Hamming", row=2, col=1)
     fig.update_xaxes(type="category", row=n_rows, col=1)
-    fig.update_yaxes(title_text="Score final", row=n_rows, col=1)
+    fig.update_yaxes(title_text="Final score", row=n_rows, col=1)
     fig.update_layout(height=1150 if n_rows == 3 else 850, margin=dict(r=20, t=40, b=10),
                       legend=dict(orientation="h", yanchor="top", y=-0.08))
     st.plotly_chart(fig, use_container_width=True, key=f"abl_fig_{sel_idx}_{inst}")
@@ -3879,12 +3880,158 @@ def tab_ablation(all_df: pd.DataFrame, sorted_instances: list) -> None:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
+# ── Tuning ────────────────────────────────────────────────────────────────────
+# Configs de results/tuning/ (instances de reglage, 3 par classe). Pas de pool sur ces
+# instances : chaque config est classee contre les autres configs de tuning, classe par
+# classe (rang 1 = meilleur score), et son ecart relatif au meilleur score de la classe.
+
+def _tuning_signature() -> tuple:
+    """Change des qu'une instance est ajoutee a une config (mtime du dossier)."""
+    if not TUNING_DIR.exists():
+        return ()
+    return tuple(sorted((d.name, d.stat().st_mtime) for d in TUNING_DIR.iterdir() if d.is_dir()))
+
+
+TUNING_MODES = ["SVGD-EDA", "SE-SVGD-EDA"]
+
+
+def _tuning_mode(params: dict) -> str:
+    return "SE-SVGD-EDA" if params.get("ppo_mode") else "SVGD-EDA"
+
+
+@st.cache_data(show_spinner="Reading results/tuning…")
+def load_tuning(signature: tuple) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """-> (une ligne par config, une ligne par (config, classe)). Rangs et ecarts
+    calcules au sein de chaque methode : une config n'est classee que contre les
+    configs de la meme methode."""
+    inst_rows = []
+    for name, _ in signature:
+        mode = _tuning_mode(parse_config_name(name))
+        for inst_dir in (TUNING_DIR / name).iterdir():
+            m = INSTANCE_RE.match(inst_dir.name)
+            raw = inst_dir / "raw_scores.csv"
+            if not m or not raw.exists():
+                continue
+            # raw_scores.csv = score final de chaque run, pas greedy final compris ; la
+            # derniere ligne de best_metrics.csv precede ce pas et sous-estime les configs
+            # non convergees.
+            try:
+                score = abs(float(pd.read_csv(raw)["score"].mean()))
+            except Exception:
+                continue
+            inst_rows.append({"config": name, "mode": mode, "problem": m.group("problem"),
+                              "dim": int(m.group("dim")), "t": int(m.group("t")), "score": score})
+    inst = pd.DataFrame(inst_rows)
+    if inst.empty:
+        return pd.DataFrame(), inst
+
+    by_class = inst.groupby(["mode", "problem", "dim", "t"])["score"]
+    inst["gap"] = 100.0 * (inst["score"] / by_class.transform("max") - 1.0)
+
+    rows = []
+    for name, sub in inst.groupby("config"):
+        params = parse_config_name(name)
+        row = {
+            "config": name,
+            "mode": _tuning_mode(params),
+            **params,
+            "mean_gap": sub["gap"].mean(),
+            "n_classes": len(sub),
+        }
+        for prob in ("NK", "NK3", "QUBO"):
+            p = sub[sub["problem"] == prob]
+            row[f"mean_gap_{prob}"] = p["gap"].mean() if not p.empty else None
+        rows.append(row)
+    return pd.DataFrame(rows), inst
+
+
+def _tuning_table(mode: str, summary: pd.DataFrame, inst: pd.DataFrame,
+                  sfx: str, complete_only: bool, n_total: int) -> None:
+    summary = summary[summary["mode"] == mode]
+    st.subheader(mode)
+    if summary.empty:
+        st.info(f"No {mode} config finished yet.")
+        return
+    n_done = int((summary["n_classes"] == n_total).sum())
+    st.caption(f"{n_done}/{len(summary)} complete configs ({n_total} classes).")
+
+    display = summary[summary["n_classes"] == n_total] if complete_only else summary
+    display = display.sort_values(f"mean_gap{sfx}", ascending=False)
+    cols = [c for c in [
+        f"mean_gap{sfx}", "mean_gap_NK", "mean_gap_NK3", "mean_gap_QUBO",
+        "M", "lambda", "epsilon_svgd", "gamma", "decay_start_ratio", "decay_min_factor",
+        "ppo_epochs", "kl_beta", "n_classes", "config",
+    ] if c in display.columns and display[c].notna().any()]
+    cols = list(dict.fromkeys(cols))
+    display_reset = display[cols].reset_index(drop=True)
+    event = st.dataframe(
+        display_reset,
+        use_container_width=True,
+        height=460,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"tun_table_{mode}",
+        column_config={
+            **{f"mean_gap{s}": st.column_config.NumberColumn(f"Gap{s.replace('_', ' ')} (%)", format="%.3f")
+               for s in ("", "_NK", "_NK3", "_QUBO")},
+            "ppo_epochs":     st.column_config.NumberColumn("E", format="%d"),
+            "kl_beta":        st.column_config.NumberColumn("β", format="%.4f"),
+            "epsilon_svgd":   st.column_config.NumberColumn("ε_svgd", format="%.4f"),
+            "gamma":          st.column_config.NumberColumn("γ", format="%.5f"),
+            "decay_start_ratio": st.column_config.NumberColumn("ds", format="%.4f"),
+            "decay_min_factor":  st.column_config.NumberColumn("dm", format="%.4f"),
+            "config":         st.column_config.TextColumn("Config", width="large"),
+        },
+    )
+    sel_rows = event.selection.rows if event and hasattr(event, "selection") else []
+    if sel_rows:
+        cfg = display_reset["config"].iloc[sel_rows[0]]
+        st.code(cfg, language=None)
+        detail = inst[inst["config"] == cfg].sort_values(["problem", "dim", "t"])
+        st.dataframe(
+            detail[["problem", "dim", "t", "score", "gap"]].reset_index(drop=True),
+            use_container_width=True, height=400,
+            column_config={
+                "score": st.column_config.NumberColumn("Score", format="%.6f"),
+                "gap":   st.column_config.NumberColumn("Gap (%)", format="%.3f"),
+            },
+        )
+
+
+@st.fragment
+def tab_tuning() -> None:
+    signature = _tuning_signature()
+    if not signature:
+        st.info(f"No results in `{TUNING_DIR}`. Fetch them from Jean Zay:  \n"
+                "`rsync -av --include='*/' --include='raw_scores.csv' --exclude='*' "
+                "jean-zay:/lustre/fswork/projects/rech/ndg/uzx53rj/Supplementary-material/"
+                "results/tuning/ results/tuning/`")
+        return
+    summary, inst = load_tuning(signature)
+    if summary.empty:
+        st.info("No instance finished yet.")
+        return
+
+    n_total = inst[["problem", "dim", "t"]].drop_duplicates().shape[0]
+    c1, c2 = st.columns([3, 1])
+    problem_sel = c1.radio("Problem", ["All", "NK", "NK3", "QUBO"], horizontal=True, key="tun_problem")
+    complete_only = c2.checkbox("Complete only", value=True, key="tun_complete",
+                                help=f"Configs with all {n_total} classes finished")
+    sfx = "" if problem_sel == "All" else f"_{problem_sel}"
+    st.caption(
+        "Gap: % to the best score obtained on the class by a config of the same method "
+        "(0 = best), averaged over the classes. Sorted by mean gap."
+    )
+    for mode in TUNING_MODES:
+        _tuning_table(mode, summary, inst, sfx, complete_only, n_total)
+
+
 st.set_page_config(page_title="SVGD-EDA Dashboard", layout="wide", page_icon="📊")
 st.title("SVGD-EDA — Grid Search Dashboard")
 
 df = load_summary()
 if df.empty:
-    st.error(f"Aucun résultat trouvé dans `{RESULTS_DIR}`")
+    st.error(f"No results found in `{RESULTS_DIR}`")
     st.stop()
 
 @st.cache_data(show_spinner=False)
@@ -3896,7 +4043,7 @@ def _has_raw(config_name: str) -> bool:
 
 df = df[df["config"].apply(_has_raw)].reset_index(drop=True)
 if df.empty:
-    st.warning("Aucune config avec `raw_scores.csv` trouvée.")
+    st.warning("No config with `raw_scores.csv` found.")
     st.stop()
 
 # Configs incompletes (grid interrompue, timeout...) : leurs top1/rang moyen ne sont pas
@@ -3904,16 +4051,17 @@ if df.empty:
 EXPECTED_INSTANCES = 56
 df = df[df["n_instances"] == EXPECTED_INSTANCES].reset_index(drop=True)
 if df.empty:
-    st.warning(f"Aucune config avec les {EXPECTED_INSTANCES} instances.")
+    st.warning(f"No config with all {EXPECTED_INSTANCES} instances.")
     st.stop()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("Filtres")
-    if st.button("🔄 Recalculer le cache", help="Supprime le cache disque et recalcule tout"):
+    if st.button("🔄 Rebuild cache", help="Deletes the disk cache and recomputes everything"):
         if CACHE_FILE.exists():
             CACHE_FILE.unlink()
         st.rerun()
+
+    st.header("Filters (Ranking)")
 
     def multisel(label, col):
         if col not in df.columns:
@@ -3929,8 +4077,8 @@ with st.sidebar:
     l_sel   = multisel("lambda",       "lambda")
 
     max_rank = float(df["mean_rank"].max())
-    rank_lim = st.slider("Rank moyen ≤", 1.0, max_rank, max_rank, step=0.5)
-    show_n   = st.number_input("Configs max", 5, 2000, 200)
+    rank_lim = st.slider("Mean rank ≤", 1.0, max_rank, max_rank, step=0.5)
+    show_n   = st.number_input("Max configs", 5, 2000, 200)
 
 # Apply filters
 mask = pd.Series(True, index=df.index)
@@ -3947,40 +4095,6 @@ for sel, col in [
 mask &= df["mean_rank"] <= rank_lim
 filtered = df[mask].head(int(show_n))
 
-# ── Sidebar stats ─────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.divider()
-    st.markdown("##### Résumé sélection")
-    st.metric("Configs", len(filtered))
-
-    if not filtered.empty:
-        c1, c2 = st.columns(2)
-        c1.metric("Rank moy",  f"{filtered['mean_rank'].mean():.1f}")
-        c2.metric("Top 1",     int(filtered["top1"].sum()))
-        c1.metric("Top 3",     int(filtered["top3"].sum()))
-        c2.metric("Top 5",     int(filtered["top5"].sum()))
-
-        if "ppo_epochs" in filtered.columns and filtered["ppo_epochs"].nunique() > 1:
-            st.markdown("**Rank moy par ppo_epochs**")
-            breakdown = (
-                filtered.groupby("ppo_epochs")[["mean_rank", "top1", "top3"]]
-                .mean()
-                .round(2)
-                .rename(columns={"mean_rank": "rank_moy", "top1": "top1_moy", "top3": "top3_moy"})
-            )
-            st.dataframe(breakdown, use_container_width=True)
-
-        if "epsilon_svgd" in filtered.columns and filtered["epsilon_svgd"].nunique() > 1:
-            st.markdown("**Rank moy par epsilon_svgd**")
-            breakdown_eps = (
-                filtered.groupby("epsilon_svgd")[["mean_rank", "top1"]]
-                .mean()
-                .round(2)
-                .rename(columns={"mean_rank": "rank_moy", "top1": "top1_moy"})
-            )
-            st.dataframe(breakdown_eps, use_container_width=True)
-
-st.caption(f"{len(filtered)} configs affichées sur {len(df)} disponibles")
 
 @st.cache_data(show_spinner=False)
 def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
@@ -4001,12 +4115,12 @@ def _collect_sorted_instances(configs: tuple[str, ...]) -> list[str]:
 sorted_instances = _collect_sorted_instances(tuple(df["config"]))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab5, tab6, tab7, tab8, tab9 = st.tabs(
-    ["📋 Classement", "⚖️ Comparaison", "⭐ Favoris", "🧪 Ablation", "🎚️ Sensi", "⏱️ Anytime"]
+tab1, tab9, tab5, tab6, tab7, tab8, tab10 = st.tabs(
+    ["📋 Ranking", "🎯 Tuning", "⚖️ Comparison", "⭐ Favorites", "🧪 Ablation", "🎚️ Sensi", "⏱️ Anytime"]
 )
 
-with tab1:
-    tab_classement(filtered)
+with tab9:
+    tab_tuning()
 
 with tab5:
     tab_comparaison(df, sorted_instances)
@@ -4020,5 +4134,8 @@ with tab7:
 with tab8:
     tab_sensi(df, sorted_instances)
 
-with tab9:
+with tab1:
+    tab_classement(filtered)
+
+with tab10:
     tab_anytime(df, sorted_instances)

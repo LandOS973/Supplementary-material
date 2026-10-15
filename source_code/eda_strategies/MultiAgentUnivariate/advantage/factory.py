@@ -6,6 +6,8 @@ from .rank_weighted import (
     BaselineRescaledAdvantage,
     GlobalRankWeightedAdvantage,
     NormalizedFitnessAdvantage,
+    PerAgentBaselineGlobalStdAdvantage,
+    PerAgentCenteredGlobalRankWeightedAdvantage,
     PerAgentRankWeightedAdvantage,
 )
 
@@ -17,7 +19,9 @@ class AdvantageFactory:
         "globalrankweighted": GlobalRankWeightedAdvantage,
         "rankbaseweighted": GlobalRankWeightedAdvantage,                      
         "peragentrankweighted": PerAgentRankWeightedAdvantage,
+        "peragentcenteredglobalrankweighted": PerAgentCenteredGlobalRankWeightedAdvantage,
         "normalizedfitness": NormalizedFitnessAdvantage,
+        "peragentbaselineglobalstd": PerAgentBaselineGlobalStdAdvantage,
     }
 
     @classmethod

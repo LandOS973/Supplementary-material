@@ -5,30 +5,31 @@ nb_restarts: 10
 budget: 50000
 visualization: false
 
+# Config SE-SVGD-EDA du papier (m=7, λ=13, ε=0.06, γ=0.01 constant, E=6, β=0.1).
 agent:
-  M: 10   
-  lambda: 10
-  advantage: peragentrankweighted # peragentrankweighted | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
+  M: 7
+  lambda: 13
+  advantage: peragentrankweighted # peragentrankweighted | peragentbaselineglobalstd | peragentbaselineglobalstd | globalrankweighted | baseline | normalizedfitness | baseline_rescaled
   kernel: rbf # rbf | no_interact
   epsilon_svgd: 0.05 # Pas de mise à jour des particules
-  gamma: 0.006 # Ponderation de l'attraction vers les zones de haute densité
+  gamma: 0.01 # Ponderation de l'attraction vers les zones de haute densité
   no_interact: false
   no_repulsion: false
   enable_greedy_final: true
   decay_start_ratio: 0.03
   min_factor: 0.01
-  decay: true
+  decay: false # γ constant ; SVGD-EDA (PPSN) : decay true, gamma 0.015, epsilon_svgd 0.08, ppo_active false
   ppo_active: true
   ppo:
-    ppo_epochs: 4
-    beta: 0.01
+    ppo_epochs: 6
+    beta: 0.1
 
-problem_name: nk3
+problem_name: qubo
 
 problems:
   qubo:
     name: qubo
-    dim: 512
+    dim: 128
     type_instance: 5
 
   nk:
@@ -38,7 +39,7 @@ problems:
 
   nk3:
     name: NK3
-    dim: 512
+    dim: 256
     type_instance: 8
 
   anr:

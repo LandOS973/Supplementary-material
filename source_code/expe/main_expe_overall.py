@@ -31,32 +31,35 @@ from environment.nk import getTensorInstances_NK, get_Score_trajectoriesNK_cuda
 DEFAULTS = dict(
     seed=0,
     nb_instances_test=10,
+    # Dossier des instances sous source_code/ ; main() le bascule sur instances_tuning
+    # avec --instances tuning (rang contre le pool desactive : ses scores n'existent
+    # que sur les instances de test).
+    instances_dir="instances",
+    pool_ranking=True,
     nb_restarts=10,
     budget=50000,
     visualization=False,
     device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
 )
+# Config SE-SVGD-EDA du papier EvoCOP (M=7, λ=13, ε=0.06, γ=0.01 constant via ds=1,
+# E=6, β=0.1), avec le score par agent de référence et le score global centré par agent.
 DEFAULT_GRIDS = [
     dict(
         kernels=["rbf"],
-        advantages=["peragentrankweighted"],
-        M_values=[10],
-        lambda_values=[10],
-        epsilon_svgd=[0.03, 0.06, 0.1, 0.15, 0.2],
-        gamma=[0.003, 0.006, 0.01, 0.015],
-        decay_start_ratio=[0.03, 1],
+        advantages=["peragentcenteredglobalrankweighted"],
+        M_values=[7],
+        lambda_values=[13],
+        epsilon_svgd=[0.06],
+        gamma=[0.01],
+        decay_start_ratio=[1],
         decay_min_factor=[0.01],
         ppo_variants=[
-            dict(mode="kl", ppo_epochs=[2, 4, 6], kl_beta=[0.01, 0.1, 0.5]),
+            dict(mode="kl", ppo_epochs=[6], kl_beta=[0.1]),
         ],
     )
 ]
 
 
-# Config exacte du papier PPSN (commit 4a990591d), pour reproduire
-# krbf__advglobalrankweighted__M7__L13__eps0p08__g0p015__ds0p03__dm0p01 a n=512
-# (deja presente pour n=64/128/256 sous results/config/<ce nom>/). Selectionnable
-# via --grid ppsn_baseline, sans toucher au grid de travail ci-dessus.
 PPSN_BASELINE_GRID = [
     dict(
         kernels=["rbf"],
@@ -70,9 +73,16 @@ PPSN_BASELINE_GRID = [
     )
 ]
 
+# Meme config PPSN, avec le score global centre par agent a la place du rang global.
+# Selectionnable via --grid ppsn_centered.
+PPSN_CENTERED_GRID = [
+    dict(PPSN_BASELINE_GRID[0], advantages=["peragentcenteredglobalrankweighted"])
+]
+
 GRID_PRESETS = {
     "wip": DEFAULT_GRIDS,
     "ppsn_baseline": PPSN_BASELINE_GRID,
+    "ppsn_centered": PPSN_CENTERED_GRID,
 }
 
 _PPO_INACTIVE = dict(
@@ -215,7 +225,7 @@ def _expand_grid(grid: dict):
 
 def _load_grids(name: str = "wip"):
     # Either a preset name, or a path to a JSON file holding a list of grid dicts
-    # (same keys as DEFAULT_GRIDS), e.g. jeanzay/grids/m7_core.json.
+    # (same keys as DEFAULT_GRIDS), e.g. jeanzay/grids/ablation_evocop.json.
     if name in GRID_PRESETS:
         return GRID_PRESETS[name]
     path = Path(name)
@@ -368,7 +378,7 @@ def _load_instances(problem_cfg, device):
     type_instance = int(problem_cfg["type_instance"])
 
     if name == "QUBO":
-        instance_path = os.path.join(script_dir, "instances", "QUBO") + os.sep
+        instance_path = os.path.join(script_dir, DEFAULTS["instances_dir"], "QUBO") + os.sep
         tensor_Q_test = getTensorInstances_QUBO(
             instance_path,
             DEFAULTS["nb_instances_test"],
@@ -397,7 +407,7 @@ def _load_instances(problem_cfg, device):
             vectorIndex[vi] = D ** (type_instance - vi)
         vectorIndex_th = torch.tensor(vectorIndex, dtype=torch.float32).to(device)
         subdir = "nk" if name == "NK" else "nk3"
-        base_path = os.path.join(script_dir, "instances", subdir, str(dim), str(type_instance)) + os.sep
+        base_path = os.path.join(script_dir, DEFAULTS["instances_dir"], subdir, str(dim), str(type_instance)) + os.sep
         return dict(
             type_problem=name,
             dim=dim,
@@ -710,6 +720,8 @@ def _parse_summary_config(summary_path: Path):
 def _rank_vs_global_ranking_excluding_ppo(
     repo_root: str, problem: str, dim: int, type_instance: int, my_score: float, exclude_algo: str = "PPO-EDA"
 ):
+    if not DEFAULTS["pool_ranking"]:
+        return None, None, None, 0, None, None, None
     problem = (problem or "").upper()
     if problem in ("QUBO", "UBQP"):
         filename = f"UBQP_N_{dim}_K_{type_instance}_ranks.csv"
@@ -845,7 +857,8 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
 
     ranking_dir = Path(repo_root) / "additional_results" / "global_ranking"
     expected_instances = []
-    for rank_file in ranking_dir.glob("*_ranks.csv"):
+    rank_files = ranking_dir.glob("*_ranks.csv") if DEFAULTS["pool_ranking"] else []
+    for rank_file in rank_files:
         match = re.match(r"^(?P<problem>UBQP|NK|NK3)_N_(?P<dim>\d+)_K_(?P<t>\d+)_ranks\.csv$", rank_file.name)
         if not match:
             continue
@@ -1011,7 +1024,17 @@ def _collect_config_stats(config_dir: str, config_name: str, params: dict, repo_
 
 def main():
     parser = argparse.ArgumentParser(description="Overall PPO-EDA decay grid (QUBO + NK).")
-    parser.add_argument("--outdir", type=str, default=None, help="Root output dir (default: results/config).")
+    parser.add_argument(
+        "--outdir", type=str, default=None,
+        help="Root output dir (default: results/tuning with --instances tuning, results/config with test).",
+    )
+    parser.add_argument(
+        "--instances",
+        choices=["tuning", "test"],
+        default="tuning",
+        help="tuning = source_code/instances_tuning (3 instances par classe, pas de rang contre le pool), "
+             "test = source_code/instances (10 instances par classe, rang contre le pool).",
+    )
     parser.add_argument(
         "-m",
         "--m-values",
@@ -1024,13 +1047,31 @@ def main():
         "--grid",
         type=str,
         default="wip",
-        help="Grid to run: a preset name (wip = DEFAULT_GRIDS, ppsn_baseline = exact PPSN "
-             "config) or a path to a JSON grid file, e.g. jeanzay/grids/m7_core.json.",
+        help="Grid to run: a preset name (wip = DEFAULT_GRIDS, ppsn_centered = PPSN config with "
+        "per-agent centred global rank, ppsn_baseline = exact PPSN config) or a path to a JSON grid "
+        "file, e.g. jeanzay/grids/tuning_evocop.json.",
+    )
+    parser.add_argument(
+        "--shard",
+        type=str,
+        default=None,
+        help="K/N : ne lance que les configs d'indice i tel que i %% N == K (0 <= K < N), "
+             "pour repartir les configs sur N jobs (ex. --shard K/50 sur une grid de 50 configs "
+             "= la config K seule).",
     )
     args = parser.parse_args()
 
+    shard_k, shard_n = 0, 1
+    if args.shard:
+        shard_k, shard_n = (int(v) for v in args.shard.split("/"))
+        if not 0 <= shard_k < shard_n:
+            raise SystemExit(f"--shard {args.shard}: il faut 0 <= K < N.")
+
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    out_root = args.outdir or os.path.join(repo_root, "results", "config")
+    if args.instances == "tuning":
+        DEFAULTS.update(instances_dir="instances_tuning", nb_instances_test=3, pool_ranking=False)
+    out_root = args.outdir or os.path.join(repo_root, "results", "tuning" if args.instances == "tuning" else "config")
+    print(f"[INFO] instances={args.instances} ({DEFAULTS['instances_dir']}) -> {out_root}")
     Path(out_root).mkdir(parents=True, exist_ok=True)
 
     grids = _apply_m_override(_load_grids(args.grid), args.m_values)
@@ -1038,10 +1079,13 @@ def main():
         m_vals = _get_grid_m_values(grid)
         print(f"[GRID {idx}] M_values={m_vals}")
 
-    total_configs = sum(1 for grid in grids for _ in _expand_grid(grid))
-    print(f"[INFO] {total_configs} configs a tester")
+    all_configs = [cfg for grid in grids for cfg in _expand_grid(grid)]
+    configs = all_configs[shard_k::shard_n]
+    total_configs = len(configs)
+    shard_info = f" (shard {shard_k}/{shard_n} sur {len(all_configs)})" if shard_n > 1 else ""
+    print(f"[INFO] {total_configs} configs a tester{shard_info}")
 
-    instances_root = Path(repo_root) / "source_code" / "instances"
+    instances_root = Path(repo_root) / "source_code" / DEFAULTS["instances_dir"]
     qubo_instances = _discover_qubo_instances(instances_root / "QUBO", DEFAULTS["nb_instances_test"])
     nk_instances = _discover_nk_instances(instances_root / "nk", DEFAULTS["nb_instances_test"])
     nk3_instances = _discover_nk3_instances(instances_root / "nk3", DEFAULTS["nb_instances_test"])
@@ -1054,216 +1098,215 @@ def main():
 
     start_all = time.time()
     config_idx = 0
-    for grid in grids:
-        for config_name, params in _expand_grid(grid):
-            config_idx += 1
-            config_dir = os.path.join(out_root, config_name)
-            print(f"[CONFIG {config_idx}/{total_configs}] {config_name}")
+    for config_name, params in configs:
+        config_idx += 1
+        config_dir = os.path.join(out_root, config_name)
+        print(f"[CONFIG {config_idx}/{total_configs}] {config_name}")
 
-            pending_instances = list(instances)
-            debug_entries = {}
+        pending_instances = list(instances)
+        debug_entries = {}
 
-            qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO']
-            nk_pending = [inst for inst in pending_instances if inst['name'] == 'NK']
-            nk3_pending = [inst for inst in pending_instances if inst['name'] == 'NK3']
-            
-            for inst in qubo_pending:
-                inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-                inst_dir = os.path.join(config_dir, inst_name)
-                if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
-                    print(f"  -> skip {inst_name} (already done)")
-                    continue
-                problem_ctx = _load_instances(inst, DEFAULTS["device"])
-                print(f"  -> run {inst_name}")
-                t0 = time.time()
-                nb_restarts = DEFAULTS["nb_restarts"]
-                success = False
-                while nb_restarts > 0 and not success:
-                    try:
-                        avg_score, history, meta, scores_array = _run_once(
-                            problem_ctx,
-                            params["kernel"],
-                            params["advantage"],
-                            params["M"],
-                            params["lambda_"],
-                            params["epsilon_svgd"],
-                            params["gamma"],
-                            params["decay_start_ratio"],
-                            params["decay_min_factor"],
-                            device=DEFAULTS["device"],
-                            nb_restarts=nb_restarts,
-                            ppo_params=params,
-                        )
-                        success = True
-                    except (torch.OutOfMemoryError, RuntimeError) as exc:
-                        if not _is_cuda_oom(exc):
-                            raise
-                        nb_restarts -= 1
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                        if nb_restarts > 0:
-                            print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
-                        else:
-                            print("     [OOM] nb_restarts=0, skip instance.")
-
-                if not success:
-                    continue
-                dt = time.time() - t0
-                print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-                ranking = _rank_vs_global_ranking_excluding_ppo(
-                    repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
-                )
-                _save_history_csv(
-                    inst_dir,
-                    inst["name"],
-                    params["kernel"],
-                    {"history": history, "meta": meta},
-                    ranking=ranking,
-                    config_name=config_name,
-                )
-                _save_raw_scores_csv(inst_dir, scores_array)
-                if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
-                    debug_entries[inst_name] = (history, nb_restarts)
-                if ranking and ranking[2] == 1:
-                    print("     -> TOP 1")
-
-            for inst in nk_pending:
-                inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-                inst_dir = os.path.join(config_dir, inst_name)
-                if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
-                    print(f"  -> skip {inst_name} (already done)")
-                    continue
-                problem_ctx = _load_instances(inst, DEFAULTS["device"])
-                print(f"  -> run {inst_name}")
-                t0 = time.time()
-                nb_restarts = DEFAULTS["nb_restarts"]
-                success = False
-                while nb_restarts > 0 and not success:
-                    try:
-                        avg_score, history, meta, scores_array = _run_once(
-                            problem_ctx,
-                            params["kernel"],
-                            params["advantage"],
-                            params["M"],
-                            params["lambda_"],
-                            params["epsilon_svgd"],
-                            params["gamma"],
-                            params["decay_start_ratio"],
-                            params["decay_min_factor"],
-                            device=DEFAULTS["device"],
-                            nb_restarts=nb_restarts,
-                            ppo_params=params,
-                        )
-                        success = True
-                    except (torch.OutOfMemoryError, RuntimeError) as exc:
-                        if not _is_cuda_oom(exc):
-                            raise
-                        nb_restarts -= 1
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                        if nb_restarts > 0:
-                            print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
-                        else:
-                            print("     [OOM] nb_restarts=0, skip instance.")
-
-                if not success:
-                    continue
-                dt = time.time() - t0
-                print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-                ranking = _rank_vs_global_ranking_excluding_ppo(
-                    repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
-                )
-                _save_history_csv(
-                    inst_dir,
-                    inst["name"],
-                    params["kernel"],
-                    {"history": history, "meta": meta},
-                    ranking=ranking,
-                    config_name=config_name,
-                )
-                _save_raw_scores_csv(inst_dir, scores_array)
-                if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
-                    debug_entries[inst_name] = (history, nb_restarts)
-                if ranking and ranking[2] == 1:
-                    print("     -> TOP 1")
-
-            for inst in nk3_pending:
-                inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
-                inst_dir = os.path.join(config_dir, inst_name)
-                if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
-                    print(f"  -> skip {inst_name} (already done)")
-                    continue
-                problem_ctx = _load_instances(inst, DEFAULTS["device"])
-                print(f"  -> run {inst_name}")
-                t0 = time.time()
-                nb_restarts = DEFAULTS["nb_restarts"]
-                success = False
-                while nb_restarts > 0 and not success:
-                    try:
-                        avg_score, history, meta, scores_array = _run_once(
-                            problem_ctx,
-                            params["kernel"],
-                            params["advantage"],
-                            params["M"],
-                            params["lambda_"],
-                            params["epsilon_svgd"],
-                            params["gamma"],
-                            params["decay_start_ratio"],
-                            params["decay_min_factor"],
-                            device=DEFAULTS["device"],
-                            nb_restarts=nb_restarts,
-                            ppo_params=params,
-                        )
-                        success = True
-                    except (torch.OutOfMemoryError, RuntimeError) as exc:
-                        if not _is_cuda_oom(exc):
-                            raise
-                        nb_restarts -= 1
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                        if nb_restarts > 0:
-                            print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
-                        else:
-                            print("     [OOM] nb_restarts=0, skip instance.")
-
-                if not success:
-                    continue
-                dt = time.time() - t0
-                print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
-                ranking = _rank_vs_global_ranking_excluding_ppo(
-                    repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
-                )
-                _save_history_csv(
-                    inst_dir,
-                    inst["name"],
-                    params["kernel"],
-                    {"history": history, "meta": meta},
-                    ranking=ranking,
-                    config_name=config_name,
-                )
-                _save_raw_scores_csv(inst_dir, scores_array)
-                if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
-                    debug_entries[inst_name] = (history, nb_restarts)
-                if ranking and ranking[2] == 1:
-                    print("     -> TOP 1")
-
-            if debug_entries:
+        qubo_pending = [inst for inst in pending_instances if inst['name'] == 'QUBO']
+        nk_pending = [inst for inst in pending_instances if inst['name'] == 'NK']
+        nk3_pending = [inst for inst in pending_instances if inst['name'] == 'NK3']
+        
+        for inst in qubo_pending:
+            inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+            inst_dir = os.path.join(config_dir, inst_name)
+            if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
+                print(f"  -> skip {inst_name} (already done)")
+                continue
+            problem_ctx = _load_instances(inst, DEFAULTS["device"])
+            print(f"  -> run {inst_name}")
+            t0 = time.time()
+            nb_restarts = DEFAULTS["nb_restarts"]
+            success = False
+            while nb_restarts > 0 and not success:
                 try:
-                    _save_agent_debug_npz(config_dir, debug_entries)
-                except Exception as exc:
-                    print(f"  [WARN] agent_debug.npz non écrit: {exc}")
+                    avg_score, history, meta, scores_array = _run_once(
+                        problem_ctx,
+                        params["kernel"],
+                        params["advantage"],
+                        params["M"],
+                        params["lambda_"],
+                        params["epsilon_svgd"],
+                        params["gamma"],
+                        params["decay_start_ratio"],
+                        params["decay_min_factor"],
+                        device=DEFAULTS["device"],
+                        nb_restarts=nb_restarts,
+                        ppo_params=params,
+                    )
+                    success = True
+                except (torch.OutOfMemoryError, RuntimeError) as exc:
+                    if not _is_cuda_oom(exc):
+                        raise
+                    nb_restarts -= 1
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    if nb_restarts > 0:
+                        print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
+                    else:
+                        print("     [OOM] nb_restarts=0, skip instance.")
 
-            stats = _collect_config_stats(config_dir, config_name, params, repo_root)
-            print(f"\n  *** SUMMARY FOR CONFIG: {config_name} ***")
-            print(
-                f"  NOMBRE DE TOP 1 : {stats['top1_count']} "
-                f"(NK: {stats['top_1_nk']}, NK3: {stats['top_1_nk3']}, QUBO: {stats['top_1_qubo']})"
+            if not success:
+                continue
+            dt = time.time() - t0
+            print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+            ranking = _rank_vs_global_ranking_excluding_ppo(
+                repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
             )
-            print(f"  NOMBRE DE TOP 3 : {stats['top3_count']}")
-            print(f"  NOMBRE DE TOP 5 : {stats['top5_count']}")
-            print(f"  NOMBRE DE TOP 10 : {stats['top10_count']}")
-            print(f"  Instances: {stats['n_ranked']}/{stats['n_instances']}")
-            print()
+            _save_history_csv(
+                inst_dir,
+                inst["name"],
+                params["kernel"],
+                {"history": history, "meta": meta},
+                ranking=ranking,
+                config_name=config_name,
+            )
+            _save_raw_scores_csv(inst_dir, scores_array)
+            if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
+                debug_entries[inst_name] = (history, nb_restarts)
+            if ranking and ranking[2] == 1:
+                print("     -> TOP 1")
+
+        for inst in nk_pending:
+            inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+            inst_dir = os.path.join(config_dir, inst_name)
+            if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
+                print(f"  -> skip {inst_name} (already done)")
+                continue
+            problem_ctx = _load_instances(inst, DEFAULTS["device"])
+            print(f"  -> run {inst_name}")
+            t0 = time.time()
+            nb_restarts = DEFAULTS["nb_restarts"]
+            success = False
+            while nb_restarts > 0 and not success:
+                try:
+                    avg_score, history, meta, scores_array = _run_once(
+                        problem_ctx,
+                        params["kernel"],
+                        params["advantage"],
+                        params["M"],
+                        params["lambda_"],
+                        params["epsilon_svgd"],
+                        params["gamma"],
+                        params["decay_start_ratio"],
+                        params["decay_min_factor"],
+                        device=DEFAULTS["device"],
+                        nb_restarts=nb_restarts,
+                        ppo_params=params,
+                    )
+                    success = True
+                except (torch.OutOfMemoryError, RuntimeError) as exc:
+                    if not _is_cuda_oom(exc):
+                        raise
+                    nb_restarts -= 1
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    if nb_restarts > 0:
+                        print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
+                    else:
+                        print("     [OOM] nb_restarts=0, skip instance.")
+
+            if not success:
+                continue
+            dt = time.time() - t0
+            print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+            ranking = _rank_vs_global_ranking_excluding_ppo(
+                repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
+            )
+            _save_history_csv(
+                inst_dir,
+                inst["name"],
+                params["kernel"],
+                {"history": history, "meta": meta},
+                ranking=ranking,
+                config_name=config_name,
+            )
+            _save_raw_scores_csv(inst_dir, scores_array)
+            if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
+                debug_entries[inst_name] = (history, nb_restarts)
+            if ranking and ranking[2] == 1:
+                print("     -> TOP 1")
+
+        for inst in nk3_pending:
+            inst_name = f"{inst['name']}_dim{inst['dim']}_t{inst['type_instance']}"
+            inst_dir = os.path.join(config_dir, inst_name)
+            if _instance_already_done(inst_dir, inst["name"], params["kernel"]):
+                print(f"  -> skip {inst_name} (already done)")
+                continue
+            problem_ctx = _load_instances(inst, DEFAULTS["device"])
+            print(f"  -> run {inst_name}")
+            t0 = time.time()
+            nb_restarts = DEFAULTS["nb_restarts"]
+            success = False
+            while nb_restarts > 0 and not success:
+                try:
+                    avg_score, history, meta, scores_array = _run_once(
+                        problem_ctx,
+                        params["kernel"],
+                        params["advantage"],
+                        params["M"],
+                        params["lambda_"],
+                        params["epsilon_svgd"],
+                        params["gamma"],
+                        params["decay_start_ratio"],
+                        params["decay_min_factor"],
+                        device=DEFAULTS["device"],
+                        nb_restarts=nb_restarts,
+                        ppo_params=params,
+                    )
+                    success = True
+                except (torch.OutOfMemoryError, RuntimeError) as exc:
+                    if not _is_cuda_oom(exc):
+                        raise
+                    nb_restarts -= 1
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    if nb_restarts > 0:
+                        print(f"     [OOM] retry with nb_restarts={nb_restarts}.")
+                    else:
+                        print("     [OOM] nb_restarts=0, skip instance.")
+
+            if not success:
+                continue
+            dt = time.time() - t0
+            print(f"     avg_score={avg_score:.6f} | runtime={dt:.2f}s")
+            ranking = _rank_vs_global_ranking_excluding_ppo(
+                repo_root, inst["name"], inst["dim"], inst["type_instance"], avg_score
+            )
+            _save_history_csv(
+                inst_dir,
+                inst["name"],
+                params["kernel"],
+                {"history": history, "meta": meta},
+                ranking=ranking,
+                config_name=config_name,
+            )
+            _save_raw_scores_csv(inst_dir, scores_array)
+            if isinstance(history, dict) and history.get("agent_best_genotype") is not None:
+                debug_entries[inst_name] = (history, nb_restarts)
+            if ranking and ranking[2] == 1:
+                print("     -> TOP 1")
+
+        if debug_entries:
+            try:
+                _save_agent_debug_npz(config_dir, debug_entries)
+            except Exception as exc:
+                print(f"  [WARN] agent_debug.npz non écrit: {exc}")
+
+        stats = _collect_config_stats(config_dir, config_name, params, repo_root)
+        print(f"\n  *** SUMMARY FOR CONFIG: {config_name} ***")
+        print(
+            f"  NOMBRE DE TOP 1 : {stats['top1_count']} "
+            f"(NK: {stats['top_1_nk']}, NK3: {stats['top_1_nk3']}, QUBO: {stats['top_1_qubo']})"
+        )
+        print(f"  NOMBRE DE TOP 3 : {stats['top3_count']}")
+        print(f"  NOMBRE DE TOP 5 : {stats['top5_count']}")
+        print(f"  NOMBRE DE TOP 10 : {stats['top10_count']}")
+        print(f"  Instances: {stats['n_ranked']}/{stats['n_instances']}")
+        print()
 
     print(f"[DONE] experiments complete")
     print(f"Elapsed: {time.time() - start_all:.2f}s")

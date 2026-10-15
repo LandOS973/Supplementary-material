@@ -52,6 +52,13 @@ def main(cfg: DictConfig):
         except Exception:
             return None
 
+    def first_set(*values):
+        # Premiere valeur definie : contrairement a `or`, garde 0 / 0.0 (ex. beta=0).
+        for v in values:
+            if v is not None:
+                return v
+        return None
+
     type_problem = cfg.problem.name if "problem" in cfg and "name" in cfg.problem else cfg.get("type_problem", "QUBO")
     type_problem = str(type_problem)
     type_problem_upper = type_problem.upper()
@@ -70,7 +77,7 @@ def main(cfg: DictConfig):
     nb_restarts = int(cfg.nb_restarts)
     nb_instances_test = int(cfg.nb_instances_test)
     seed = int(cfg.seed)
-    lambda_ = int(agent_val("lambda") or cfg.get("lambda") or cfg.get("lambda_") or 10)
+    lambda_ = int(first_set(agent_val("lambda"), cfg.get("lambda"), cfg.get("lambda_"), 10))
     verbose = bool(cfg.get("verbose", True))
     budget = int(cfg.get("budget", 10000))
     visualization_enabled = bool(cfg.get("visualization", True))
@@ -84,35 +91,27 @@ def main(cfg: DictConfig):
     if enable_greedy_final is None:
         enable_greedy_final = cfg.get("enable_greedy_final", True)
     enable_greedy_final = bool(enable_greedy_final)
-    M = int(agent_val("M") or cfg.get("M") or 1)
+    M = int(first_set(agent_val("M"), cfg.get("M"), 1))
 
     kernel_name = str(agent_val("kernel") or cfg.get("kernel") or "rbf").lower()
-    prob_eps_override = agent_val("prob_eps_clamp") or cfg.get("prob_eps_clamp")
+    prob_eps_override = first_set(agent_val("prob_eps_clamp"), cfg.get("prob_eps_clamp"))
     prob_eps_clamp = float(prob_eps_override) if prob_eps_override is not None else 1e-3
-    epsilon_svgd = float(
-        agent_val("epsilon_svgd")
-        or cfg.get("epsilon_svgd")
-        or 0.5
-    )
-    svgd_gamma = float(
-        agent_val("gamma")
-        or cfg.get("gamma")
-        or 10.0
-    )
+    epsilon_svgd = float(first_set(agent_val("epsilon_svgd"), cfg.get("epsilon_svgd"), 0.5))
+    svgd_gamma = float(first_set(agent_val("gamma"), cfg.get("gamma"), 10.0))
 
     decay_default_start_ratio = 0.0 if decay_enabled else 0.8
     decay_default_min_factor = 0.05 if decay_enabled else 0.1
     decay_start_ratio = float(
-        agent_val("decay_start_ratio")
-        or cfg.get("decay_start_ratio")
-        or decay_default_start_ratio
+        first_set(agent_val("decay_start_ratio"), cfg.get("decay_start_ratio"), decay_default_start_ratio)
     )
     decay_min_factor = float(
-        agent_val("min_factor")
-        or agent_val("decay_min_factor")
-        or cfg.get("min_factor")
-        or cfg.get("decay_min_factor")
-        or decay_default_min_factor
+        first_set(
+            agent_val("min_factor"),
+            agent_val("decay_min_factor"),
+            cfg.get("min_factor"),
+            cfg.get("decay_min_factor"),
+            decay_default_min_factor,
+        )
     )
     ppo_active_val = agent_val("ppo_active")
     if ppo_active_val is None:
@@ -122,8 +121,8 @@ def main(cfg: DictConfig):
     kl_beta = 1.0
 
     if ppo_active:
-        ppo_epochs = int(agent_val("ppo.ppo_epochs") or 4)
-        kl_beta = float(agent_val("ppo.beta") or 1.0)
+        ppo_epochs = int(first_set(agent_val("ppo.ppo_epochs"), 4))
+        kl_beta = float(first_set(agent_val("ppo.beta"), 1.0))
     else:
         ppo_epochs = 1
 

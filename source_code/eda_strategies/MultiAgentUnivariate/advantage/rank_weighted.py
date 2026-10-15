@@ -87,6 +87,45 @@ class PerAgentRankWeightedAdvantage(AdvantageStrategy):
         return ranked.view(BM, lambda_per_agent)
 
 
+class PerAgentCenteredGlobalRankWeightedAdvantage(AdvantageStrategy):
+    """Score global de SVGD-EDA (rang moyen pour les ex aequo), centré
+    par agent puis remis à l'échelle du rang par agent par (Mλ-1)/(λ-1).
+    Sur des lots séparés en fitness, coïncide avec le rang par agent."""
+
+    def compute(self, fitness, nb_instances=None, num_agents=None, **context):
+        nb_instances = int(nb_instances or context.get("nb_instances"))
+        num_agents = int(num_agents or context.get("num_agents"))
+        BM, lam = fitness.shape
+        N = lam * num_agents
+
+        x = fitness.view(nb_instances, N)
+        greater = (x[:, :, None] < x[:, None, :]).sum(dim=2)
+        equal = (x[:, :, None] == x[:, None, :]).sum(dim=2)
+        ranks = (greater + (equal - 1) / 2.0).to(dtype=fitness.dtype)
+        scores = 1.0 - 2.0 * ranks / max(N - 1, 1)          # = SVGD-EDA
+
+        scores = scores.view(nb_instances, num_agents, lam)
+        centered = scores - scores.mean(dim=2, keepdim=True)
+        centered = centered * (N - 1) / max(lam - 1, 1)      # facteur 7,5
+        return centered.view(BM, lam)
+
+class PerAgentBaselineGlobalStdAdvantage(AdvantageStrategy):
+    """(f(x) - b_i^t) / std^t : baseline b_i^t = moyenne des fitness de
+    l'agent i à l'itération t, std^t = écart type des fitness de tous les
+    individus de l'instance (tous agents confondus) à l'itération t."""
+
+    def compute(self, fitness, nb_instances=None, num_agents=None, **context):
+        nb_instances = int(nb_instances or context.get("nb_instances"))
+        num_agents = int(num_agents or context.get("num_agents"))
+        BM, lam = fitness.shape
+
+        x = fitness.view(nb_instances, num_agents, lam)
+        baseline = x.mean(dim=2, keepdim=True)                              # b_i^t
+        std = x.view(nb_instances, -1).std(dim=1, unbiased=False).view(nb_instances, 1, 1)  # std^t
+        std = std.clamp_min(torch.finfo(fitness.dtype).eps)
+        adv = (x - baseline) / std
+        return adv.view(BM, lam)
+
 class NormalizedFitnessAdvantage(AdvantageStrategy):
     """
     Normalise la fitness de chaque individu j de l'agent i à l'itération t selon :
